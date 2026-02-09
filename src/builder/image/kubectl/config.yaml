@@ -1,0 +1,38 @@
+base_image: scratch
+setopts:
+- v11-adv-os.baseurl=http://172.31.54.1:8081/repository/updates.kylinos.cn/NS/V11/2503/os/adv/lic/base/x86_64/
+- v11-adv-updates.baseurl=http://172.31.54.1:8081/repository/updates.kylinos.cn/NS/V11/2503/os/adv/lic/updates/x86_64/
+rootfs:
+  kubengine/common/bin/yq: /opt/kubengine/common/bin/yq
+  kubectl/bin: /opt/kubengine/kubectl/bin
+cmd: --help
+entrypoint: kuebctl
+author: duanzt
+envs:
+  OS_ARCH: amd64
+  OS_FLAVOUR: kylin-v11
+  OS_NAME: linux
+  APP_NAME: kubectl
+  PATH: /opt/kubengine/common/bin:/opt/kubengine/kubectl/bin:/usr/local/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/bin
+labels:
+  org.opencontainers.image.vendor: kubengine.io
+  org.opencontainers.image.name: kubectl
+  org.opencontainers.image.description: kubectl tool for managing Kubernetes clusters
+
+versions:
+  v1.34.0:
+    install_packages:
+    - bash
+    - coreutils
+    - procps-ng
+    - vim-minimal
+    - tzdata
+    - findutils
+    - grep
+    - ca-certificates
+    - jq
+    envs:
+      APP_VERSION: v1.34.0
+    labels:
+      org.opencontainers.image.base.name: apps/kubengine:v1.34.0
+      org.opencontainers.image.version: v1.34.0

@@ -1,0 +1,36 @@
+base_image: scratch
+setopts:
+- v11-adv-os.baseurl=http://172.31.54.1:8081/repository/updates.kylinos.cn/NS/V11/2503/os/adv/lic/base/x86_64/
+- v11-adv-updates.baseurl=http://172.31.54.1:8081/repository/updates.kylinos.cn/NS/V11/2503/os/adv/lic/updates/x86_64/
+rootfs:
+  kubengine/common: /opt/kubengine/common
+  kubengine/scripts: /opt/kubengine/scripts
+author: duanzt
+cmd: /bin/bash
+install_packages:
+- bash
+- coreutils
+- procps-ng
+- vim-minimal
+- tzdata
+- findutils
+- grep
+- ca-certificates
+- gettext
+- git
+- jq
+envs:
+  PATH: /opt/kubengine/common/bin:/usr/local/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/bin
+  HOME: /
+  OS_ARCH: amd64
+  OS_FLAVOUR: kylin-v11
+  OS_NAME: linux
+labels:
+  org.opencontainers.image.vendor: kubengine.io
+  org.opencontainers.image.name: os-shell
+  org.opencontainers.image.description: Kylin OS v11 base image with essential tools for kubengine environments.
+
+versions:
+  kylin-v11:
+    labels:
+      org.opencontainers.image.base.name: apps/os-shell:kylin-v11

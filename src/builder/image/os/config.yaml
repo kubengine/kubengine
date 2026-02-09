@@ -1,0 +1,103 @@
+base_image: scratch
+cmd: /bin/bash
+user: root
+setopts:
+- v11-adv-os.baseurl=http://172.31.54.1:8081/repository/updates.kylinos.cn/NS/V11/2503/os/adv/lic/base/x86_64/
+- v11-adv-updates.baseurl=http://172.31.54.1:8081/repository/updates.kylinos.cn/NS/V11/2503/os/adv/lic/updates/x86_64/
+author: duanzt
+install_packages:
+- bash
+- coreutils
+- procps-ng
+- vim-minimal
+- tzdata
+- findutils
+- grep
+- ca-certificates
+envs:
+  HOME: /
+  OS_ARCH: amd64
+  OS_FLAVOUR: kylin-v11
+  OS_NAME: linux
+labels:
+  org.opencontainers.image.vendor: kubengine.io
+
+versions:
+  alpine:
+    labels:
+      org.opencontainers.image.base.name: apps/kylin-v11:alpine
+      org.opencontainers.image.description: Kylin V11 2503 Linux Base Image.
+  openssl:
+    install_packages:
+    - openssl
+    labels:
+      org.opencontainers.image.base.name: apps/kylin-v11:openssl
+      org.opencontainers.image.description: Kylin V11 2503 Linux Base Image(Contains openssl).
+  build-env:
+    install_packages:
+    - cmake
+    - automake
+    - autoconf
+    - libtool
+    - pkgconfig
+    - rpm-build
+    - rpmdevtools
+    - openssl-devel
+    - zlib-devel
+    - bzip2-devel
+    - readline-devel
+    - sqlite-devel
+    - ncurses-devel
+    - libffi-devel
+    - libxml2-devel
+    - libxslt-devel
+    - git
+    - wget
+    - curl
+    - iputils
+    - vim
+    - nano
+    labels:
+      org.opencontainers.image.base.name: apps/kylin-v11:build-env
+      org.opencontainers.image.description: Build environment for Kylin V11 2503 Linux with development tools.
+  cpp-build-env:
+    install_packages:
+    - cmake
+    - automake
+    - autoconf
+    - libtool
+    - pkgconfig
+    - rpm-build
+    - rpmdevtools
+    - openssl-devel
+    - zlib-devel
+    - bzip2-devel
+    - readline-devel
+    - sqlite-devel
+    - ncurses-devel
+    - libffi-devel
+    - libxml2-devel
+    - libxslt-devel
+    - git
+    - wget
+    - curl
+    - iputils
+    - vim
+    - nano
+    - gcc
+    - gcc-c++
+    - gcc-gfortran
+    - llvm
+    - llvm-devel
+    - glibc-devel
+    - glibc-static
+    - libstdc++-devel
+    - boost-devel
+    - eigen3-devel
+    - openblas-devel
+    - lapack-devel
+    - cmake3
+    - make
+    labels:
+      org.opencontainers.image.base.name: apps/kylin-v11:build-env
+      org.opencontainers.image.description: C++ build environment for Kylin V11 2503 Linux with compiler and libraries.

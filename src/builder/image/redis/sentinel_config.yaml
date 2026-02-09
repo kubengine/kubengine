@@ -1,0 +1,43 @@
+base_image: kylin-v11:openssl
+cmd: /opt/kubengine/scripts/redis-sentinel/run.sh
+entrypoint: /opt/kubengine/scripts/redis-sentinel/entrypoint.sh
+ports:
+- 26379
+workingdir: /opt/kubengine/redis-sentinel
+volumes:
+- /kubengine/redis-sentinel/data
+build_image: kylin-v11:cpp-build-env
+author: duanzt
+rootfs:
+  kubengine/scripts: /opt/kubengine/scripts
+  redis-sentinel/scripts: /opt/kubengine/scripts
+envs:
+  APP_NAME: redis-sentinel
+  PATH: /opt/kubengine/redis-sentinel/bin:/usr/local/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/bin
+labels:
+  org.opencontainers.image.vendor: kubengine.io
+  org.opencontainers.image.name: redis-sentinel
+  org.opencontainers.image.description: Redis Sentinel is a high availability solution for Redis that provides monitoring, failover, and configuration management for Redis instances.
+
+versions:
+  8.2.3:
+    download_url: http://172.31.135.100:8080/data/kubengine/download.io/redis/redis-8.2.3.tar.gz
+    envs:
+      APP_VERSION: 8.2.3
+    labels:
+      org.opencontainers.image.base.name: apps/redis-sentinel:8.2.3
+      org.opencontainers.image.version: 8.2.3
+  7.4.7:
+    download_url: http://172.31.135.100:8080/data/kubengine/download.io/redis/redis-7.4.7.tar.gz
+    envs:
+      APP_VERSION: 7.4.7
+    labels:
+      org.opencontainers.image.base.name: apps/redis-sentinel:7.4.7
+      org.opencontainers.image.version: 7.4.7
+  6.2.21:
+    download_url: http://172.31.135.100:8080/data/kubengine/download.io/redis/redis-6.2.21.tar.gz
+    envs:
+      APP_VERSION: 6.2.21
+    labels:
+      org.opencontainers.image.base.name: apps/redis-sentinel:6.2.21
+      org.opencontainers.image.version: 6.2.21

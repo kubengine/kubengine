@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- 主渐变：科技蓝 -->
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0066CC;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#003D7A;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- 高光渐变 -->
+    <linearGradient id="highlightGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#00A3FF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0066CC;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- 引擎光效 -->
+    <radialGradient id="engineGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#00A3FF;stop-opacity:0.8" />
+      <stop offset="70%" style="stop-color:#0066CC;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#003D7A;stop-opacity:0" />
+    </radialGradient>
+
+    <!-- 阴影滤镜 -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="4" stdDeviation="4" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- 背景圆形（引擎底座） -->
+  <circle cx="256" cy="256" r="240" fill="url(#mainGradient)" filter="url(#shadow)"/>
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#00A3FF" stroke-width="3" opacity="0.3"/>
+
+  <!-- Kubernetes 七边形轮舵 -->
+  <g transform="translate(256, 256)">
+    <!-- 七个轮辐 -->
+    <g stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" fill="none">
+      <line x1="0" y1="-70" x2="0" y2="-130" opacity="0.9"/>
+      <line x1="66" y1="-22" x2="122" y2="-40" opacity="0.9"/>
+      <line x1="66" y1="48" x2="122" y2="88" opacity="0.9"/>
+      <line x1="0" y1="75" x2="0" y2="135" opacity="0.9"/>
+      <line x1="-66" y1="48" x2="-122" y2="88" opacity="0.9"/>
+      <line x1="-66" y1="-22" x2="-122" y2="-40" opacity="0.9"/>
+      <line x1="0" y1="-50" x2="0" y2="50" opacity="0.4" stroke-width="8"/>
+    </g>
+
+    <!-- 轮辋 -->
+    <circle cx="0" cy="0" r="130" fill="none" stroke="#FFFFFF" stroke-width="12" opacity="0.9"/>
+    <circle cx="0" cy="0" r="110" fill="none" stroke="#FFFFFF" stroke-width="4" opacity="0.5"/>
+
+    <!-- 中心引擎核心 -->
+    <circle cx="0" cy="0" r="70" fill="#FFFFFF" opacity="0.95"/>
+    <circle cx="0" cy="0" r="65" fill="url(#highlightGradient)"/>
+
+    <!-- 字母 K（Kubernetes/KubeEngine） -->
+    <text x="0" y="18" font-family="Arial, sans-serif" font-size="64" font-weight="bold"
+          fill="#FFFFFF" text-anchor="middle">K</text>
+  </g>
+
+  <!-- 动态引擎环（旋转效果） -->
+  <g transform="translate(256, 256)" opacity="0.6">
+    <circle cx="0" cy="0" r="175" fill="none" stroke="url(#engineGlow)" stroke-width="20" stroke-dasharray="60 40"/>
+  </g>
+
+  <!-- 外部科技装饰环 -->
+  <g transform="translate(256, 256)">
+    <circle cx="0" cy="0" r="190" fill="none" stroke="#00A3FF" stroke-width="2"
+            stroke-dasharray="10 20" opacity="0.5">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="20s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- 底部平台基座 -->
+  <path d="M 156 440 L 356 440 L 376 480 L 136 480 Z" fill="#003D7A" opacity="0.8"/>
+  <rect x="146" y="480" width="220" height="20" rx="4" fill="#0066CC"/>
+
+  <!-- 顶部高光 -->
+  <ellipse cx="256" cy="80" rx="120" ry="30" fill="#FFFFFF" opacity="0.1"/>
+</svg>

@@ -1,0 +1,22 @@
+base_image: kylin-v11:alpine
+entrypoint: redis_exporter
+ports:
+- 9121
+workingdir: /opt/kubengine/redis-exporter
+author: duanzt
+rootfs:
+  redis-exporter/redis_exporter: /opt/kubengine/redis-exporter/bin/redis_exporter
+envs:
+  APP_NAME: redis-exporter
+  PATH: /opt/kubengine/redis-exporter/bin:/usr/local/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/bin
+labels:
+  org.opencontainers.image.vendor: kubengine.io
+  org.opencontainers.image.name: redis-exporter
+  org.opencontainers.image.description: Redis Exporter for Prometheus monitoring
+versions:
+  1.80.1:
+    envs:
+      APP_VERSION: 1.80.1
+    labels:
+      org.opencontainers.image.base.name: apps/redis-exporter:1.80.1
+      org.opencontainers.image.version: 1.80.1

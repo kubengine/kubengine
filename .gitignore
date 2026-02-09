@@ -1,0 +1,163 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+.idea_modules/
+
+# VSCode
+.vscode/
+!.vscode/settings.json
+
+# Continue.dev
+.continue/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Type checking
+.pytype/
+.pyre/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDEs
+*.sublime-project
+*.sublime-workspace
+
+# FastAPI / ASGI
+*.pid
+
+# Config directory - only keep application.yaml
+config/*
+!config/application.yaml
+
+# Static files generated
+static/*.png
+static/*.jpg
+static/*.jpeg
+!static/logo.svg
+!static/logo.png
+!static/logo.jpg
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.cache
+
+# Distribution / packaging
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+
+# pyinfra
+.pyinfra/
+.pyinfra_state/
+
+# SSH keys (security)
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+known_hosts
+
+# Helm
+*.tgz
+charts/*.tgz
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+.kube/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
