@@ -157,7 +157,7 @@ def safe_execution(func: Callable[P, T]) -> Callable[P, T]:
 def cli(ctx: click.Context, quiet: bool, debug: bool) -> None:
     """镜像构建工具
 
-    用于构建和管理Docker镜像的命令行工具。
+    用于构建和管理Docker镜像的命令行工具。\n
     支持单个版本构建、批量构建、应用管理等功能。
     """
     ctx.ensure_object(dict)

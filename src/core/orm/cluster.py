@@ -95,7 +95,7 @@ class ClusterSchema(BaseModel):
     @field_serializer("create_time", "updated_time")
     def serialize_datetime(self, dt: datetime, _info: Any) -> Optional[str]:
         """Serialize datetime to ISO format string."""
-        return dt.isoformat()
+        return dt.isoformat() if dt else ""
 
 
 def _merge_configurations(target: Dict[str, Any], source: Dict[str, Any]) -> None:

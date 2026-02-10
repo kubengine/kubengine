@@ -5,10 +5,10 @@
 
 ### 构建于麒麟之上，为云原生时代打造的坚固基石
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Kylin OS](https://img.shields.io/badge/Base%20OS-Kylin%20Server%20V11-orange.svg)](http://www.kylinos.cn/)
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.121+-green.svg)](https://fastapi.tiangolo.com/)
+[![License: Apache 2.0](https://github.com/kubengine/kubengine/blob/main/static/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Kylin OS](https://github.com/kubengine/kubengine/blob/main/static/badge/Base%20OS-Kylin%20Server%20V11-orange.svg)](http://www.kylinos.cn/)
+[![Python 3.11](https://github.com/kubengine/kubengine/blob/main/static/badge/python-3.11-blue.svg)](https://www.python.org/)
+[![FastAPI](https://github.com/kubengine/kubengine/blob/main/static/badge/FastAPI-0.121+-green.svg)](https://fastapi.tiangolo.com/)
 
 </div>
 

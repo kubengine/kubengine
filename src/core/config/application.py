@@ -31,19 +31,19 @@ class TLSConfig:
 
     @property
     def SERVER_CRT(self) -> str:
-        return f"{self.ROOT_DIR}/certs/server/server.crt"
+        return f"{self.ROOT_DIR}/server/server.crt"
 
     @property
     def SERVER_KEY(self) -> str:
-        return f"{self.ROOT_DIR}/certs/server/server.key"
+        return f"{self.ROOT_DIR}/server/server.key"
 
     @property
     def CA_CRT(self) -> str:
-        return f"{self.ROOT_DIR}/certs/ca/ca.crt"
+        return f"{self.ROOT_DIR}/ca/ca.crt"
 
     @property
     def CA_KEY(self) -> str:
-        return f"{self.ROOT_DIR}/certs/ca/ca.key"
+        return f"{self.ROOT_DIR}/ca/ca.key"
 
     # CA证书信息配置
     CA_COUNTRY_CODE: ClassVar[str] = "CN"
