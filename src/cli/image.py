@@ -179,7 +179,7 @@ def cli(ctx: click.Context, quiet: bool, debug: bool) -> None:
 
     # 核心修改：调用setup_cli_logging时，传入全局rich console实例，实现日志/进度条输出统一
     setup_cli_logging(log_level, log_file,
-                      console_output=True, rich_console=console)
+                      console_output=False, rich_console=console)
     # 同步设置当前logger级别
     logger.setLevel(log_level)
 

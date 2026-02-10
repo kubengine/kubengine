@@ -24,12 +24,12 @@ from infra.executor_wrapper import (
 )
 from core.ssh import AsyncSSHClient
 
-from gevent import monkey  # noqa
-monkey.patch_all()  # noqa
-
 # 初始化日志
 setup_cli_logging(
-    level="INFO", log_file=f"{Application.ROOT_DIR}/logs/k8s_cli.log")
+    level="INFO",
+    log_file=f"{Application.ROOT_DIR}/logs/k8s_cli.log",
+    console_output=False  # 禁用控制台输出
+)
 logger = get_logger(__name__)
 
 

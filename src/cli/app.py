@@ -1,22 +1,42 @@
 """
-应用命令行工具模块
+KubeEngine 统一命令行工具
 
-提供应用程序管理相关的 CLI 命令，支持：
-- 应用启动和配置
-- 管理员密码管理
-- AK/SK 密钥对生成和管理
-- 数据初始化（硬编码默认应用到 SQLite 数据库）
+提供完整的 KubeEngine 平台管理功能，包括：
+- 应用管理：启动、配置、数据初始化
+- 集群管理：主机名配置、SSH 互信、命令执行
+- 镜像构建：单个/批量构建、镜像管理
+- K8s 部署：自动化集群部署、组件安装
 
 使用示例：
-    # 启动应用
-    python app.py run --host 0.0.0.0 --port 8080
+    # 应用管理
+    kubengine run --host 0.0.0.0 --port 8080
+    kubengine set-password
+    kubengine init-data
 
-    # 设置管理员密码
-    python app.py set-password
+    # 集群管理
+    kubengine cluster configure-cluster --hosts 172.31.65.150,localhost \\
+        --hostname-map 172.31.65.150:node-1,localhost:node-2
 
-    # 初始化数据
-    python app.py init-data
+    # 镜像构建
+    kubengine image build redis -v 7.2
+    kubengine image list-apps
+
+    # K8s 部署
+    kubengine k8s deploy --deploy-src /root/offline-deploy
 """
+
+import warnings
+
+# 必须在任何其他导入之前执行 gevent monkey patching
+# 以避免 MonkeyPatchWarning
+try:
+    from gevent import monkey  # noqa: F401
+    monkey.patch_all()  # noqa: F401
+except ImportError:
+    pass
+
+# 忽略 gevent 的 MonkeyPatchWarning
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="gevent")
 
 import os
 import uuid
@@ -33,25 +53,40 @@ from core.orm.app_field_config import (
 from core.orm.engine import Base, engine, get_db
 from web.utils.auth import get_password_hash
 
+# 导入其他 CLI 模块
+from cli import cluster as cluster_cli
+from cli import image as image_cli
+from cli import k8s as k8s_cli
+
 logger = get_logger(__name__)
 
 
-# ============================ 命令行工具 ============================
+# ============================ 主命令行入口 ============================
 
 
 @click.group()
 def cli() -> None:
     """
-    应用命令行工具
+    KubeEngine 统一命令行工具
 
-    提供应用程序管理相关的命令行接口。
+    提供完整的 KubeEngine 平台管理功能。
 
-    核心功能：\n
-        1. 管理管理员密码和 AK/SK 密钥\n
-        2. 启动应用服务器\n
-        3. 初始化默认应用到数据库\n
+    核心功能模块：\n
+        1. 应用管理：run, set-password, init-data\n
+        2. 集群管理：cluster configure-cluster, execute-cmd\n
+        3. 镜像构建：image build, image list-apps\n
+        4. K8s 部署：k8s deploy, k8s config\n
     """
     pass
+
+
+# 注册子命令组
+cli.add_command(cluster_cli.cli, name="cluster")
+cli.add_command(image_cli.cli, name="image")
+cli.add_command(k8s_cli.cli, name="k8s")
+
+
+# ============================ 应用管理命令 ============================
 
 
 @cli.command()
