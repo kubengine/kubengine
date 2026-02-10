@@ -23,6 +23,7 @@
 - [系统架构](#-系统架构)
 - [快速开始](#-快速开始)
 - [配置说明](#-配置说明)
+- [CLI 命令](#-cli-命令)
 - [开发指南](#-开发指南)
 - [API 文档](#-api-文档)
 - [项目结构](#-项目结构)
@@ -47,21 +48,24 @@ KubeEngine 旨在简化在 Kylin OS 上构建和管理 Kubernetes 集群的复�
   - **Kata Containers**：安全容器运行时
   - **Helm**：Kubernetes 应用包管理器
   - **Dashboard**：Kubernetes 通用 Web UI
+  - **Metrics Server**：集群资源监控
+  - **Nginx Ingress**：Kubernetes Ingress 控制器
 
 ### 🖥️ 统一可视化管控
 - **自研 Web UI**：提供直观易用的图形化界面，告别复杂的命令行操作
 - **强大的 API 引擎**：基于 FastAPI 构建的高性能 RESTful API
 - **WebSocket 支持**：实时任务日志输出与状态更新
-- **平台管理**：集群、节点、资源池的统一纳管与监控
+- **平台管理**：集群、节点、应用、资源的统一纳管与监控
 
 ### 📦 高效应用生命周期管理
-- **Helm 模板中心**：内置经过抽象的通用 Helm 模板
-- **应用商店**：支持一键部署各类主流中间件与应用
+- **应用模板中心**：内置经过抽象的通用应用模板（如 Redis）
+- **一键部署**：支持通过 Helm Chart 快速部署各类中间件与应用
 - **镜像工厂**：遵循 OCI 标准的自动化镜像构建系统
-- **标准化部署规格**：统一的资源限制、Ingress 规则、镜像仓库配置
+- **集群管理**：多集群支持，统一的集群纳管与操作
 
 ### 🔐 安全与认证
-- **JWT 认证**：基于令牌的安全认证机制
+- **JWT 认证**：基于令牌的安全认证机制，支持 Token 刷新
+- **AK/SK 密钥对**：API 访问密钥管理
 - **TLS 证书管理**：自动化 CA 证书生成与管理
 - **SSH 信任配置**：集群节点间 SSH 免密互信配置
 
@@ -85,6 +89,9 @@ KubeEngine 旨在简化在 Kylin OS 上构建和管理 Kubernetes 集群的复�
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────┐  │  │
 │  │  │ 任务调度 │  │ SSH 管理 │  │ 配置管理 │  │ 镜像构建    │  │  │
 │  │  └─────────┘  └─────────┘  └─────────┘  └─────────────┘  │  │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────┐  │  │
+│  │  │ 应用管理 │  │ ORM 存储 │  │ HTTP客户端│ │ WebSocket   │  │  │
+│  │  └─────────┘  └─────────┘  └─────────┘  └─────────────┘  │  │
 │  └──────────────────────────┬──────────────────────────────┘  │
 ├─────────────────────────────┼─────────────────────────────────┤
 │                             │                                   │
@@ -93,6 +100,10 @@ KubeEngine 旨在简化在 Kylin OS 上构建和管理 Kubernetes 集群的复�
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐  │  │
 │  │  │  Master  │  │  Worker  │  │   Calico │  │ Longhorn│  │  │
 │  │  │  节点    │  │  节点    │  │   网络   │  │  存储   │  │  │
+│  │  └──────────┘  └──────────┘  └──────────┘  └─────────┘  │  │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐  │  │
+│  │  │  Harbor  │  │ MetalLB  │  │ Dashboard│  │  Helm   │  │  │
+│  │  │  镜像仓库│  │ 负载均衡 │  │  Web UI  │  │  包管理 │  │  │
 │  │  └──────────┘  └──────────┘  └──────────┘  └─────────┘  │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
@@ -145,7 +156,7 @@ cluster:
 kubernetes:
   master:
     ip: 172.31.57.23
-    schedulable: true
+    schedulable: True
   worker:
     ips:
       - 172.31.57.22
@@ -153,16 +164,23 @@ kubernetes:
   cidr:
     pod: 10.96.0.0/16
     service: 10.97.0.0/16
+  loadbalancer:
+    ip-pools:
+      - 172.31.57.30-172.31.57.40
+```
+
+### 初始化数据
+
+```bash
+# 初始化默认应用模板数据
+python -m src.cli.app init-data
 ```
 
 ### 启动服务
 
 ```bash
 # 启动 API 服务
-kubengine-api
-
-# 或使用 CLI 工具
-kubengine cluster --help
+python -m src.cli.app run --host 0.0.0.0 --port 8080
 ```
 
 ## ⚙️ 配置说明
@@ -174,10 +192,13 @@ kubengine cluster --help
 | `root_dir` | KubeEngine 根目录 | `/opt/kubengine` |
 | `domain` | 平台域名 | `kubengine.io` |
 | `cluster.nodes` | 集群节点 IP 列表 | `[]` |
+| `cluster.hostnames` | 节点 IP 到主机名的映射 | `{}` |
 | `kubernetes.master.ip` | Master 节点 IP | - |
+| `kubernetes.master.schedulable` | Master 是否可调度 | `True` |
 | `kubernetes.cidr.pod` | Pod CIDR | `10.96.0.0/16` |
 | `kubernetes.cidr.service` | Service CIDR | `10.97.0.0/16` |
 | `auth.token.expire_minutes` | Token 过期时间(分钟) | `30` |
+| `auth.token.renew_threshold_minutes` | Token 刷新阈值(分钟) | `5` |
 
 ### TLS 证书配置
 
@@ -190,6 +211,130 @@ tls:
   ca_valid_days: 3650
 ```
 
+### 管理员账户配置
+
+管理员密码和 AK/SK 密钥对通过 CLI 设置：
+
+```bash
+# 设置管理员密码（首次设置会自动生成 AK/SK）
+python -m src.cli.app set-password
+```
+
+## 🛠️ CLI 命令
+
+### 应用管理
+
+```bash
+# 启动 API 服务
+python -m src.cli.app run [OPTIONS]
+
+# 选项:
+#   --host TEXT      监听的主机地址 (默认: 0.0.0.0)
+#   --port INTEGER   监听的端口号 (默认: 8080)
+#   --workers INTEGER 工作进程数 (默认: 1)
+
+# 设置管理员密码
+python -m src.cli.app set-password
+
+# 初始化默认应用数据
+python -m src.cli.app init-data [OPTIONS]
+
+# 选项:
+#   --force    强制覆盖已存在的应用数据
+```
+
+### 集群管理
+
+```bash
+# 配置集群（主机名 + SSH 互信）
+python -m src.cli.cluster configure-cluster [OPTIONS]
+
+# 选项:
+#   --hosts TEXT         集群节点 IP 列表，逗号分隔
+#   --hostname-map TEXT  IP:主机名 映射，逗号分隔
+#   --username TEXT      SSH 用户名 (默认: root)
+#   --password TEXT      SSH 密码
+#   --key-file TEXT      SSH 私钥文件路径 (默认: ~/.ssh/id_rsa)
+#   --skip-verify        跳过 SSH 互信验证
+
+# 显示集群配置
+python -m src.cli.cluster show-cluster-config
+
+# 在集群节点上执行命令
+python -m src.cli.cluster execute-cmd [OPTIONS]
+
+# 选项:
+#   --hosts TEXT   节点 IP 列表
+#   --cmd TEXT     要执行的命令 (必需)
+#   --username TEXT SSH 用户名
+#   --password TEXT SSH 密码
+#   --key-file TEXT SSH 私钥文件路径
+
+# 禁用防火墙
+python -m src.cli.cluster disable-firewalld [OPTIONS]
+```
+
+### 镜像构建
+
+```bash
+# 构建单个应用版本
+python -m src.cli.image build [OPTIONS]
+
+# 选项:
+#   --app TEXT         应用名称 (必需)
+#   --version TEXT     版本号
+#   --push             构建后推送镜像
+#   --registry TEXT    目标仓库地址
+
+# 构建多个版本
+python -m src.cli.image build-multi [OPTIONS]
+
+# 构建所有版本
+python -m src.cli.image build-all [OPTIONS]
+
+# 列出支持的应用
+python -m src.cli.image list-apps
+
+# 显示应用信息
+python -m src.cli.image info [OPTIONS]
+
+# 清理构建产物
+python -m src.cli.image clean [OPTIONS]
+```
+
+### Kubernetes 部署
+
+```bash
+# 部署 Kubernetes 集群
+python -m src.cli.k8s deploy [OPTIONS]
+
+# 选项:
+#   --skip-dependencies  跳过依赖检查
+#   --dry-run            仅显示将要执行的操作
+
+# 显示部署配置
+python -m src.cli.k8s config [OPTIONS]
+
+# 重置部署状态
+python -m src.cli.k8s reset-state
+```
+
+### 镜像仓库操作
+
+```bash
+# 拉取镜像
+python -m src.cli.image ctr pull [OPTIONS]
+
+# 推送镜像
+python -m src.cli.image ctr push [OPTIONS]
+
+# 添加仓库代理
+python -m src.cli.image ctr add-proxy [OPTIONS]
+
+# 列出代理配置
+python -m src.cli.image ctr list-proxy
+```
+
 ## 👨‍💻 开发指南
 
 ### 开发环境设置
@@ -197,9 +342,6 @@ tls:
 ```bash
 # 安装开发依赖
 pip install -e ".[dev]"
-
-# 安装 pre-commit hooks
-pre-commit install
 
 # 运行测试
 pytest
@@ -212,87 +354,198 @@ isort src/
 mypy src/
 ```
 
-### CLI 命令
+### 代码风格
 
-```bash
-# 集群管理
-kubengine cluster init          # 初始化集群
-kubengine cluster hostname      # 配置主机名
-kubengine cluster ssh-trust     # 配置 SSH 信任
-
-# 镜像构建
-kubengine image build           # 构建镜像
-kubengine image list            # 列出可用构建器
-```
+项目遵循以下代码规范：
+- 使用 Python 3.10+ 类型注解（`str | None` 而非 `Optional[str]`）
+- Google 风格的文档字符串
+- 模块级分组注释（`# ============================ 标题 ============================`）
+- 使用 `logger` 而非 `print` 进行日志输出
 
 ## 📚 API 文档
 
 启动服务后访问：
 
-- **Swagger UI**：`https://kubengine.io/docs`
-- **ReDoc**：`https://kubengine.io/redoc`
+- **Swagger UI**：`http://localhost:8080/docs`
+- **ReDoc**：`http://localhost:8080/redoc`
 
 ### 主要 API 端点
 
+#### 认证 (`/api/v1/auth`)
 | 端点 | 方法 | 描述 |
 |------|------|------|
-| `/api/v1/auth/login` | POST | 用户登录 |
-| `/api/v1/cluster` | GET | 获取集群信息 |
-| `/api/v1/nodes` | GET | 获取节点列表 |
-| `/api/v1/apps` | POST | 部署应用 |
-| `/api/v1/tasks/{id}` | GET | 获取任务状态 |
-| `/api/v1/ws/logs` | WebSocket | 实时日志流 |
+| `/login` | POST | 用户登录，返回 JWT Token |
+| `/renew` | POST | 刷新访问令牌 |
+
+#### 健康检查 (`/api/v1/health`)
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/` | GET | 系统健康状态检查 |
+
+#### SSH 管理 (`/api/v1/ssh`)
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/execute` | POST | 在远程主机执行命令 |
+
+#### Kubernetes 管理 (`/api/v1/k8s`)
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/node` | GET | 获取节点信息 |
+| `/overview` | GET | 获取集群概览（含 CPU/内存指标） |
+| `/dashboard/resource/{type}` | GET | 列出 K8s 资源（Pod、Service 等） |
+| `/dashboard/resourcedetail/{type}/{namespace}/{name}` | GET | 获取资源详情 |
+| `/dashboard/resourcepod/{type}/{namespace}/{name}` | GET | 获取资源关联的 Pod |
+| `/node/{name}/taints` | GET/POST/DELETE | 节点污点管理 |
+
+#### 应用管理 (`/api/v1/app`)
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/list` | GET | 分页列出应用 |
+| `/get/{app_id}` | GET | 根据 ID 获取应用详情 |
+| `/add` | POST | 创建新应用 |
+| `/update` | PUT | 更新应用 |
+| `/del/{app_id}` | DELETE | 删除应用 |
+| `/deploy` | POST | 部署应用 |
+| `/cluster` | GET | 列出所有集群 |
+| `/cluster/{cluster_id}` | GET | 获取集群详情 |
+| `/clusterInfo/{cluster_id}` | GET | 获取集群资源详情 |
+| `/cluster/{cluster_id}/name` | PUT | 更新集群名称 |
+| `/cluster/{cluster_ip}` | DELETE | 删除集群 |
+
+#### 制品管理 (`/api/v1/artifacts`)
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/list` | GET | 列出制品文件 |
+| `/upload` | POST | 上传制品文件 |
+| `/download/{filename}` | GET | 下载制品文件 |
+| `/delete/{filename}` | DELETE | 删除制品文件 |
+
+#### WebSocket (`/api/v1/ws`)
+| 端点 | 描述 |
+|------|------|
+| `/logs` | 实时任务日志流 |
 
 ## 📁 项目结构
 
 ```
 kubengine/
-├── config/                 # 配置文件目录
-│   ├── application.yaml    # 主配置文件
-│   └── certs/             # TLS 证书目录
+├── config/                    # 配置文件目录
+│   ├── application.yaml       # 主配置文件
+│   └── certs/                 # TLS 证书目录
+│       ├── ca/                # CA 证书
+│       └── server/            # 服务器证书
 ├── src/
-│   ├── api/               # RESTful API 实现
-│   ├── builder/           # 镜像构建模块
+│   ├── api/                   # RESTful API 实现（废弃，移至 web/api）
+│   ├── builder/               # 镜像构建模块
 │   │   └── image/
-│   │       ├── os/        # 操作系统镜像构建器
-│   │       ├── kubectl/   # kubectl 镜像
-│   │       └── redis/     # Redis 镜像
-│   ├── cli/               # 命令行工具
-│   │   ├── cluster.py     # 集群管理命令
-│   │   └── image.py       # 镜像构建命令
-│   ├── core/              # 核心功能模块
-│   │   ├── config/        # 配置管理
-│   │   ├── orm/           # 数据模型
-│   │   ├── ssh.py         # SSH 客户端
-│   │   └── logger.py      # 日志模块
-│   └── infra/             # 基础设施代码
-├── static/                # 静态资源
-├── tests/                 # 测试文件
-├── pyproject.toml         # 项目配置
-└── README.md              # 项目文档
+│   │       ├── base_builder.py      # 基础构建器类
+│   │       ├── loader.py            # 构建器加载器
+│   │       ├── os/                  # 操作系统镜像构建器
+│   │       │   └── kylin_v11.py     # Kylin OS 构建器
+│   │       ├── kubectl/             # kubectl 镜像
+│   │       ├── redis/               # Redis 镜像
+│   │       └── rootfs/              # 根文件系统构建器
+│   ├── cli/                   # 命令行工具
+│   │   ├── app.py             # 应用管理命令
+│   │   ├── cluster.py         # 集群管理命令
+│   │   ├── image.py           # 镜像构建命令
+│   │   ├── k8s.py             # K8s 部署命令
+│   │   └── models.py          # CLI 模型
+│   ├── core/                  # 核心功能模块
+│   │   ├── config/            # 配置管理
+│   │   │   ├── application.py
+│   │   │   ├── config_dict.py
+│   │   │   └── inject.py
+│   │   ├── containerd/        # Container 运行时
+│   │   ├── http_api_client/   # HTTP API 客户端
+│   │   │   ├── basic_client.py
+│   │   │   ├── dashboard_client.py
+│   │   │   ├── harbor_client.py
+│   │   │   ├── helm_resource_check.py
+│   │   │   ├── k8s_client.py
+│   │   │   └── longhorn_client.py
+│   │   ├── misc/              # 工具模块
+│   │   │   ├── ca.py
+│   │   │   ├── network.py
+│   │   │   ├── password.py
+│   │   │   ├── properties.py
+│   │   │   ├── time.py
+│   │   │   └── websocket.py
+│   │   ├── orm/               # 数据模型
+│   │   │   ├── app.py
+│   │   │   ├── app_field_config.py
+│   │   │   ├── cluster.py
+│   │   │   ├── engine.py
+│   │   │   └── task.py
+│   │   ├── command.py         # 命令执行
+│   │   ├── logger.py          # 日志系统
+│   │   └── ssh.py             # SSH 客户端
+│   ├── infra/                 # 基础设施部署脚本
+│   │   ├── install_calico.py          # Calico 网络
+│   │   ├── install_containerd.py      # Container 运行时
+│   │   ├── install_cni.py             # CNI 网络
+│   │   ├── install_dashboard.py       # K8s Dashboard
+│   │   ├── install_harbor.py          # 镜像仓库
+│   │   ├── install_helm.py            # 包管理器
+│   │   ├── install_ingress_nginx.py   # Ingress 控制器
+│   │   ├── install_kubernetes.py      # K8s 组件
+│   │   ├── install_longhorn.py        # 分布式存储
+│   │   ├── install_metallb.py         # 负载均衡器
+│   │   ├── install_metrics_server.py   # 指标采集
+│   │   ├── issue_cert.py              # 证书生成
+│   │   ├── kubernetes_join_node.py    # 节点加入
+│   │   └── executor_wrapper.py        # 脚本执行器
+│   └── web/                   # Web 界面
+│       ├── api/               # API 端点
+│       │   ├── app.py         # 应用管理 API
+│       │   ├── artifacts.py   # 制品管理 API
+│       │   ├── auth_routes.py # 认证 API
+│       │   ├── health.py      # 健康检查 API
+│       │   ├── k8s.py         # K8s 管理 API
+│       │   ├── ssh.py         # SSH 管理 API
+│       │   └── websocket.py   # WebSocket API
+│       ├── main.py            # FastAPI 应用入口
+│       ├── static/            # 静态文件
+│       └── utils/             # Web 工具
+│           ├── auth.py        # 认证工具
+│           ├── page.py        # 分页工具
+│           └── response.py    # 响应工具
+├── static/                    # 静态资源
+│   ├── badge/                 # 徽章图片
+│   └── logo.png               # Logo 图片
+├── logs/                      # 日志文件目录
+├── tests/                     # 测试文件
+├── pyproject.toml             # 项目配置
+├── kubekylin.db               # SQLite 数据库
+└── README.md                  # 项目文档
 ```
 
 ## 🛠️ 技术栈
 
-### 后端
-- **FastAPI**：现代化、高性能的 Web 框架
-- **Uvicorn**：ASGI 服务器
-- **Pydantic**：数据验证与设置管理
-- **SQLAlchemy**：ORM 工具
+### 后端框架
+- **FastAPI** >= 0.121.3：现代化、高性能的 Web 框架
+- **Uvicorn** >= 0.38.0：ASGI 服务器
+- **Pydantic** v2：数据验证与设置管理
+- **SQLAlchemy** >= 2.0.45：ORM 工具
+- **Click**：命令行界面框架
 
-### 自动化
-- **pyinfra**：自动化基础设施部署工具
-- **asyncssh**：异步 SSH 客户端
-
-### Kubernetes
-- **kubernetes-python**：Kubernetes Python 客户端
+### Kubernetes 生态
+- **kubernetes-python** >= 34.1.0：Kubernetes Python 客户端
 - **Helm**：Kubernetes 包管理器
+- **pyinfra** >= 3.5.1：自动化基础设施部署
+- **asyncssh** >= 2.21.1：异步 SSH 客户端
+
+### Web 与通信
+- **WebSockets** >= 15.0.1：实时通信
+- **python-multipart** >= 0.0.20：文件上传支持
+- **requests** >= 2.32.5：HTTP 请求库
 
 ### 开发工具
-- **pytest**：测试框架
-- **black**：代码格式化
-- **mypy**：静态类型检查
-- **isort**：导入排序
+- **pytest** >= 9.0.1：测试框架
+- **black** >= 23.1.0：代码格式化
+- **mypy** >= 1.0.0：静态类型检查
+- **isort** >= 5.12.0：导入排序
+- **rich** >= 14.3.1：美化命令行输出
 
 ## 📄 许可证
 
