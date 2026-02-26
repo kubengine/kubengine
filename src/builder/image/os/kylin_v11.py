@@ -84,8 +84,8 @@ class Builder(BaseBuilder):
         # 调用父类初始化
         super().__init__(name, config_path, options, **kwargs)
 
-        # 验证构建环境
-        self._validate_build_environment()
+        # 注意：环境验证已移至实际构建时执行，避免初始化时卡住
+        # （例如：dnf 命令可能因为锁文件或网络问题而卡住）
 
         logger.info(f"Kylin v11构建器初始化完成: {name}")
         logger.debug(f"配置文件: {config_path}")
@@ -107,10 +107,11 @@ class Builder(BaseBuilder):
         """执行自定义构建步骤
 
         包含以下主要步骤：
-        1. 安装指定的软件包
-        2. 清理缓存和文档文件
-        3. 配置系统时区
-        4. 安全优化设置
+        1. 验证构建环境
+        2. 安装指定的软件包
+        3. 清理缓存和文档文件
+        4. 配置系统时区
+        5. 安全优化设置
 
         Args:
             context: 构建上下文
@@ -118,6 +119,9 @@ class Builder(BaseBuilder):
         Raises:
             BuilderError: 构建步骤执行失败
         """
+        # 首先验证构建环境
+        self._validate_build_environment()
+
         # container_id = context.container_id
         # mount_dir = context.mount_dir
         # version = context.version
