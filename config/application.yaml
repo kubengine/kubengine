@@ -10,9 +10,9 @@ auth:
     renew_threshold_minutes: 5
   users:
     admin:
-      password_hash: $2b$12$8Ccom3XJXVFY079nrPO6IeaV4ksBRc4GA0b6bDrCFF2uUdKOSn2Wu
-      ak: AK6C0802BC
-      sk_hash: $2b$12$mQH5.6gmnbXMMY8XdeW0L.hLpEvFZaTi4elfr756sNsLgC8bl0QpC
+      password_hash: $2b$12$FoYHbiERoL12HGhlVaFG3ue5NhSfbx8xnZ/g8.7yTpZfPLknyxwLS
+      ak: AK8F60249C
+      sk_hash: $2b$12$pRoAn5q7YC/.alND0si3nOFDN6qTFS.msgaFmY6Ta80Wk62RIFuGC
 cluster:
   nodes:
     - 172.31.57.23
