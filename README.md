@@ -22,10 +22,8 @@
 - [核心特性](#-核心特性)
 - [系统架构](#-系统架构)
 - [快速开始](#-快速开始)
-- [配置说明](#-配置说明)
-- [CLI 命令](#-cli-命令)
+- [文档](#-文档)
 - [开发指南](#-开发指南)
-- [API 文档](#-api-文档)
 - [项目结构](#-项目结构)
 - [技术栈](#-技术栈)
 - [许可证](#-许可证)
@@ -122,7 +120,7 @@ KubeEngine 旨在简化在 Kylin OS 上构建和管理 Kubernetes 集群的复�
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-org/kubengine.git
+git clone https://github.com/kubengine/kubengine.git
 cd kubengine
 
 # 创建虚拟环境
@@ -183,157 +181,39 @@ python -m src.cli.app init-data
 python -m src.cli.app run --host 0.0.0.0 --port 8080
 ```
 
-## ⚙️ 配置说明
+### 默认账户
 
-### 主要配置项
+| 项目 | 值 |
+|------|-----|
+| 用户名 | `admin` |
+| 默认密码 | `Admin@123` |
+| AK（访问密钥 ID） | `AK8F60249C` |
+| SK（密钥） | `SK17F1B276797F4957` |
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `root_dir` | KubeEngine 根目录 | `/opt/kubengine` |
-| `domain` | 平台域名 | `kubengine.io` |
-| `cluster.nodes` | 集群节点 IP 列表 | `[]` |
-| `cluster.hostnames` | 节点 IP 到主机名的映射 | `{}` |
-| `kubernetes.master.ip` | Master 节点 IP | - |
-| `kubernetes.master.schedulable` | Master 是否可调度 | `True` |
-| `kubernetes.cidr.pod` | Pod CIDR | `10.96.0.0/16` |
-| `kubernetes.cidr.service` | Service CIDR | `10.97.0.0/16` |
-| `auth.token.expire_minutes` | Token 过期时间(分钟) | `30` |
-| `auth.token.renew_threshold_minutes` | Token 刷新阈值(分钟) | `5` |
+> ⚠️ **安全警告**：生产环境请立即修改默认密码！
 
-### TLS 证书配置
+访问 `http://localhost:8080/docs` 查看 Swagger API 文档。
 
-```yaml
-tls:
-  root_dir: /opt/kubengine/config/certs
-  ca_country_code: CN
-  ca_state_name: Beijing
-  ca_organization_name: kubengine
-  ca_valid_days: 3650
-```
+## 📚 文档
 
-### 管理员账户配置
+- **[CLI 命令文档](docs/CLI.md)** - 命令行工具完整使用指南
+  - 原生 Python 执行方式
+  - kubengine 命令方式
+  - 应用管理、集群管理、镜像构建等命令
 
-管理员密码和 AK/SK 密钥对通过 CLI 设置：
+- **[配置说明](docs/CONFIGURATION.md)** - 配置文件详解
+  - 配置文件位置和查找顺序
+  - 完整配置项说明
+  - 生产环境配置建议
 
-```bash
-# 设置管理员密码（首次设置会自动生成 AK/SK）
-python -m src.cli.app set-password
-```
+- **[API 文档](docs/API.md)** - RESTful API 完整参考
+  - 认证方式
+  - 所有 API 端点详解
+  - 使用示例
 
-## 🛠️ CLI 命令
+- **[RPM 打包](docs/RPM_BUILD.md)** - RPM 包构建指南
 
-### 应用管理
-
-```bash
-# 启动 API 服务
-python -m src.cli.app run [OPTIONS]
-
-# 选项:
-#   --host TEXT      监听的主机地址 (默认: 0.0.0.0)
-#   --port INTEGER   监听的端口号 (默认: 8080)
-#   --workers INTEGER 工作进程数 (默认: 1)
-
-# 设置管理员密码
-python -m src.cli.app set-password
-
-# 初始化默认应用数据
-python -m src.cli.app init-data [OPTIONS]
-
-# 选项:
-#   --force    强制覆盖已存在的应用数据
-```
-
-### 集群管理
-
-```bash
-# 配置集群（主机名 + SSH 互信）
-python -m src.cli.cluster configure-cluster [OPTIONS]
-
-# 选项:
-#   --hosts TEXT         集群节点 IP 列表，逗号分隔
-#   --hostname-map TEXT  IP:主机名 映射，逗号分隔
-#   --username TEXT      SSH 用户名 (默认: root)
-#   --password TEXT      SSH 密码
-#   --key-file TEXT      SSH 私钥文件路径 (默认: ~/.ssh/id_rsa)
-#   --skip-verify        跳过 SSH 互信验证
-
-# 显示集群配置
-python -m src.cli.cluster show-cluster-config
-
-# 在集群节点上执行命令
-python -m src.cli.cluster execute-cmd [OPTIONS]
-
-# 选项:
-#   --hosts TEXT   节点 IP 列表
-#   --cmd TEXT     要执行的命令 (必需)
-#   --username TEXT SSH 用户名
-#   --password TEXT SSH 密码
-#   --key-file TEXT SSH 私钥文件路径
-
-# 禁用防火墙
-python -m src.cli.cluster disable-firewalld [OPTIONS]
-```
-
-### 镜像构建
-
-```bash
-# 构建单个应用版本
-python -m src.cli.image build [OPTIONS]
-
-# 选项:
-#   --app TEXT         应用名称 (必需)
-#   --version TEXT     版本号
-#   --push             构建后推送镜像
-#   --registry TEXT    目标仓库地址
-
-# 构建多个版本
-python -m src.cli.image build-multi [OPTIONS]
-
-# 构建所有版本
-python -m src.cli.image build-all [OPTIONS]
-
-# 列出支持的应用
-python -m src.cli.image list-apps
-
-# 显示应用信息
-python -m src.cli.image info [OPTIONS]
-
-# 清理构建产物
-python -m src.cli.image clean [OPTIONS]
-```
-
-### Kubernetes 部署
-
-```bash
-# 部署 Kubernetes 集群
-python -m src.cli.k8s deploy [OPTIONS]
-
-# 选项:
-#   --skip-dependencies  跳过依赖检查
-#   --dry-run            仅显示将要执行的操作
-
-# 显示部署配置
-python -m src.cli.k8s config [OPTIONS]
-
-# 重置部署状态
-python -m src.cli.k8s reset-state
-```
-
-### 镜像仓库操作
-
-```bash
-# 拉取镜像
-python -m src.cli.image ctr pull [OPTIONS]
-
-# 推送镜像
-python -m src.cli.image ctr push [OPTIONS]
-
-# 添加仓库代理
-python -m src.cli.image ctr add-proxy [OPTIONS]
-
-# 列出代理配置
-python -m src.cli.image ctr list-proxy
-```
+- **[PyPI 发布](docs/PYPI_INSTALL.md)** - PyPI 包发布指南
 
 ## 👨‍💻 开发指南
 
@@ -362,68 +242,30 @@ mypy src/
 - 模块级分组注释（`# ============================ 标题 ============================`）
 - 使用 `logger` 而非 `print` 进行日志输出
 
-## 📚 API 文档
+## 📚 文档
 
-启动服务后访问：
+- **[CLI 命令文档](docs/CLI.md)** - 命令行工具完整使用指南
+  - 原生 Python 执行方式
+  - kubengine 命令方式
+  - 应用管理、集群管理、镜像构建等命令
 
+- **[配置说明](docs/CONFIGURATION.md)** - 配置文件详解
+  - 配置文件位置和查找顺序
+  - 完整配置项说明
+  - 生产环境配置建议
+
+- **[API 文档](docs/API.md)** - RESTful API 完整参考
+  - 认证方式
+  - 所有 API 端点详解
+  - 使用示例
+
+- **[RPM 打包](docs/RPM_BUILD.md)** - RPM 包构建指南
+
+- **[PyPI 发布](docs/PYPI_INSTALL.md)** - PyPI 包发布指南
+
+启动服务后可访问交互式 API 文档：
 - **Swagger UI**：`http://localhost:8080/docs`
 - **ReDoc**：`http://localhost:8080/redoc`
-
-### 主要 API 端点
-
-#### 认证 (`/api/v1/auth`)
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/login` | POST | 用户登录，返回 JWT Token |
-| `/renew` | POST | 刷新访问令牌 |
-
-#### 健康检查 (`/api/v1/health`)
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/` | GET | 系统健康状态检查 |
-
-#### SSH 管理 (`/api/v1/ssh`)
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/execute` | POST | 在远程主机执行命令 |
-
-#### Kubernetes 管理 (`/api/v1/k8s`)
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/node` | GET | 获取节点信息 |
-| `/overview` | GET | 获取集群概览（含 CPU/内存指标） |
-| `/dashboard/resource/{type}` | GET | 列出 K8s 资源（Pod、Service 等） |
-| `/dashboard/resourcedetail/{type}/{namespace}/{name}` | GET | 获取资源详情 |
-| `/dashboard/resourcepod/{type}/{namespace}/{name}` | GET | 获取资源关联的 Pod |
-| `/node/{name}/taints` | GET/POST/DELETE | 节点污点管理 |
-
-#### 应用管理 (`/api/v1/app`)
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/list` | GET | 分页列出应用 |
-| `/get/{app_id}` | GET | 根据 ID 获取应用详情 |
-| `/add` | POST | 创建新应用 |
-| `/update` | PUT | 更新应用 |
-| `/del/{app_id}` | DELETE | 删除应用 |
-| `/deploy` | POST | 部署应用 |
-| `/cluster` | GET | 列出所有集群 |
-| `/cluster/{cluster_id}` | GET | 获取集群详情 |
-| `/clusterInfo/{cluster_id}` | GET | 获取集群资源详情 |
-| `/cluster/{cluster_id}/name` | PUT | 更新集群名称 |
-| `/cluster/{cluster_ip}` | DELETE | 删除集群 |
-
-#### 制品管理 (`/api/v1/artifacts`)
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/list` | GET | 列出制品文件 |
-| `/upload` | POST | 上传制品文件 |
-| `/download/{filename}` | GET | 下载制品文件 |
-| `/delete/{filename}` | DELETE | 删除制品文件 |
-
-#### WebSocket (`/api/v1/ws`)
-| 端点 | 描述 |
-|------|------|
-| `/logs` | 实时任务日志流 |
 
 ## 📁 项目结构
 
