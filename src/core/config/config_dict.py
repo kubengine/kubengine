@@ -238,17 +238,59 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
         super().clear()
 
     @classmethod
+    def _find_config_file(cls) -> Optional[str]:
+        """查找配置文件路径（支持多种安装方式）
+
+        查找顺序（优先级从高到低）：
+        1. 环境变量 KUBEENGINE_CONFIG 指定的路径
+        2. /opt/kubengine/config/application.yaml（默认安装路径）
+        3. ./config/application.yaml（相对路径，用于开发调试）
+
+        Returns:
+            找到的配置文件路径，如果都不存在返回 None
+        """
+        import os
+
+        # 1. 优先使用环境变量
+        env_config = os.getenv("KUBEENGINE_CONFIG")
+        if env_config and Path(env_config).exists():
+            return env_config
+
+        # 2. 默认安装路径（生产环境）
+        default_config = "/opt/kubengine/config/application.yaml"
+        if Path(default_config).exists():
+            return default_config
+
+        # 3. 相对路径（开发调试）
+        relative_config = "./config/application.yaml"
+        if Path(relative_config).exists():
+            return relative_config
+
+        # 如果都不存在，返回默认路径（用于初始化）
+        return default_config
+
+    @classmethod
     def get_instance(cls: Type[T]) -> T:
         """获取全局单例配置对象，支持懒加载
 
         Returns:
             T: 全局唯一的 ConfigDict 实例
+
+        Raises:
+            FileNotFoundError: 配置文件不存在时抛出
         """
-        config_path: str = "/opt/kubengine/config/application.yaml"
         global _global_config
         if _global_config is None:
             with _SINGLETON_LOCK:
                 if _global_config is None:
+                    config_path = cls._find_config_file()
+                    if config_path is None or not Path(config_path).exists():
+                        raise FileNotFoundError(
+                            "配置文件不存在，请检查以下路径：\n"
+                            "  - /opt/kubengine/config/application.yaml (默认安装路径)\n"
+                            "  - ./config/application.yaml (相对路径)\n"
+                            "  或设置环境变量 KUBEENGINE_CONFIG 指定配置文件路径"
+                        )
                     _global_config = cast(
                         Optional["ConfigDict"], cls.load_from_file(config_path))
         return cast(T, _global_config)
