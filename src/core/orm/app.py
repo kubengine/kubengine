@@ -230,7 +230,8 @@ def create_application(app_schema: AppSchema) -> AppSchema:
                         form_item_props=config.form_item_props,
                         initial_value=config.initial_value,
                         rules=config.rules,
-                        field_props=config.field_props
+                        field_props=config.field_props,
+                        helm_props=config.helm_props
                     )
                     field_configs.append(field_config)
 
