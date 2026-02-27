@@ -181,6 +181,24 @@ python -m src.cli.app init-data
 python -m src.cli.app run --host 0.0.0.0 --port 8080
 ```
 
+### Kubernetes 部署（使用 kubengine_k8s 命令）
+
+kubengine_k8s 是专门用于 Kubernetes 部署的独立命令行工具：
+
+```bash
+# 查看帮助
+kubengine_k8s --help
+
+# 显示配置
+kubengine_k8s config --show
+
+# 部署 Kubernetes 集群
+kubengine_k8s deploy --deploy-src /path/to/offline-files
+
+# 详细输出日志
+kubengine_k8s deploy --deploy-src /path/to/offline-files -vvv
+```
+
 ### 默认账户
 
 | 项目 | 值 |
@@ -247,6 +265,7 @@ mypy src/
 - **[CLI 命令文档](docs/CLI.md)** - 命令行工具完整使用指南
   - 原生 Python 执行方式
   - kubengine 命令方式
+  - kubengine_k8s 命令方式
   - 应用管理、集群管理、镜像构建等命令
 
 - **[配置说明](docs/CONFIGURATION.md)** - 配置文件详解

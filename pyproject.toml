@@ -9,6 +9,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "duanzt", email = "duanziteng@gmail.com" }]
 version = "0.1.0"
+requires-python = ">=3.11"
 keywords = ["kubernetes", "devops", "automation", "kylin"]
 classifiers = [
   "License :: Apache-2.0 License",
@@ -41,7 +42,11 @@ dev = [
   "mypy>=1.0.0",
   "isort>=5.12.0",
   "pydocstyle>=6.3.0",
-  "pre-commit>=3.0.4"
+  "pre-commit>=3.0.4",
+  "cython>=3.0.0"
+]
+cython = [
+  "cython>=3.0.0",
 ]
 
 [project.entry-points."image_builders"]
@@ -52,8 +57,21 @@ redis = "builder.image.redis.builder:RedisBuilder"
 redis-sentinel = "builder.image.redis.builder:SentinelBuilder"
 redis-exporter = "builder.image.redis.exporter_builder:Builder"
 
+[project.scripts]
+kubengine = "cli.app:cli"
+kubengine_k8s = "cli.k8s:cli"
+
 [tool.setuptools]
+package-dir = {"" = "src"}
 packages = { find = { where = ["src"] } }
+include-package-data = true
+
+[tool.setuptools.package-data]
+"builder.image.os" = ["*.yaml"]
+"builder.image.kubectl" = ["*.yaml"]
+"builder.image.os_shell" = ["*.yaml"]
+"builder.image.redis" = ["*.yaml"]
+"web" = ["static/**/*"]
 
 [tool.black]
 line-length = 88

@@ -319,56 +319,100 @@ kubengine image clean [OPTIONS]
 
 ## Kubernetes 部署
 
-### 部署 Kubernetes 集群
+### 使用 kubengine_k8s 独立命令（推荐）
 
-#### 原生 Python 方式
+kubengine_k8s 是专门用于 Kubernetes 部署的独立命令行工具，提供更强大的功能和更好的用户体验：
 
 ```bash
-python -m cli.k8s deploy [OPTIONS]
+kubengine_k8s --help
 ```
 
-#### kubengine 命令方式
+**可用命令：**
+| 命令 | 说明 |
+|------|------|
+| `deploy` | 部署 Kubernetes 集群 |
+| `config` | 配置管理命令 |
+| `reset-state` | 重置部署状态 |
+
+#### 部署 Kubernetes 集群
 
 ```bash
-kubengine k8s deploy [OPTIONS]
+kubengine_k8s deploy [OPTIONS]
 ```
 
 **选项：**
 | 选项 | 说明 |
 |------|------|
-| `--skip-dependencies` | 跳过依赖检查 |
-| `--dry-run` | 仅显示将要执行的操作 |
+| `--deploy-src TEXT` | 离线部署文件根目录 | `/root/offline-deploy` |
+| `-v, --verbose` | 日志详细级别：-v/-vv/-vvv | - |
+| `--show-config` | 显示当前配置（不执行部署） | - |
+
+**示例：**
+```bash
+# 使用默认配置部署
+kubengine_k8s deploy
+
+# 指定离线部署目录
+kubengine_k8s deploy --deploy-src /path/to/offline-files
+
+# 显示配置但不执行部署
+kubengine_k8s deploy --show-config
+
+# 详细输出日志
+kubengine_k8s deploy -vvv
+```
 
 ---
 
-### 显示部署配置
-
-#### 原生 Python 方式
+#### 显示和验证配置
 
 ```bash
+kubengine_k8s config [OPTIONS]
+```
+
+**选项：**
+| 选项 | 说明 |
+|------|------|
+| `--validate` | 验证配置 |
+| `--show` | 显示配置 |
+
+**示例：**
+```bash
+# 显示当前配置
+kubengine_k8s config --show
+
+# 验证配置
+kubengine_k8s config --validate
+```
+
+---
+
+#### 重置部署状态
+
+```bash
+kubengine_k8s reset-state [OPTIONS]
+```
+
+**选项：**
+| 选项 | 说明 |
+|------|------|
+| `--force` | 强制重置状态 |
+
+**示例：**
+```bash
+kubengine_k8s reset-state --force
+```
+
+---
+
+### 原生 Python 方式
+
+如果需要直接通过 Python 模块执行：
+
+```bash
+python -m cli.k8s deploy [OPTIONS]
 python -m cli.k8s config [OPTIONS]
-```
-
-#### kubengine 命令方式
-
-```bash
-kubengine k8s config [OPTIONS]
-```
-
----
-
-### 重置部署状态
-
-#### 原生 Python 方式
-
-```bash
-python -m cli.k8s reset-state
-```
-
-#### kubengine 命令方式
-
-```bash
-kubengine k8s reset-state
+python -m cli.k8s reset-state [OPTIONS]
 ```
 
 ---
@@ -493,7 +537,7 @@ kubengine cluster configure-cluster \
 kubengine cluster disable-firewalld
 
 # 3. 部署 Kubernetes
-kubengine k8s deploy
+kubengine_k8s deploy
 
 # 4. 初始化应用数据
 kubengine app init-data

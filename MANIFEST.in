@@ -1,0 +1,56 @@
+# KubeEngine 包清单文件
+# 指定哪些文件应该包含在发布包中
+
+# 包含项目元数据
+include README.md
+include LICENSE.txt
+include pyproject.toml
+
+# 包含配置文件
+recursive-include config *.yaml *.yml *.json *.toml
+
+# 包含 Builder 配置文件
+recursive-include src/builder *.yaml
+
+# 包含 Builder rootfs 静态资源（二进制文件、脚本等）
+recursive-include src/builder/image/rootfs *
+
+# 包含静态资源
+recursive-include src/web/static *
+recursive-include src/web/templates *
+
+# 包含数据库迁移
+recursive-include migrations *.py
+
+# 包含文档
+recursive-include docs *.md *.txt *.rst
+
+# 包含脚本
+recursive-include scripts *.sh *.py
+
+# 包含 spec 文件（用于 RPM 构建）
+include *.spec
+
+# 排除不需要的文件
+exclude .gitignore
+exclude .pre-commit-config.yaml
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude *.pyd
+global-exclude *.dylib
+global-exclude *.dll
+global-exclude *.exe
+global-exclude *.egg-info
+global-exclude .git*
+global-exclude .DS_Store
+global-exclude *.log
+global-exclude *.db
+global-exclude *.sqlite
+global-exclude .pytest_cache
+global-exclude .mypy_cache
+global-exclude .coverage
+global-exclude htmlcov
+global-exclude build
+global-exclude dist
+global-exclude *.egg
