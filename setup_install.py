@@ -73,6 +73,7 @@ setup(
     entry_points={
         "console_scripts": [
             "kubengine=cli.app:cli",
+            "kubengine_k8s=cli.k8s:cli"
         ],
     },
     python_requires=">=3.11",
