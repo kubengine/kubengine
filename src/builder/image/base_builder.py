@@ -612,7 +612,7 @@ class BaseBuilder(ABC):
         if author:
             self._config_container(container_id, "author", author)
 
-    def _config_labels(self, container_id: str, base_labels: dict) -> None:
+    def _config_labels(self, container_id: str, base_labels: dict[str, Any]) -> None:
         """配置容器标签
 
         Args:
