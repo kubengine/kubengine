@@ -8,6 +8,7 @@ deploy_src = host.data.deploy_src
 containerd_dir = os.path.join(deploy_src, "containerd")
 containerd_path = os.path.join(
     containerd_dir, "containerd-2.1.3-linux-amd64.tar.gz")
+certs_path = os.path.join(containerd_dir, "certs.d.tar.gz")
 kata_path = os.path.join(containerd_dir, "kata-static-3.18.0-amd64.tar.gz")
 master_ip = host.data.master_ip
 
@@ -87,10 +88,18 @@ if "worker" in host.groups:
     server.shell(
         name="Configure containerd with config.toml",
         commands=[
-            f"mkdir -p /etc/containerd",
+            "mkdir -p /etc/containerd",
             "curl -o /etc/containerd/config.toml sftp://{master_ip}{config_path}"
         ]
     )
+
+# proxy
+if "worker" in host.groups:
+    command = f"curl sftp://{master_ip}{certs_path} -o - | tar zxf - -C /etc/containerd"
+else:
+    command = f"tar zxf {certs_path} -C /etc/containerd"
+
+server.shell(name="Extract certs.d to /etc/containerd", commands=command)
 
 # systemd 管理 containerd
 server.files.put(
