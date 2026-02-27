@@ -5,8 +5,9 @@ Helm 资源检查模块
 支持轮询等待 Pod 就绪、健康状态检查等功能。
 """
 
+import os
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -38,13 +39,14 @@ class HelmResourceChecker:
         core_api: Kubernetes Core V1 API 客户端
     """
 
-    def __init__(self, namespace: str, release_name: str) -> None:
+    def __init__(self, namespace: str, release_name: str, kubeconfig_path: Optional[str] = None) -> None:
         """
         初始化 Helm 资源检查器
 
         Args:
             namespace: 目标命名空间
             release_name: Helm Release 名称
+            kubeconfig_path: kubeconfig 文件路径
         """
         self.namespace = namespace
         self.release_name = release_name
@@ -58,8 +60,22 @@ class HelmResourceChecker:
             config.load_incluster_config()  # 集群内优先
             logger.info("Loaded in-cluster Kubernetes configuration")
         except config.ConfigException:
-            config.load_kube_config()  # 集群外加载 kubeconfig
-            logger.info("Loaded kubeconfig Kubernetes configuration")
+            try:
+                if kubeconfig_path:
+                    config.load_kube_config(config_file=kubeconfig_path)
+                else:
+                    # 尝试默认路径
+                    default_kubeconfig = "/etc/kubernetes/admin.conf"
+                    if os.path.exists(default_kubeconfig):
+                        config.load_kube_config(config_file=default_kubeconfig)
+                    else:
+                        # 尝试用户默认 kubeconfig
+                        config.load_kube_config()
+                logger.info("Loaded kubeconfig Kubernetes configuration")
+            except Exception as e:
+                logger.error(
+                    f"Failed to load Kubernetes configuration: {e}")
+                raise
 
         # 初始化 API 客户端
         self.apps_api = client.AppsV1Api()
