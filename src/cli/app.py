@@ -63,7 +63,7 @@ def cli() -> None:
     提供完整的 KubeEngine 平台管理功能。
 
     核心功能模块：\n
-        1. 应用管理：app run, app set-password, app init-data\n
+        1. 应用管理：app run, set-password, init-data\n
         2. 集群管理：cluster configure-cluster, execute-cmd\n
         3. 镜像构建：image build, image list-apps\n
     """

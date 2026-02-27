@@ -396,8 +396,8 @@ sudo rm -rf /usr/share/kubengine
 ```bash
 # 应用管理
 kubengine app run --host 0.0.0.0 --port 8080    # 启动服务
-kubengine app set-password                         # 设置管理员密码
-kubengine app init-data                             # 初始化数据
+kubengine app set-password                      # 设置管理员密码
+kubengine app init-data                         # 初始化数据
 
 # 集群管理
 kubengine cluster configure-cluster ...          # 配置集群
