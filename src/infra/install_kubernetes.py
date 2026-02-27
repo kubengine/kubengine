@@ -70,9 +70,9 @@ for i in nameserver:
         present=True,  # 确保行存在（不存在则追加）
     )
 server.files.line(
-    name=f"Ensure options timeout:2 attempts:1 in /etc/resolv.conf",
+    name="Ensure options timeout:2 attempts:1 in /etc/resolv.conf",
     path="/etc/resolv.conf",
-    line=f"options timeout:2 attempts:1",  # 减少查询超时和尝试次数
+    line="options timeout:2 attempts:1",  # 减少查询超时和尝试次数
     present=True,
 )
 server.files.file(
@@ -96,7 +96,7 @@ if "master" in host.groups:
                            "--ignore-preflight-errors=all"])
     )
     server.files.line(
-        name=f"Ensure KUBECONFIG is set in /etc/profile for master node",
+        name="Ensure KUBECONFIG is set in /etc/profile for master node",
         path="/etc/profile",
         line="export KUBECONFIG=/etc/kubernetes/admin.conf",  # 要检查/添加的目标行
         present=True,  # 确保行存在（不存在则追加）
