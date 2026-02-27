@@ -4,6 +4,7 @@
 提供镜像构建、管理、查询等功能，支持单个版本、多版本和全量构建。
 """
 from __future__ import annotations
+from cli.ctr import cli as ctr_cli
 
 from functools import wraps
 import sys
@@ -21,8 +22,6 @@ from cli.models import LIST
 from builder.image.loader import LazyBuilderLoader, create_builder
 from builder.image.base_builder import BuilderOptions, BaseBuilder
 from core.config.application import Application
-from core.config.config_dict import ConfigDict
-from core.containerd.certs import ContainerdCertsConfig
 from core.logger import get_logger, setup_cli_logging
 
 
@@ -615,198 +614,8 @@ def clean(apps: Optional[list[str]]) -> None:
                 console.print("[yellow]镜像目录不存在[/yellow]")
 
 
-@cli.group()
-@click.pass_context
-@cli_command
-def ctr(ctx: click.Context) -> None:
-    """容器镜像仓库操作子命令组（ctr）
-
-    自定义镜像相关管理的功能，
-    """
-    pass
-
-
-@ctr.command()
-@click.option('-i', '--image', required=True, help='待拉取的镜像完整名称（含仓库/标签），例：harbor.example.com/myapp:1.0.0')
-@click.option('-u', '--username', help='私有仓库用户名，公共仓库无需填写')
-@click.option('-p', '--password', help='私有仓库密码/令牌，公共仓库无需填写')
-@click.option('--timeout', type=int, default=300, help='拉取超时时间（秒），默认300秒')
-@click.pass_context
-@cli_command
-def pull(
-    ctx: click.Context,
-    image: str,
-    username: Optional[str],
-    password: Optional[str],
-    timeout: int
-) -> None:
-    """从容器仓库拉取镜像（pull）
-
-    支持公共/私有容器仓库（Harbor/Docker Hub/Registry等），
-    私有仓库需指定用户名和密码。
-
-    示例：
-        # 拉取公共仓库镜像
-        image ctr pull -i nginx:1.25.3
-        # 拉取私有Harbor仓库镜像
-        image ctr pull -i harbor.example.com/myapp:1.0.0 -u admin -p Harbor12345
-        # 拉取并设置超时时间
-        image ctr pull -i redis:7.2 -timeout 600
-    """
-    console.print(f"[blue]📥 开始从仓库拉取镜像: {image}[/blue]")
-    logger.info(
-        f"执行镜像拉取操作 | 镜像: {image} | 超时: {timeout}秒 | 私有仓库: {True if username else False}")
-
-    # -------------- 核心拉取逻辑（可根据你的实际需求实现） --------------
-    try:
-        # 1. 模拟私有仓库认证（实际场景可调用docker/podman API或subprocess执行命令）
-        if username and password:
-            console.print(f"[cyan]🔑 正在认证私有仓库用户: {username}[/cyan]")
-            logger.debug(f"私有仓库认证 | 用户名: {username} | 镜像: {image}")
-
-        # 2. 模拟拉取进度（复用你原有Rich Progress进度条）
-        # 3. 拉取成功提示
-        console.print(f"[green]🎉 镜像拉取成功: {image}[/green]")
-        logger.info(f"镜像拉取成功 | 镜像: {image}")
-
-    except Exception as e:
-        logger.error(f"镜像拉取失败 | 镜像: {image} | 错误: {str(e)}", exc_info=True)
-        raise ImageCLIError(f"拉取镜像 {image} 失败: {str(e)}")
-
-
-@ctr.command()
-@click.option('-i', '--image', required=True, help='待推送的镜像完整名称（含仓库/标签），例：harbor.example.com/myapp:1.0.0')
-@click.option('-u', '--username', help='私有仓库用户名，公共仓库无需填写')
-@click.option('-p', '--password', help='私有仓库密码/令牌，公共仓库无需填写')
-@click.option('--timeout', type=int, default=300, help='推送超时时间（秒），默认300秒')
-@click.option('--skip-exists', is_flag=True, help='若仓库已存在该镜像，跳过推送（避免覆盖）')
-@click.pass_context
-@cli_command
-def push(
-    ctx: click.Context,
-    image: str,
-    username: Optional[str],
-    password: Optional[str],
-    timeout: int,
-    skip_exists: bool
-) -> None:
-    """将本地镜像推送到容器仓库（push）
-
-    支持公共/私有容器仓库（Harbor/Docker Hub/Registry等），
-    私有仓库需指定用户名和密码，支持跳过已存在的镜像。
-
-    示例：
-        # 推送公共仓库镜像
-        image ctr push -i myapp:1.0.0
-        # 推送私有Harbor仓库镜像
-        image ctr push -i harbor.example.com/myapp:1.0.0 -u admin -p Harbor12345
-        # 推送并跳过已存在镜像
-        image ctr push -i redis:7.2 -u admin -p 123456 --skip-exists
-    """
-    console.print(f"[blue]📤 开始推送本地镜像到仓库: {image}[/blue]")
-    logger.info(
-        f"执行镜像推送操作 | 镜像: {image} | 超时: {timeout}秒 | 跳过已存在: {skip_exists}")
-
-    # -------------- 核心推送逻辑（可根据你的实际需求实现） --------------
-    try:
-        # 1. 模拟私有仓库认证
-        if username and password:
-            console.print(f"[cyan]🔑 正在认证私有仓库用户: {username}[/cyan]")
-            logger.debug(f"私有仓库认证 | 用户名: {username} | 镜像: {image}")
-
-        # 2. 模拟检查镜像是否已存在（skip_exists=True时）
-        if skip_exists:
-            console.print(f"[yellow]🔍 检查仓库中是否已存在镜像 {image}[/yellow]")
-            logger.debug(f"跳过已存在检查 | 镜像: {image}")
-            # 模拟已存在逻辑
-            # if check_image_exist(image):
-            #     console.print(f"[cyan]ℹ️  镜像 {image} 已存在，跳过推送[/cyan]")
-            #     return
-
-        # 3. 模拟推送进度（复用Rich Progress）
-        # 4. 推送成功提示
-        console.print(f"[green]🎉 镜像推送成功: {image}[/green]")
-        logger.info(f"镜像推送成功 | 镜像: {image}")
-
-    except Exception as e:
-        logger.error(f"镜像推送失败 | 镜像: {image} | 错误: {str(e)}", exc_info=True)
-        raise ImageCLIError(f"推送镜像 {image} 失败: {str(e)}")
-
-
-@ctr.command()
-@click.argument('registrys', required=True, nargs=-1)
-@click.option('--yes', '-y', is_flag=True, help='跳过确认')
-@cli_command
-def add_proxy(registrys: list[str], yes: bool) -> None:
-    """添加镜像仓库代理
-
-    如果镜像仓库代理已存在，则会覆盖当前配置
-
-    示例:\n
-        image add-proxy docker.io\n
-        image add-proxy quay.io registry.k8s.io\n
-    """
-    table = Table(title="[bold]当前仓库代理配置[/bold]", show_lines=True)
-    table.add_column("目标仓库", style="cyan")
-    table.add_column("代理仓库地址", style="magenta")
-    table.add_column("代理功能")
-    table.add_column("override_path")
-    for registry in registrys:
-        table.add_row(
-            registry, f"{Application.DOMAIN}/v2/{registry}", "pull,push,resolve", "True")
-
-    console.print(table)
-    try:
-        if yes or click.confirm("确认镜像仓库代理配置"):
-            console.print("\n完成", style="green")
-    except click.exceptions.Abort:
-        print()
-
-
-@ctr.command()
-@cli_command
-def list_proxy() -> None:
-    """查看当前镜像仓库代理
-
-    示例:\n
-        image list-proxy
-    """
-    certs_config = ContainerdCertsConfig()
-
-    # # 加载所有配置
-    all_configs = certs_config.load_hosts_configs()
-    # print(f"服务器列表: {servers}")
-    table = Table(title="[bold]当前仓库代理配置[/bold]", show_lines=True)
-    table.add_column("目标仓库", style="cyan")
-    table.add_column("代理仓库地址", style="magenta")
-    table.add_column("代理功能")
-    table.add_column("override_path")
-
-    for key, value in all_configs.items():
-        host: ConfigDict = value["host"]
-        hvalue: ConfigDict
-        for hkey, hvalue in host.items():
-            table.add_row(
-                key,
-                hkey,
-                ",".join(hvalue.get_with_default("capabilities", [])),
-                str(hvalue.get_with_default("override_path", False))
-            )
-
-    console.print(table)
-
-    # # 查找特定仓库配置
-    # harbor_config = certs_config.find_config_for_registry("harbor.company.com")
-    # print(f"Harbor配置: {harbor_config}")
-
-    # # 验证证书
-    # cert_validation = certs_config.validate_certificates()
-    # print(f"证书验证结果: {cert_validation}")
-
-    # # 列出证书信息
-    # cert_info = certs_config.list_certificates_info()
-    # for info in cert_info:
-    #     print(f"仓库: {info['registry']}, 服务器: {info['server']}")
+# 导入并集成ctr子命令
+cli.add_command(ctr_cli, "ctr")
 
 
 if __name__ == '__main__':
