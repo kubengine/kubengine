@@ -162,17 +162,16 @@ def build_helm_config(cluster_schema: ClusterSchema) -> Dict[str, Any]:
 
             helm_keys = field.helm_props.get("keys", [])
             for helm_key in helm_keys:
-                if helm_key in cluster_schema.config:
-                    value = _format_helm_value(
-                        field.helm_props.get("type", "string"),
-                        field.helm_props.get("unit", ""),
-                        cluster_schema.config[field.name]
-                    )
+                value = _format_helm_value(
+                    field.helm_props.get("type", "string"),
+                    field.helm_props.get("unit", ""),
+                    cluster_schema.config[field.name]
+                )
 
-                    # Convert dot notation to nested dict and merge
-                    key_config = convert_dot_notation_to_dict(
-                        f"{helm_key}={value}")
-                    _merge_configurations(helm_config, key_config)
+                # Convert dot notation to nested dict and merge
+                key_config = convert_dot_notation_to_dict(
+                    f"{helm_key}={value}")
+                _merge_configurations(helm_config, key_config)
 
     return helm_config
 
