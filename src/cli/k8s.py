@@ -6,23 +6,36 @@ Kubernetes 集群部署CLI工具
 2. 集成CNI网络、容器运行时、负载均衡、存储、镜像仓库等组件安装
 3. 节点可达性检测、证书自动生成、配置参数校验
 """
-import asyncio
-import json
-import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-import click
-import ipaddress
-from core.config import Application
-from core.misc.ca import create_cert
-from core.misc.network import local_ips
-from core.logger import get_logger, setup_cli_logging
-from infra.executor_wrapper import (
+
+import warnings  # noqa
+# 必须在任何其他导入之前执行 gevent monkey patching
+# 以避免 MonkeyPatchWarning
+try:  # noqa
+    from gevent import monkey  # noqa
+    monkey.patch_all()  # noqa
+except ImportError:  # noqa
+    pass  # noqa
+
+# 忽略 gevent 的 MonkeyPatchWarning
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="gevent")  # noqa
+from core.ssh import AsyncSSHClient  # noqa
+from infra.executor_wrapper import (  # noqa
     InfraExecutionResult,
     InfraFileExecutor,
     InfraExecutionConfig
 )
-from core.ssh import AsyncSSHClient
+from core.logger import get_logger, setup_cli_logging  # noqa
+from core.misc.network import local_ips  # noqa
+from core.misc.ca import create_cert  # noqa
+from core.config import Application  # noqa
+import ipaddress  # noqa
+import click  # noqa
+from typing import Any, Dict, List, Optional, Tuple  # noqa
+from pathlib import Path  # noqa
+import os  # noqa
+import json  # noqa
+import asyncio  # noqa
+
 
 # 初始化日志
 setup_cli_logging(
