@@ -1,6 +1,5 @@
 """
 KubeEngine 统一命令行工具
-
 提供完整的 KubeEngine 平台管理功能，包括：
 - 应用管理：启动、配置、数据初始化
 - 集群管理：主机名配置、SSH 互信、命令执行
@@ -9,12 +8,12 @@ KubeEngine 统一命令行工具
 
 使用示例：
     # 应用管理
-    kubengine run --host 0.0.0.0 --port 8080
-    kubengine set-password
-    kubengine init-data
+    kubengine app run --host 0.0.0.0 --port 8080
+    kubengine app set-password
+    kubengine app init-data
 
     # 集群管理
-    kubengine cluster configure-cluster --hosts 172.31.65.150,localhost \\
+    kubengine cluster configure-cluster --hosts 172.31.65.150,localhost \
         --hostname-map 172.31.65.150:node-1,localhost:node-2
 
     # 镜像构建
@@ -22,29 +21,17 @@ KubeEngine 统一命令行工具
     kubengine image list-apps
 
     # K8s 部署
-    kubengine k8s deploy --deploy-src /root/offline-deploy
+    请使用 kubengine_k8s 命令，例如：kubengine_k8s deploy --deploy-src /root/offline-deploy
 """
-
-import warnings
-
-# 必须在任何其他导入之前执行 gevent monkey patching
-# 以避免 MonkeyPatchWarning
-try:
-    from gevent import monkey  # noqa: F401
-    monkey.patch_all()  # noqa: F401
-except ImportError:
-    pass
-
-# 忽略 gevent 的 MonkeyPatchWarning
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="gevent")
 
 import os
 import uuid
 import click
 from datetime import datetime
 
+from typing import Any
 from core.config import Application, ConfigDict
-from core.logger import get_logger
+from core.logger import get_logger, setup_cli_logging
 from core.orm.app import App, AppSchema, create_application
 from core.orm.app_field_config import (
     AppFieldConfigSchema,
@@ -52,12 +39,16 @@ from core.orm.app_field_config import (
 )
 from core.orm.engine import Base, engine, get_db
 from web.utils.auth import get_password_hash
+# 导入子命令
+from cli.cluster import cli as cluster_cli
+from cli.image import cli as image_cli
 
-# 导入其他 CLI 模块
-from cli import cluster as cluster_cli
-from cli import image as image_cli
-from cli import k8s as k8s_cli
-
+# 初始化日志
+setup_cli_logging(
+    level="INFO",
+    log_file=f"{Application.ROOT_DIR}/logs/app_cli.log",
+    console_output=True  # 禁用控制台输出
+)
 logger = get_logger(__name__)
 
 
@@ -72,24 +63,35 @@ def cli() -> None:
     提供完整的 KubeEngine 平台管理功能。
 
     核心功能模块：\n
-        1. 应用管理：run, set-password, init-data\n
+        1. 应用管理：app run, app set-password, app init-data\n
         2. 集群管理：cluster configure-cluster, execute-cmd\n
         3. 镜像构建：image build, image list-apps\n
-        4. K8s 部署：k8s deploy, k8s config\n
     """
     pass
 
 
-# 注册子命令组
-cli.add_command(cluster_cli.cli, name="cluster")
-cli.add_command(image_cli.cli, name="image")
-cli.add_command(k8s_cli.cli, name="k8s")
+# 添加子命令
+cli.add_command(cluster_cli, "cluster")
+cli.add_command(image_cli, "image")
 
+
+# ============================ 应用管理子命令 ============================
+@click.group()
+def app() -> None:
+    """
+    应用管理命令
+
+    提供应用服务器的启动、配置和数据初始化功能。
+    """
+    pass
+
+
+cli.add_command(app, "app")
 
 # ============================ 应用管理命令 ============================
 
 
-@cli.command()
+@app.command()
 @click.option(
     "--host",
     default="0.0.0.0",
@@ -108,9 +110,16 @@ cli.add_command(k8s_cli.cli, name="k8s")
     default=1,
     show_default=True,
     type=int,
-    help="工作进程数",
+    help="工作进程数（reload=True时强制为1）",
 )
-def run(host: str, port: int, workers: int) -> None:
+@click.option(
+    "--reload",
+    default=False,
+    show_default=True,
+    type=bool,
+    help="是否启用热重载（仅开发环境使用）",
+)
+def run(host: str, port: int, workers: int, reload: bool) -> None:
     """
     启动应用服务器
 
@@ -120,21 +129,49 @@ def run(host: str, port: int, workers: int) -> None:
         host: 监听的主机地址
         port: 监听的端口号
         workers: 工作进程数
+        reload: 是否启用热重载（仅开发环境）
     """
     import uvicorn
+    import signal
+    import sys
+    import asyncio
+
+    # 热重载模式下强制workers=1（Uvicorn不支持reload+多workers）
+    if reload:
+        workers = 1
+        logger.warning("热重载模式已启用，强制设置workers=1")
 
     logger.info(f"启动应用服务器: {host}:{port}，工作进程数: {workers}")
 
-    uvicorn.run(
-        "web.main:app",
-        host=host,
-        port=port,
-        reload=True,
-        workers=workers,
-    )
+    # 定义优雅退出的处理函数
+    def handle_shutdown(signum: Any, frame: Any):
+        logger.info("接收到停止信号，正在优雅关闭服务器...")
+        # 停止Uvicorn的事件循环
+        loop = asyncio.get_event_loop()
+        loop.stop()
+        sys.exit(0)
+
+    # 注册信号处理（处理Ctrl+C和kill命令）
+    signal.signal(signal.SIGINT, handle_shutdown)
+    signal.signal(signal.SIGTERM, handle_shutdown)
+
+    try:
+        uvicorn.run(
+            "web.main:app",
+            host=host,
+            port=port,
+            reload=reload,  # 由参数控制，默认关闭
+            workers=workers,
+            log_level="info",
+        )
+    except KeyboardInterrupt:
+        logger.info("服务器已手动停止")
+    except Exception as e:
+        logger.error(f"启动服务器失败: {str(e)}", exc_info=True)
+        sys.exit(1)
 
 
-@cli.command()
+@app.command()
 @click.option(
     "-p",
     "--password",
@@ -183,7 +220,8 @@ def set_password(password: str) -> None:
         logger.info("AK/SK 密钥对已生成")
 
     # 保存配置到文件
-    config_path = os.path.join(Application.ROOT_DIR, "config", "application.yaml")
+    config_path = os.path.join(
+        Application.ROOT_DIR, "config", "application.yaml")
     config.save_to_file(config_path)
     logger.info(f"配置已保存到: {config_path}")
 
@@ -216,7 +254,7 @@ def set_password(password: str) -> None:
         click.echo()
 
 
-@cli.command()
+@app.command()
 @click.option(
     "--force",
     is_flag=True,
