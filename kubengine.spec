@@ -84,6 +84,20 @@ CFLAGS="%{optflags}" %{python311} setup.py install --root %{buildroot} --prefix 
 # 恢复 pyproject.toml（用于 %files 阶段检查等）
 mv pyproject.toml.bak pyproject.toml
 
+# 清理不需要的文件 - 只保留编译后的 .so 文件和必要的 Python 文件
+# 删除 Cython 生成的 C 代码文件
+find %{buildroot}/usr/lib64/python3.11/site-packages -name "*.c" -type f -delete
+
+# 删除已编译模块对应的原始 Python 源文件（保留 __init__.py 和未编译的模块）
+# 对于已编译为 .so 的模块，删除对应的 .py 文件
+for so_file in $(find %{buildroot}/usr/lib64/python3.11/site-packages -name "*.so"); do
+    # 找到对应的 .py 文件
+    py_file="${so_file%.cpython-311-x86_64-linux-gnu.so}.py"
+    if [ -f "$py_file" ] && [ "$(basename "$py_file")" != "__init__.py" ]; then
+        rm -f "$py_file"
+    fi
+done
+
 # 创建目录结构
 mkdir -p %{buildroot}%{kubengine_dir}
 mkdir -p %{buildroot}%{kubengine_dir}/config
