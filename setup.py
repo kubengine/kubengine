@@ -92,6 +92,10 @@ def get_extensions() -> list[Extension]:
             if package == "cli" or package.startswith("cli."):
                 print(f"跳过包 '{package}'（Click 装饰器需要保留 docstring）")
                 continue
+            # 排除 infra 包
+            if package == "infra" or package.startswith("infra."):
+                print(f"跳过包 '{package}'")
+                continue
 
             # 找到包对应的目录
             package_dir = Path("src") / package.replace(".", "/")
