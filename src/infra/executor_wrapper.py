@@ -365,8 +365,6 @@ class InfraFileExecutor:
 
         # 准备inventory数据（核心：IP列表 + 动态shared_data）
         # shared_data结构：{IP: {"ssh_key": "...", "ssh_user": "...", ...}}
-        logger.error(f"==============host_ips:{host_ips}")
-        logger.error(f"==============shared_data:{shared_data}")
         inventory = Inventory(
             (host_ips, shared_data),  # 直接传入IP列表和动态连接配置
             **(target_groups or {})
