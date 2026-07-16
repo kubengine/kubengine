@@ -82,7 +82,8 @@ class LoggerConfig:
         "uvicorn": "WARNING",
         "uvicorn.access": "WARNING",
         "click": "INFO",
-        "fastapi": "INFO"
+        "fastapi": "INFO",
+        "asyncssh": "WARNING"
     }
 
 
