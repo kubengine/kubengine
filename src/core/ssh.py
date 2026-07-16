@@ -5,9 +5,12 @@ supporting connection reuse and cluster operations.
 """
 
 import asyncio
+import logging
 from typing import Any, Dict, List, Tuple, Union, cast
 
 import asyncssh
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncSSHClient:
@@ -388,11 +391,13 @@ cat ~/.ssh/id_rsa.pub
             # 3. Distribute all public keys to each node
             distribute_tasks: List[Any] = []
             for host in hosts:
-                # Ensure .ssh directory exists with correct permissions
+                # Ensure .ssh directory exists with correct permissions.
+                # 使用原子写入（先写临时文件再 mv）避免并发写入导致 authorized_keys 损坏。
                 cmd = f"""
 mkdir -p ~/.ssh && \
 chmod 700 ~/.ssh && \
-echo "{all_pub_keys}" > ~/.ssh/authorized_keys && \
+printf '%s\\n' '{all_pub_keys}' > ~/.ssh/authorized_keys.tmp && \
+mv -f ~/.ssh/authorized_keys.tmp ~/.ssh/authorized_keys && \
 chmod 600 ~/.ssh/authorized_keys
                 """
                 distribute_tasks.append(
@@ -408,6 +413,40 @@ chmod 600 ~/.ssh/authorized_keys
                         'error': error_msg,
                         'details': cast(List[Dict[str, Union[str, int, None]]], distribute_results)
                     }
+
+            # 4. 清理并刷新 known_hosts，避免节点重装系统后 host key 变化
+            #    导致 "Host key verification failed"（strict checking）错误。
+            #    使用 StrictHostKeyChecking=no + UserKnownHostsFile=/dev/null
+            #    跳过本地 known_hosts，并自动接受对端最新 host key。
+            scan_tasks: List[Any] = []
+            for src_host in hosts:
+                # 先用 ssh-keygen -R 清理所有对端节点的旧记录，
+                # 再用 BatchMode + ConnectTimeout=5 做轻量扫描（只做 key 交换）。
+                clean_parts = " ".join(
+                    f"ssh-keygen -R {dst_host} 2>/dev/null || true;"
+                    for dst_host in hosts if dst_host != src_host
+                )
+                scan_parts = " ".join(
+                    f"ssh -o StrictHostKeyChecking=no "
+                    f"-o UserKnownHostsFile=/dev/null "
+                    f"-o BatchMode=yes -o ConnectTimeout=5 "
+                    f"{dst_host} 'exit 0' 2>/dev/null || true;"
+                    for dst_host in hosts if dst_host != src_host
+                )
+                cmd = f"{clean_parts} {scan_parts}"
+                scan_tasks.append(
+                    self.execute_command(src_host, cmd.strip(), **kwargs))
+
+            scan_results = await asyncio.gather(*scan_tasks)
+
+            # known_hosts 扫描失败不视为致命错误（免密已配置成功），
+            # 仅记录日志便于排查。
+            for res in scan_results:
+                if res['error']:
+                    logger.warning(
+                        "Failed to refresh known_hosts on %s: %s",
+                        res['host'], res['error']
+                    )
 
             return {
                 'error': None,

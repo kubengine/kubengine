@@ -90,6 +90,9 @@ class LoggerConfig:
 @config_class(
     MASTER_SCHEDULABLE="kubernetes.master.schedulable",
     MASTER_IP="kubernetes.master.ip",
+    ADDITIONAL_MASTER_IPS="kubernetes.master.additional_ips",
+    CONTROL_PLANE_ENDPOINT="kubernetes.master.control-plane-endpoint",
+    MASTER_INTERFACE="kubernetes.master.interface",
     WORKER_IPS="kubernetes.worker.ips",
     SERVICE_CIDR="kubernetes.cidr.service",
     POD_CIDR="kubernetes.cidr.pod",
@@ -103,6 +106,9 @@ class KubernetesConfig:
     """
     MASTER_SCHEDULABLE: ClassVar[bool] = False
     MASTER_IP: ClassVar[str] = ""
+    ADDITIONAL_MASTER_IPS: ClassVar[List[str]] = []
+    CONTROL_PLANE_ENDPOINT: ClassVar[str] = ""
+    MASTER_INTERFACE: ClassVar[str] = ""
     WORKER_IPS: ClassVar[List[str]] = []
     SERVICE_CIDR: ClassVar[str] = "10.96.0.0/16"
     POD_CIDR: ClassVar[str] = "10.97.0.0/16"

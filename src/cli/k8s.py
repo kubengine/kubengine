@@ -61,20 +61,27 @@ class DeploymentState:
 
     def _load_state(self) -> Dict[str, Any]:
         """加载部署状态"""
-        if self.state_file.exists():
-            try:
-                with open(self.state_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"加载部署状态失败: {e}")
-
-        return {
+        default_state = {
             "completed_files": [],
             "failed_files": [],
+            "skip_files": [],
             "file_hashes": {},
             "config_hash": None,
             "last_execution_time": None
         }
+        if self.state_file.exists():
+            try:
+                with open(self.state_file, 'r', encoding='utf-8') as f:
+                    state = json.load(f)
+                # 合并默认值，确保新增字段（如skip_files）存在
+                default_state.update(state)
+                if not isinstance(default_state.get("skip_files"), list):
+                    default_state["skip_files"] = []
+                return default_state
+            except Exception as e:
+                logger.warning(f"加载部署状态失败: {e}")
+
+        return default_state
 
     def _save_state(self) -> None:
         """保存部署状态"""
@@ -92,6 +99,10 @@ class DeploymentState:
     def is_file_failed(self, file_name: str) -> bool:
         """检查文件是否失败过"""
         return file_name in self.state["failed_files"]
+
+    def is_file_skipped(self, file_name: str) -> bool:
+        """检查文件是否被手动配置跳过"""
+        return file_name in self.state.get("skip_files", [])
 
     def mark_file_completed(self, file_name: str) -> None:
         """标记文件为已完成"""
@@ -128,9 +139,12 @@ class DeploymentState:
 
     def reset_state(self) -> None:
         """重置部署状态"""
+        # 保留手动配置的skip_files（不属于部署产物）
+        skip_files = self.state.get("skip_files", [])
         self.state = {
             "completed_files": [],
             "failed_files": [],
+            "skip_files": skip_files,
             "file_hashes": {},
             "config_hash": None,
             "last_execution_time": None
@@ -275,6 +289,11 @@ class K8sDeploymentConfig:
             K8sDeploymentConfigValidator.validate_ip_address(
                 worker, "Worker节点IP")
 
+        # 验证附加Master节点（HA模式）
+        for master in Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS:
+            K8sDeploymentConfigValidator.validate_ip_address(
+                master, "附加Master节点IP")
+
         # 验证网络配置
         K8sDeploymentConfigValidator.validate_cidr(
             Application.K8S_CONFIG.SERVICE_CIDR, "Service网段")
@@ -304,6 +323,8 @@ class K8sDeploymentConfig:
         import hashlib
         config_str = json.dumps({
             "master_ip": Application.K8S_CONFIG.MASTER_IP,
+            "additional_master_ips": sorted(Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS),
+            "control_plane_endpoint": Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT,
             "worker_ips": sorted(Application.K8S_CONFIG.WORKER_IPS),
             "service_cidr": Application.K8S_CONFIG.SERVICE_CIDR,
             "pod_cidr": Application.K8S_CONFIG.POD_CIDR,
@@ -316,16 +337,20 @@ class K8sDeploymentConfig:
     @property
     def all_hosts(self) -> List[str]:
         """获取所有节点IP列表"""
-        return ["@local", *Application.K8S_CONFIG.WORKER_IPS]
+        return ["@local", *Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS, *Application.K8S_CONFIG.WORKER_IPS]
 
     @property
     def host_groups(self) -> Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]]:
         """获取节点分组"""
         non_data: dict[str, Any] = {}
-        return {
+        groups: Dict[str, Tuple[list[str], Dict[str, Any]]] = {
             "master": (["@local"], non_data),
             "worker": (Application.K8S_CONFIG.WORKER_IPS, non_data)
         }
+        if Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS:
+            groups["additional_master"] = (
+                Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS, non_data)
+        return groups
 
     def get_loadbalancer_ip(self) -> str:
         """从负载均衡IP池中提取首个可用IP"""
@@ -349,6 +374,9 @@ class K8sDeploymentConfig:
         """转换为字典格式（用于部署脚本）"""
         return {
             "master_ip": Application.K8S_CONFIG.MASTER_IP,
+            "additional_master_ips": Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS,
+            "control_plane_endpoint": Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT,
+            "master_interface": Application.K8S_CONFIG.MASTER_INTERFACE,
             "worker_ips": Application.K8S_CONFIG.WORKER_IPS,
             "service_cidr": Application.K8S_CONFIG.SERVICE_CIDR,
             "pod_cidr": Application.K8S_CONFIG.POD_CIDR,
@@ -367,6 +395,11 @@ class K8sDeploymentConfig:
         """显示当前配置"""
         click.echo(click.style("当前K8s部署配置:", fg="blue", bold=True))
         click.echo(f"  Master节点: {Application.K8S_CONFIG.MASTER_IP}")
+        click.echo(
+            f"  附加Master节点: {Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS}")
+        if Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT:
+            click.echo(
+                f"  控制面端点(VIP): {Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT}")
         click.echo(f"  Worker节点: {Application.K8S_CONFIG.WORKER_IPS}")
         click.echo(f"  Service网段: {Application.K8S_CONFIG.SERVICE_CIDR}")
         click.echo(f"  Pod网段: {Application.K8S_CONFIG.POD_CIDR}")
@@ -418,6 +451,20 @@ class K8sDeployer:
 
     def _filter_pending_files(self) -> List[Tuple[Path, str]]:
         """过滤出需要执行的文件（防幂等）"""
+        # 过滤掉手动配置跳过的infra文件
+        active_files = [
+            (fp, desc) for fp, desc in self.deployment_files
+            if not self.deployment_state.is_file_skipped(fp.name)
+        ]
+        skipped_count = len(self.deployment_files) - len(active_files)
+        if skipped_count > 0:
+            skipped_names = [
+                fp.name for fp, _ in self.deployment_files
+                if self.deployment_state.is_file_skipped(fp.name)
+            ]
+            click.echo(
+                f"检测到 {skipped_count} 个组件被配置跳过（skip_files）: {skipped_names}")
+
         config_hash = self.config.get_config_hash()
 
         # 配置变更时，重置状态并执行所有文件
@@ -427,12 +474,12 @@ class K8sDeployer:
             self.deployment_state.set_config_hash(config_hash)
             for file_name, file_hash in self.file_hashes.items():
                 self.deployment_state.set_file_hash(file_name, file_hash)
-            return self.deployment_files
+            return active_files
 
         pending_files: List[Tuple[Path, str]] = []
         completed_count = 0
 
-        for file_path, description in self.deployment_files:
+        for file_path, description in active_files:
             file_name = file_path.name
             current_hash = self.file_hashes.get(file_name)
             stored_hash = self.deployment_state.get_file_hash(file_name)
@@ -488,7 +535,23 @@ class K8sDeployer:
         filenames = [
             ("install_cni.py", "CNI网络插件"),
             ("install_containerd.py", "容器运行时组件"),
+        ]
+
+        # HA模式：在 kubeadm init 前部署 keepalived 提供 VIP
+        if Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS:
+            filenames.append(
+                ("install_keepalived.py", "Keepalived VIP（高可用）"))
+
+        filenames += [
             ("install_kubernetes.py", "K8s核心组件"),
+        ]
+
+        # HA模式：附加 master 节点通过 --control-plane join
+        if Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS:
+            filenames.append(
+                ("kubernetes_join_control_plane.py", "附加Master节点加入控制面"))
+
+        filenames += [
             ("kubernetes_join_node.py", "Worker节点加入"),
             ("install_calico.py", "Calico网络组件"),
             ("install_helm.py", "Helm包管理器"),

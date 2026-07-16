@@ -14,7 +14,7 @@ service_cidr = data.service_cidr
 pod_cidr = data.pod_cidr
 master_schedule = data.master_schedule
 # 安装 kubelet kubectl kubeadm
-if "worker" in host.groups:
+if "master" not in host.groups:
     baseurl = f"sftp://{master_ip}{deploy_src}/repo"
 else:
     baseurl = f"file:///{deploy_src}/repo"
@@ -55,7 +55,7 @@ debug: false
 # 加载离线镜像
 images_file = os.path.join(
     deploy_src, "images", "kubenetes.images.v1.34.0.tar.gz")
-if "worker" in host.groups:
+if "master" not in host.groups:
     command = f"curl sftp://{master_ip}{images_file} -o - | ctr -n k8s.io i import -"
 else:
     command = f"ctr -n k8s.io i import {images_file}"
@@ -85,14 +85,17 @@ server.shell(
 )
 
 if "master" in host.groups:
+    # 确定 control-plane-endpoint：HA模式下用VIP，否则用 master_ip
+    cpe = data.control_plane_endpoint or master_ip
     server.shell(
         name="Initialize Kubernetes control plane",
         commands=" ".join(["kubeadm", "init",
                            f"--apiserver-advertise-address={master_ip}",
-                           f"--control-plane-endpoint={master_ip}",
+                           f"--control-plane-endpoint={cpe}",
                            "--kubernetes-version=v1.34.0",
                            f"--service-cidr={service_cidr}",
                            f"--pod-network-cidr={pod_cidr}",
+                           "--upload-certs",
                            "--ignore-preflight-errors=all"])
     )
     server.files.line(
