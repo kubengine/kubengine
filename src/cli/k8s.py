@@ -71,7 +71,7 @@ class DeploymentState:
         return {
             "completed_files": [],
             "failed_files": [],
-            "deployment_hash": None,
+            "file_hashes": {},
             "config_hash": None,
             "last_execution_time": None
         }
@@ -108,12 +108,22 @@ class DeploymentState:
             self.state["failed_files"].append(file_name)
         self._save_state()
 
-    def set_deployment_hash(self, config_hash: str, deployment_hash: str) -> None:
-        """设置部署和配置哈希"""
-        self.state["deployment_hash"] = deployment_hash
+    def set_config_hash(self, config_hash: str) -> None:
+        """设置配置哈希"""
         self.state["config_hash"] = config_hash
         self.state["last_execution_time"] = os.path.getmtime(
             self.state_file) if self.state_file.exists() else None
+        self._save_state()
+
+    def get_file_hash(self, file_name: str) -> Optional[str]:
+        """获取文件的已存储哈希"""
+        return self.state.get("file_hashes", {}).get(file_name)
+
+    def set_file_hash(self, file_name: str, file_hash: str) -> None:
+        """设置单个文件的哈希"""
+        if "file_hashes" not in self.state:
+            self.state["file_hashes"] = {}
+        self.state["file_hashes"][file_name] = file_hash
         self._save_state()
 
     def reset_state(self) -> None:
@@ -121,18 +131,15 @@ class DeploymentState:
         self.state = {
             "completed_files": [],
             "failed_files": [],
-            "deployment_hash": None,
+            "file_hashes": {},
             "config_hash": None,
             "last_execution_time": None
         }
         self._save_state()
 
-    def should_force_redeploy(self, config_hash: str, deployment_hash: str) -> bool:
-        """判断是否应该强制重新部署"""
-        return (
-            self.state.get("config_hash") != config_hash or self.state.get(
-                "deployment_hash") != deployment_hash
-        )
+    def should_force_redeploy(self, config_hash: str) -> bool:
+        """判断是否应该因配置变更强制重新部署"""
+        return self.state.get("config_hash") != config_hash
 
 
 class K8sDeploymentConfigValidator:
@@ -393,30 +400,33 @@ class K8sDeployer:
         self.infra_path = os.path.join(Path(__file__).parent.parent, "infra")
         self.deployment_files = self._get_deployment_files()
 
-        # 生成部署哈希（用于检测文件变更）
-        self.deployment_hash = self._generate_deployment_hash()
+        # 生成每个部署文件的哈希（用于检测单文件变更）
+        self.file_hashes = self._generate_file_hashes()
 
-    def _generate_deployment_hash(self) -> str:
-        """生成部署文件哈希（用于检测文件变更）"""
+    def _generate_file_hashes(self) -> Dict[str, str]:
+        """生成每个部署文件的哈希（用于检测单文件变更）"""
         import hashlib
 
-        hash_input = ""
+        file_hashes: Dict[str, str] = {}
         for file_path, _ in self.deployment_files:
             if file_path.exists():
-                hash_input += f"{file_path}:{file_path.stat().st_mtime};"
+                mtime = file_path.stat().st_mtime
+                file_hashes[file_path.name] = hashlib.md5(
+                    f"{file_path}:{mtime}".encode()).hexdigest()
 
-        return hashlib.md5(hash_input.encode()).hexdigest()
+        return file_hashes
 
     def _filter_pending_files(self) -> List[Tuple[Path, str]]:
         """过滤出需要执行的文件（防幂等）"""
         config_hash = self.config.get_config_hash()
 
-        # 如果配置或部署文件发生变化，重置状态并执行所有文件
-        if self.deployment_state.should_force_redeploy(config_hash, self.deployment_hash):
-            click.echo("检测到配置或部署文件变更，重新执行所有组件")
+        # 配置变更时，重置状态并执行所有文件
+        if self.deployment_state.should_force_redeploy(config_hash):
+            click.echo("检测到配置变更，重新执行所有组件")
             self.deployment_state.reset_state()
-            self.deployment_state.set_deployment_hash(
-                config_hash, self.deployment_hash)
+            self.deployment_state.set_config_hash(config_hash)
+            for file_name, file_hash in self.file_hashes.items():
+                self.deployment_state.set_file_hash(file_name, file_hash)
             return self.deployment_files
 
         pending_files: List[Tuple[Path, str]] = []
@@ -424,8 +434,12 @@ class K8sDeployer:
 
         for file_path, description in self.deployment_files:
             file_name = file_path.name
+            current_hash = self.file_hashes.get(file_name)
+            stored_hash = self.deployment_state.get_file_hash(file_name)
 
-            if self.deployment_state.is_file_completed(file_name):
+            # 文件已完成且内容未变 → 跳过；否则需要（重新）执行
+            if (self.deployment_state.is_file_completed(file_name)
+                    and current_hash == stored_hash):
                 completed_count += 1
                 click.echo(f"{description} ({file_name}) - 已完成，跳过")
             else:
@@ -520,8 +534,10 @@ class K8sDeployer:
 
                 if result.success:
                     click.echo(f"{description} 部署成功")
-                    # 标记为已完成
+                    # 标记为已完成并保存当前文件哈希
                     self.deployment_state.mark_file_completed(file_path.name)
+                    self.deployment_state.set_file_hash(
+                        file_path.name, self.file_hashes.get(file_path.name, ""))
                 else:
                     click.echo(f"{description} 部署失败")
                     # 标记为失败
