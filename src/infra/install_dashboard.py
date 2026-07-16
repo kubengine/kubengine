@@ -26,15 +26,29 @@ server.shell(name="Load offline dashboard images", commands=command)
 if "master" in host.groups:
     python.call(name="Create TLS cert for dashboard-system namespace", function=k8s_create_tls,
                 namespace="dashboard-system", tls_name="dashboard-tls")
-    server.shell(name="Install dashboard", commands=" ".join(["KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
-                                                              "dashboard",
-                                                             helm_charts_dir,
-                                                             "-n", "dashboard-system",
-                                                              "--create-namespace",
-                                                              "-f", f"{helm_charts_dir}/values.yaml"]))
     manifests_dir = data.manifest_dir
     server.files.directory(
         name="Create manifests directory", path=manifests_dir)
+    values_template_file = os.path.join(helm_charts_dir, "values.yaml.j2")
+    values_file = os.path.join(helm_charts_dir, "values.yaml")
+    server.files.template(name="Gen dashboard helm chart values file",
+                          src=values_template_file,
+                          dest=values_file,
+                          domain=domain)
+                          
+    chart_template_file = os.path.join(helm_charts_dir, "Chart.yaml.j2")
+    chart_file = os.path.join(helm_charts_dir, "Chart.yaml")
+    server.files.template(name="Gen dashboard helm chart values file",
+                          src=chart_template_file,
+                          dest=chart_file,
+                          domain=domain)
+
+    server.shell(name="Install dashboard", commands=" ".join(["KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
+                                                              "dashboard",
+                                                              helm_charts_dir,
+                                                              "-n", "dashboard-system",
+                                                              "--create-namespace",
+                                                              "-f", f"{helm_charts_dir}/values.yaml"]))
     manifests_file = os.path.join(manifests_dir, "dashboard-admin-user.yaml")
     server.files.put(name="Create dashboard RBAC config file", dest=manifests_file, src=StringIO("""apiVersion: v1
 kind: ServiceAccount

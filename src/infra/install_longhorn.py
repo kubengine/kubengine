@@ -77,6 +77,12 @@ server.shell(name="Load offline longhorn images", commands=command)
 if "master" in host.groups:
     python.call(name="Create TLS cert for longhorn-system namespace", function=k8s_create_tls,
                 namespace="longhorn-system", tls_name="longhorn-tls")
+    values_template_file = os.path.join(helm_charts_dir, "values.yaml.j2")
+    values_file = os.path.join(helm_charts_dir, "values.yaml")
+    server.files.template(name="Gen longhorn helm chart values file",
+                          src=values_template_file,
+                          dest=values_file,
+                          domain=domain)
     server.shell(
         name="Install longhorn",
         commands=" ".join(

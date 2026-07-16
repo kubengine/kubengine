@@ -24,7 +24,13 @@ server.shell(name="Load offline harbor images", commands=command)
 if "master" in host.groups:
     python.call(name="Create TLS cert for harbor-system namespace", function=k8s_create_tls,
                 namespace="harbor-system", tls_name="harbor-tls")
-    server.shell(name="Install harbor", commands=" ".join(["KUBECONFIG=/etc/kubernetes/admin.conf  helm", "install",
+    values_template_file = os.path.join(helm_charts_dir, "values.yaml.j2")
+    values_file = os.path.join(helm_charts_dir, "values.yaml")
+    server.files.template(name="Gen harbor helm chart values file",
+                          src=values_template_file,
+                          dest=values_file,
+                          domain=domain)
+    server.shell(name="Install harbor", commands=" ".join(["KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
                                                            "harbor",
                                                            helm_charts_dir,
                                                            "-n", "harbor-system",
