@@ -89,7 +89,7 @@ if "worker" in host.groups:
         name="Configure containerd with config.toml",
         commands=[
             "mkdir -p /etc/containerd",
-            "curl -o /etc/containerd/config.toml sftp://{master_ip}{config_path}"
+            f"curl -o /etc/containerd/config.toml sftp://{master_ip}{config_path}"
         ]
     )
 
