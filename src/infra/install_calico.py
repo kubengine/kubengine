@@ -37,8 +37,9 @@ server.files.template(
     pod_network_cidr=host.data.pod_cidr
 )
 
-# Apply Calico manifests
-server.shell(
-    name="Install calico",
-    commands=f"KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f {manifests_dir}/calico.yaml"
-)
+# Apply Calico manifests - only on master node
+if "master" in host.groups:
+    server.shell(
+        name="Install calico",
+        commands=f"KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f {manifests_dir}/calico.yaml"
+    )
