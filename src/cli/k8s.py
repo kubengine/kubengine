@@ -621,6 +621,11 @@ class K8sDeployer:
     def _show_deployment_results(self) -> None:
         """显示部署成功结果"""
         loadbalancer_ip = self.config.get_loadbalancer_ip()
+        # 高可用模式下优先使用控制面端点（VIP），否则用 master IP
+        apiserver_endpoint = (
+            Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT
+            or Application.K8S_CONFIG.MASTER_IP
+        )
 
         click.echo(click.style("=" * 80, fg="green", bold=True))
         click.echo(click.style("Kubernetes 集群部署成功！", fg="green", bold=True))
@@ -655,7 +660,7 @@ class K8sDeployer:
     ├─ Harbor镜像仓库:        https://{Application.DOMAIN}
     ├─ Longhorn管理面板:      https://longhorn.{Application.DOMAIN}
     ├─ K8s Dashboard:         https://dashboard.{Application.DOMAIN}
-    └─ K8s APIServer:         http://{Application.K8S_CONFIG.MASTER_IP}:6443
+    └─ K8s APIServer:         http://{apiserver_endpoint}:6443
 
     默认账号密码（请及时修改！）：
     ├─ Harbor默认账号:        {getattr(Application.REGISTRY, 'USERNAME', 'admin')}
