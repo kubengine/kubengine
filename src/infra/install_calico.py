@@ -11,7 +11,7 @@ manifests_dir: str = host.data.manifest_dir
 images_path: str = os.path.join(
     deploy_src, "images", "calico.images.v3.27.0.tar.gz")
 
-if "worker" in host.groups:
+if "master" not in host.groups:
     command = f"curl sftp://{master_ip}{images_path} -o - | ctr -n k8s.io i import -"
 else:
     command = f"ctr -n k8s.io i import {images_path}"

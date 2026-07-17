@@ -17,7 +17,7 @@ images_path = os.path.join(
 helm_charts_dir = os.path.join(deploy_src, "charts", "longhorn")
 
 # 安装 open-iscsi
-if "worker" in host.groups:
+if "master" not in host.groups:
     baseurl = f"sftp://{master_ip}{deploy_src}/repo"
 else:
     baseurl = f"file:///{deploy_src}/repo"
@@ -68,7 +68,7 @@ server.files.put(
 )
 
 # 加载离线镜像
-if "worker" in host.groups:
+if "master" not in host.groups:
     command = f"curl sftp://{master_ip}{images_path} -o - | ctr -n k8s.io i import -"
 else:
     command = f"ctr -n k8s.io i import {images_path}"

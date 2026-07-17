@@ -15,7 +15,7 @@ if "master" in host.groups:
         dest=f"/usr/share/pki/ca-trust-source/anchors/{domain}.client.crt",
         src=ca_crt_file
     )
-if "worker" in host.groups:
+if "master" not in host.groups:
     server.shell(
         name="Copy client cert file",
         commands=f"curl -o /usr/share/pki/ca-trust-source/anchors/{domain}.client.crt sftp://{master_ip}{ca_crt_file}"

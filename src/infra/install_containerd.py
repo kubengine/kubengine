@@ -22,7 +22,7 @@ server.yum.packages(name="Remove default containerd package",
 server.files.directory(
     name=f"Create {target_containerd_dir} directory", path=target_containerd_dir)
 
-if "worker" in host.groups:
+if "master" not in host.groups:
     command = f"curl sftp://{master_ip}{containerd_path} -o - | tar zxf - -C {target_containerd_dir}"
 else:
     command = f"tar zxf {containerd_path} -C {target_containerd_dir}"
@@ -48,7 +48,7 @@ if "master" in host.groups:
         src=os.path.join(containerd_dir, "runc.amd64"),
         mode="755"
     )
-if "worker" in host.groups:
+if "master" not in host.groups:
     server.shell(
         name="Copy runc binary to /usr/local/bin/runc",
         commands=[
@@ -59,7 +59,7 @@ if "worker" in host.groups:
 
 
 # kata相关
-if "worker" in host.groups:
+if "master" not in host.groups:
     command = f"curl sftp://{master_ip}{kata_path} -o - | tar zxf - -C /opt"
 else:
     command = f"tar zxf {kata_path} -C /opt"
@@ -84,7 +84,7 @@ if "master" in host.groups:
         name="Configure containerd with config.toml",
         dest="/etc/containerd/config.toml",
         src=config_path)
-if "worker" in host.groups:
+if "master" not in host.groups:
     server.shell(
         name="Configure containerd with config.toml",
         commands=[
@@ -94,7 +94,7 @@ if "worker" in host.groups:
     )
 
 # proxy
-if "worker" in host.groups:
+if "master" not in host.groups:
     command = f"curl sftp://{master_ip}{certs_path} -o - | tar zxf - -C /etc/containerd"
 else:
     command = f"tar zxf {certs_path} -C /etc/containerd"

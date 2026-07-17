@@ -11,7 +11,7 @@ images_path = os.path.join(
 helm_charts_dir = os.path.join(deploy_src, "charts", "metrics-server")
 
 # 加载离线镜像
-if "worker" in host.groups:
+if "master" not in host.groups:
     command = f"curl sftp://{master_ip}{images_path} -o - | ctr -n k8s.io i import -"
 else:
     command = f"ctr -n k8s.io i import {images_path}"

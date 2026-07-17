@@ -14,7 +14,7 @@ helm_charts_dir = os.path.join(
     deploy_src, "/root/offline-deploy/charts/metallb")
 
 # 加载离线镜像
-if "worker" in host.groups:
+if "master" not in host.groups:
     command = f"curl sftp://{master_ip}{images_file} -o - | ctr -n k8s.io i import -"
 else:
     command = f"ctr -n k8s.io i import {images_file}"

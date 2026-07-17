@@ -15,7 +15,7 @@ target_cni_dir = "/opt/cni/bin"
 server.files.directory(
     name=f"Create {target_cni_dir} directory for CNI plugins", path=target_cni_dir)
 
-if "worker" in host.groups:
+if "master" not in host.groups:
     command = f"curl sftp://{master_ip}{cni_path} -o - | tar zxf - -C {target_cni_dir}"
 else:
     command = f"tar zxf {cni_path} -C {target_cni_dir}"

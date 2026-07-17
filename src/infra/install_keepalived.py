@@ -5,72 +5,69 @@ from pyinfra.context import host
 
 data = host.data
 
-# 仅 master 和 additional_master 组部署 keepalived
+# 仅 master 和 additional_master 组部署 keepalived，且需配置 VIP
 is_master = "master" in host.groups or "additional_master" in host.groups
-if not is_master:
-    exit(0)
-
 vip = data.control_plane_endpoint or ""
-if not vip:
-    # 没有配置VIP，跳过（单 master 模式）
-    exit(0)
 
-master_ip = data.master_ip
-deploy_src = data.deploy_src
+if is_master and vip:
+    master_ip = data.master_ip
+    deploy_src = data.deploy_src
 
-# 通过 kubengine 离线 repo 安装 keepalived
-repo_name = "kubengine_repo"
-if "master" not in host.groups:
-    baseurl = f"sftp://{master_ip}{deploy_src}/repo"
-else:
-    baseurl = f"file:///{deploy_src}/repo"
-server.yum.repo(
-    name="Add kubengine yum repository",
-    src=repo_name,
-    baseurl=baseurl,
-    gpgcheck=False
-)
-server.yum.packages(
-    name="Install keepalived",
-    packages=["keepalived"],
-    extra_install_args=f"--disablerepo=* --enablerepo={repo_name}"
-)
-server.yum.repo(
-    name="Remove kubengine yum repository",
-    src=repo_name,
-    present=False
-)
-
-# 获取网络接口：优先使用配置值，否则自动检测默认路由网卡
-interface = data.master_interface or ""
-if not interface:
-    import subprocess
-    result = subprocess.run(
-        ["ip", "route", "get", "1.1.1.1"],
-        capture_output=True, text=True, timeout=5
-    )
-    if result.returncode == 0:
-        interface = result.stdout.split(" dev ")[1].split()[0]
+    # 通过 kubengine 离线 repo 安装 keepalived
+    repo_name = "kubengine_repo"
+    if "master" not in host.groups:
+        baseurl = f"sftp://{master_ip}{deploy_src}/repo"
     else:
-        interface = "ens31"
+        baseurl = f"file:///{deploy_src}/repo"
+    server.yum.repo(
+        name="Add kubengine yum repository",
+        src=repo_name,
+        baseurl=baseurl,
+        gpgcheck=False
+    )
+    server.yum.packages(
+        name="Install keepalived",
+        packages=["keepalived"],
+        extra_install_args=f"--disablerepo=* --enablerepo={repo_name}"
+    )
+    server.yum.repo(
+        name="Remove kubengine yum repository",
+        src=repo_name,
+        present=False
+    )
 
-# 确定优先级：第一个 master = MASTER(100)，其余 = BACKUP(95-90-...)
-# host.name 为 pyinfra 中当前主机的 IP
-master_ips = [data.master_ip] + list(data.additional_master_ips or [])
-current_ip = host.name
-
-priority = 90
-state = "BACKUP"
-for idx, ip in enumerate(master_ips):
-    if ip == current_ip:
-        if idx == 0:
-            priority = 100
-            state = "MASTER"
+    # 获取网络接口：优先使用配置值，否则自动检测默认路由网卡
+    interface = data.master_interface or ""
+    if not interface:
+        import subprocess
+        result = subprocess.run(
+            ["ip", "route", "get", "1.1.1.1"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            interface = result.stdout.split(" dev ")[1].split()[0]
         else:
-            priority = max(95 - (idx - 1) * 5, 50)
-        break
+            interface = "ens31"
 
-keepalived_conf = f"""! Configuration File for keepalived
+    # 确定优先级：第一个 master = MASTER(100)，其余 = BACKUP(95-90-...)
+    master_ips = [data.master_ip] + list(data.additional_master_ips or [])
+    current_ip = host.name
+    # @local 代表本机（第一个 master 节点），映射为其真实 IP
+    if current_ip == "@local":
+        current_ip = master_ip
+
+    priority = 90
+    state = "BACKUP"
+    for idx, ip in enumerate(master_ips):
+        if ip == current_ip:
+            if idx == 0:
+                priority = 100
+                state = "MASTER"
+            else:
+                priority = max(95 - (idx - 1) * 5, 50)
+            break
+
+    keepalived_conf = f"""! Configuration File for keepalived
 global_defs {{
     router_id LVS_K8S
     script_user root
@@ -93,16 +90,16 @@ vrrp_instance VI_K8S_APISERVER {{
 }}
 """
 
-files.put(
-    name="Write keepalived configuration",
-    dest="/etc/keepalived/keepalived.conf",
-    src=StringIO(keepalived_conf)
-)
+    files.put(
+        name="Write keepalived configuration",
+        dest="/etc/keepalived/keepalived.conf",
+        src=StringIO(keepalived_conf)
+    )
 
-server.systemd.service(
-    name="Enable and start keepalived service",
-    service="keepalived",
-    running=True,
-    enabled=True,
-    restart=True
-)
+    server.systemd.service(
+        name="Enable and start keepalived service",
+        service="keepalived",
+        running=True,
+        enabled=True,
+        restarted=True
+    )

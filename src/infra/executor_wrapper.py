@@ -430,6 +430,16 @@ class InfraFileExecutor:
                 ctx_host.set(host)  # type: ignore
                 spec.loader.exec_module(module)
 
+            except SystemExit as e:
+                # 部署文件通过 exit(0) 表示该主机跳过当前部署（如 worker 跳过 keepalived）
+                # exit code 为 0 视为正常跳过；非 0 视为错误
+                if e.code == 0:
+                    logger.info(f"--> Host {host_ip} skipped this deployment")
+                else:
+                    error_msg = f"Module exited with code {e.code} on host {host_ip}"
+                    logger.error(error_msg)
+                    host_result.error = error_msg
+                continue
             except Exception as e:
                 error_msg = f"Failed to execute module on host {host_ip}: {str(e)}"
                 logger.error(error_msg)
