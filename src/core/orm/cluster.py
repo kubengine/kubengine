@@ -125,7 +125,7 @@ def _format_helm_value(helm_type: str, helm_unit: str, value: Any) -> Any:
     Returns:
         Formatted value
     """
-    if helm_unit:
+    if helm_unit and helm_type != "array":
         return f"{value}{helm_unit}"
 
     try:
@@ -133,6 +133,10 @@ def _format_helm_value(helm_type: str, helm_unit: str, value: Any) -> Any:
             return bool(value)
         elif helm_type == "number":
             return int(value)
+        elif helm_type == "array":
+            if isinstance(value, str):
+                return [v.strip() for v in value.split(",") if v.strip()]
+            return value if isinstance(value, list) else [value]
         return value
     except (ValueError, TypeError):
         return value
@@ -168,10 +172,19 @@ def build_helm_config(cluster_schema: ClusterSchema) -> Dict[str, Any]:
                     cluster_schema.config[field.name]
                 )
 
-                # Convert dot notation to nested dict and merge
-                key_config = convert_dot_notation_to_dict(
-                    f"{helm_key}={value}")
-                _merge_configurations(helm_config, key_config)
+                # Handle array values (list) vs scalar values (string/number/boolean)
+                if isinstance(value, list):
+                    # Array type: traverse dot notation and assign list directly
+                    sub = helm_config
+                    keys = helm_key.split(".")
+                    for k in keys[:-1]:
+                        sub = sub.setdefault(k, {})
+                    sub[keys[-1]] = value
+                else:
+                    # Scalar: convert dot notation string to nested dict and merge
+                    key_config = convert_dot_notation_to_dict(
+                        f"{helm_key}={value}")
+                    _merge_configurations(helm_config, key_config)
 
     return helm_config
 

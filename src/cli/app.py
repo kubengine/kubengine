@@ -532,7 +532,350 @@ def _get_default_apps() -> list[AppSchema]:
         ],
     )
 
-    return [redis_app]
+    # Redis Cluster 应用配置（基于 bitnami/redis-cluster chart）
+    redis_cluster_app = AppSchema(
+        name="redis-cluster",
+        category=["数据库"],
+        description="高可用分布式 Redis 集群（基于 Redis Cluster，自动分片与故障转移）",
+        helm_chart="redis-cluster",
+        create_time=datetime.now(),
+        app_field_configs=[
+            # 节点总数
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="nodes",
+                label="集群节点数",
+                extra="集群总节点数（含副本），master 数量需 >= 3。总数 = master数 + master数*副本数。例如 6 = 3主3从",
+                order=0,
+                form_item_props={"required": True},
+                type="select",
+                initial_value="6",
+                rules=[],
+                field_props={
+                    "allowClear": False,
+                    "options": [
+                        {"label": "6 节点（3主3从）", "value": "6"},
+                        {"label": "8 节点（4主4从）", "value": "8"},
+                        {"label": "12 节点（6主6从）", "value": "12"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["cluster.nodes"],
+                    "type": "number",
+                    "unit": "",
+                },
+            ),
+            # 每主副本数
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="replicas",
+                label="每主副本数",
+                extra="每个 master 节点的副本（slave）数量，1 表示每个 master 对应 1 个副本",
+                order=1,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="1",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "1", "value": "1"},
+                        {"label": "2", "value": "2"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["cluster.replicas"],
+                    "type": "number",
+                    "unit": "",
+                },
+            ),
+            # CPU 配置
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="cpu",
+                label="cpu",
+                extra="每个节点的核数，作为分布式缓存单核通常足够，高吞吐场景可提升至双核",
+                order=2,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="1",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "1", "value": "1"},
+                        {"label": "2", "value": "2"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["redis.resources.requests.cpu"],
+                    "type": "number",
+                    "unit": "",
+                },
+            ),
+            # 内存配置
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="memory",
+                label="内存",
+                extra="每个节点的内存大小(单位 Gi)",
+                order=3,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="2",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "1", "value": "1"},
+                        {"label": "2", "value": "2"},
+                        {"label": "4", "value": "4"},
+                        {"label": "8", "value": "8"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["redis.resources.requests.memory"],
+                    "type": "number",
+                    "unit": "Gi",
+                },
+            ),
+            # 磁盘配置
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="disk",
+                label="硬盘大小",
+                extra="8Gi - 32Gi, 节点磁盘大小，建议至少为节点内存的三倍",
+                order=4,
+                form_item_props={"required": True},
+                type="number",
+                initial_value=8,
+                rules=[
+                    {"type": "number", "message": "仅允许设置 8 - 32", "min": 8, "max": 32},
+                ],
+                field_props={"options": []},
+                helm_props={
+                    "keys": ["persistence.size"],
+                    "type": "number",
+                    "unit": "Gi",
+                },
+            ),
+            # Service 类型
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="service",
+                label="Service服务",
+                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                order=5,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="ClusterIP",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "ClusterIP", "value": "ClusterIP"},
+                        {"label": "LoadBalancer", "value": "LoadBalancer"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["service.type"],
+                    "type": "string",
+                    "unit": "",
+                },
+            ),
+            # 密码配置
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.env,
+                name="password",
+                label="密码",
+                extra="Redis 集群访问密码，留空则自动随机生成；自定义需包含大小写字母、数字，最低 6 位",
+                order=0,
+                form_item_props={"required": True},
+                type="password",
+                initial_value="kubengine@redis*CLU",
+                rules=[
+                    {
+                        "type": "string",
+                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "min": 6,
+                        "max": 20,
+                    },
+                ],
+                field_props={"placeholder": "请输入密码", "options": []},
+                helm_props={
+                    "keys": ["password"],
+                    "type": "string",
+                    "unit": "",
+                },
+            ),
+        ],
+    )
+
+    # Kafka 应用配置（基于 bitnami/kafka chart，KRaft 模式）
+    kafka_app = AppSchema(
+        name="kafka",
+        category=["中间件"],
+        description="高可用分布式 Kafka 消息队列（KRaft 模式，无需外部 Zookeeper）",
+        helm_chart="kafka",
+        create_time=datetime.now(),
+        app_field_configs=[
+            # 节点数
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="nodes",
+                label="集群节点数",
+                extra="KRaft 模式下 controller+broker 组合节点数，建议奇数（3 或 5）以保证仲裁多数",
+                order=0,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="3",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "1（单节点，仅测试）", "value": "1"},
+                        {"label": "3（推荐）", "value": "3"},
+                        {"label": "5", "value": "5"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["controller.replicaCount"],
+                    "type": "number",
+                    "unit": "",
+                },
+            ),
+            # CPU 配置
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="cpu",
+                label="cpu",
+                extra="每个节点的核数，Kafka 对 CPU 敏感，高吞吐场景建议 2 核及以上",
+                order=1,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="1",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "1", "value": "1"},
+                        {"label": "2", "value": "2"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["controller.resources.requests.cpu"],
+                    "type": "number",
+                    "unit": "",
+                },
+            ),
+            # 内存配置
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="memory",
+                label="内存",
+                extra="每个节点的内存大小(单位 Gi)，Kafka 堆内存默认占用可用内存的 75%",
+                order=2,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="2",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "1", "value": "1"},
+                        {"label": "2", "value": "2"},
+                        {"label": "4", "value": "4"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["controller.resources.requests.memory"],
+                    "type": "number",
+                    "unit": "Gi",
+                },
+            ),
+            # 磁盘配置
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="disk",
+                label="硬盘大小",
+                extra="8Gi - 64Gi, 节点数据日志磁盘大小，建议根据保留时长与吞吐量评估",
+                order=3,
+                form_item_props={"required": True},
+                type="number",
+                initial_value=8,
+                rules=[
+                    {"type": "number", "message": "仅允许设置 8 - 64", "min": 8, "max": 64},
+                ],
+                field_props={"options": []},
+                helm_props={
+                    "keys": ["controller.persistence.size"],
+                    "type": "number",
+                    "unit": "Gi",
+                },
+            ),
+            # Service 类型
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="service",
+                label="Service服务",
+                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                order=4,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="ClusterIP",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "ClusterIP", "value": "ClusterIP"},
+                        {"label": "LoadBalancer", "value": "LoadBalancer"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["service.type"],
+                    "type": "string",
+                    "unit": "",
+                },
+            ),
+            # 客户端用户名（支持数组，逗号分隔多个用户名）
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.env,
+                name="clientUser",
+                label="客户端用户名",
+                extra="SASL 客户端认证用户名，多个用户名用逗号分隔（默认 SASL_PLAINTEXT+PLAIN 机制）",
+                order=0,
+                form_item_props={"required": True},
+                type="text",
+                initial_value="user1",
+                rules=[],
+                field_props={"placeholder": "多个用户名用逗号分隔，如 user1,user2", "options": []},
+                helm_props={
+                    "keys": ["sasl.client.users"],
+                    "type": "array",
+                    "unit": "",
+                },
+            ),
+            # 客户端密码
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.env,
+                name="clientPassword",
+                label="客户端密码",
+                extra="SASL 客户端认证密码（默认用户名 user1，SASL_PLAINTEXT+PLAIN）；自定义需包含大小写字母、数字，最低 6 位",
+                order=0,
+                form_item_props={"required": True},
+                type="password",
+                initial_value="kubengine@kafka*CLI",
+                rules=[
+                    {
+                        "type": "string",
+                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "min": 6,
+                        "max": 20,
+                    },
+                ],
+                field_props={"placeholder": "请输入客户端密码", "options": []},
+                helm_props={
+                    "keys": ["sasl.client.passwords"],
+                    "type": "string",
+                    "unit": "",
+                },
+            ),
+        ],
+    )
+
+    return [redis_app, redis_cluster_app, kafka_app]
 
 
 # ============================ 辅助函数 ============================
