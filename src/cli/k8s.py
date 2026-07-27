@@ -28,6 +28,7 @@ from core.logger import get_logger, setup_cli_logging  # noqa
 from core.misc.network import local_ips  # noqa
 from core.misc.ca import create_cert  # noqa
 from core.config import Application  # noqa
+from core.http_api_client.harbor_client import HarborClient  # noqa
 import ipaddress  # noqa
 import click  # noqa
 from typing import Any, Dict, List, Optional, Tuple  # noqa
@@ -871,6 +872,84 @@ def reset_state(force: bool) -> None:
         click.echo(click.style("部署状态已重置", fg="green"))
     except Exception as e:
         click.echo(click.style(f"重置失败: {e}", fg="red"), err=True)
+        exit(1)
+
+
+@cli.command(name="init-harbor")
+@click.option(
+    '--timeout',
+    default=600,
+    type=int,
+    help="等待 Harbor 就绪的最大时间（秒），默认 600"
+)
+@click.option(
+    '--interval',
+    default=10,
+    type=int,
+    help="轮询 Harbor 就绪的间隔（秒），默认 10"
+)
+def init_harbor(timeout: int, interval: int) -> None:
+    """
+    初始化 Harbor 项目
+
+    在 Harbor 镜像仓库中创建默认公开项目（apps、charts）。
+    会先等待 Harbor 服务就绪，再幂等地创建项目（已存在则跳过）。
+
+    示例：
+    $ python k8s.py init-harbor
+    $ python k8s.py init-harbor --timeout 900 --interval 15
+    """
+    default_projects = [
+        ("apps", True),
+        ("charts", True),
+    ]
+
+    click.echo(click.style("开始初始化 Harbor 项目...", fg="blue", bold=True))
+    click.echo(f"Harbor 地址: https://{Application.DOMAIN}")
+
+    client = HarborClient()
+
+    # 等待 Harbor 就绪
+    click.echo(f"等待 Harbor 服务就绪（超时 {timeout}秒）...")
+    if not client.wait_for_ready(timeout=timeout, interval=interval):
+        click.echo(
+            click.style(
+                "Harbor 服务未就绪，请稍后重试，或执行 kubectl get pods -n harbor-system 检查状态",
+                fg="red",
+            ),
+            err=True,
+        )
+        exit(1)
+    click.echo(click.style("Harbor 服务已就绪", fg="green"))
+
+    # 创建默认项目
+    success_count = 0
+    for project_name, public in default_projects:
+        visibility = "公开" if public else "私有"
+        if client.create_project(project_name, public):
+            click.echo(
+                click.style(
+                    f"项目 '{project_name}' 就绪（{visibility}）", fg="green"
+                )
+            )
+            success_count += 1
+        else:
+            click.echo(
+                click.style(f"项目 '{project_name}' 初始化失败", fg="red"),
+                err=True,
+            )
+
+    if success_count == len(default_projects):
+        click.echo(click.style("Harbor 项目初始化完成！", fg="green", bold=True))
+        exit(0)
+    else:
+        click.echo(
+            click.style(
+                f"部分项目初始化失败（{success_count}/{len(default_projects)}）",
+                fg="red",
+            ),
+            err=True,
+        )
         exit(1)
 
 

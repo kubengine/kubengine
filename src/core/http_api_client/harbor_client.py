@@ -4,6 +4,7 @@ Harbor 镜像仓库 API 客户端模块
 提供与 Harbor Registry API 交互的客户端类，支持项目、仓库、制品和标签的管理。
 """
 
+import time
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
@@ -361,5 +362,42 @@ class HarborClient(BasicClient):
         )
         if response.status_code == 201:
             return True
+        # 409 Conflict 表示项目已存在，视为幂等成功
+        if response.status_code == 409:
+            self._logger.info(f"项目 '{project_name}' 已存在，跳过创建")
+            return True
         self._logger.error(f"创建项目失败: {response.status_code} - {response.text}")
+        return False
+
+    def wait_for_ready(
+        self, timeout: int = 600, interval: int = 10
+    ) -> bool:
+        """
+        等待 Harbor 服务就绪
+
+        通过轮询健康检查端点判断 Harbor 是否可用。
+
+        Args:
+            timeout: 最大等待时间（秒），默认 600（10 分钟）
+            interval: 轮询间隔（秒），默认 10
+
+        Returns:
+            Harbor 就绪返回 True，超时返回 False
+        """
+        url = f"{self.base_url}{self.base_uri}/health"
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                response = requests.get(
+                    url,
+                    auth=(self.username, self.password),
+                    verify=self.verify_file,
+                    timeout=interval,
+                )
+                if response.status_code == 200:
+                    return True
+            except requests.RequestException as e:
+                self._logger.debug(f"等待 Harbor 就绪: {e}")
+            time.sleep(interval)
+        self._logger.error(f"等待 Harbor 就绪超时（{timeout}秒）")
         return False
