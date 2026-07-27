@@ -28,6 +28,7 @@ from core.logger import get_logger, setup_cli_logging  # noqa
 from core.misc.network import local_ips  # noqa
 from core.misc.ca import create_cert  # noqa
 from core.config import Application  # noqa
+from core.command import execute_command  # noqa
 from core.http_api_client.harbor_client import HarborClient  # noqa
 import ipaddress  # noqa
 import click  # noqa
@@ -36,6 +37,9 @@ from pathlib import Path  # noqa
 import os  # noqa
 import json  # noqa
 import asyncio  # noqa
+import re  # noqa
+import shutil  # noqa
+import yaml  # noqa
 
 
 # 初始化日志
@@ -892,20 +896,32 @@ def init_harbor(timeout: int, interval: int) -> None:
     """
     初始化 Harbor 项目
 
-    在 Harbor 镜像仓库中创建默认公开项目（apps、charts）。
+    在 Harbor 镜像仓库中创建默认公开项目（apps、charts），
+    并扫描 /etc/containerd/certs.d/ 目录下所有已配置代理的 registry，
+    为每个 registry 在 Harbor 中创建同名公开项目。
+
     会先等待 Harbor 服务就绪，再幂等地创建项目（已存在则跳过）。
 
     示例：
     $ python k8s.py init-harbor
     $ python k8s.py init-harbor --timeout 900 --interval 15
     """
-    default_projects = [
-        ("apps", True),
-        ("charts", True),
-    ]
+    # 1. 默认项目
+    projects: list = [("apps", True), ("charts", True)]
+
+    # 2. 扫描 certs.d 目录，收集已配置代理的 registry
+    certs_d_path = Path("/etc/containerd/certs.d")
+    if certs_d_path.exists():
+        existing_names = {name for name, _ in projects}
+        for d in certs_d_path.iterdir():
+            if d.is_dir() and (d / "hosts.toml").exists():
+                if d.name not in existing_names:
+                    projects.append((d.name, True))
+                    existing_names.add(d.name)
 
     click.echo(click.style("开始初始化 Harbor 项目...", fg="blue", bold=True))
     click.echo(f"Harbor 地址: https://{Application.DOMAIN}")
+    click.echo(f"待初始化项目: {', '.join(name for name, _ in projects)}")
 
     client = HarborClient()
 
@@ -922,9 +938,9 @@ def init_harbor(timeout: int, interval: int) -> None:
         exit(1)
     click.echo(click.style("Harbor 服务已就绪", fg="green"))
 
-    # 创建默认项目
+    # 创建项目
     success_count = 0
-    for project_name, public in default_projects:
+    for project_name, public in projects:
         visibility = "公开" if public else "私有"
         if client.create_project(project_name, public):
             click.echo(
@@ -939,18 +955,718 @@ def init_harbor(timeout: int, interval: int) -> None:
                 err=True,
             )
 
-    if success_count == len(default_projects):
+    if success_count == len(projects):
         click.echo(click.style("Harbor 项目初始化完成！", fg="green", bold=True))
         exit(0)
     else:
         click.echo(
             click.style(
-                f"部分项目初始化失败（{success_count}/{len(default_projects)}）",
+                f"部分项目初始化失败（{success_count}/{len(projects)}）",
                 fg="red",
             ),
             err=True,
         )
         exit(1)
+
+
+# ======================== Bitnami 同步辅助函数 ========================
+
+def _bitnami_extract_images(chart_yaml_path: Path) -> List[str]:
+    """从 Chart.yaml 的 annotations.images 提取完整镜像清单
+
+    bitnami chart 的 Chart.yaml 包含 annotations.images 字段（block scalar），
+    列出该 chart 依赖的全部镜像（含完整 registry 和 tag），比解析 values.yaml 更可靠。
+
+    Args:
+        chart_yaml_path: Chart.yaml 文件路径
+
+    Returns:
+        镜像引用列表，如 ["docker.io/bitnami/redis:8.2.1-debian-12-r0", ...]
+    """
+    with open(chart_yaml_path, "r", encoding="utf-8") as f:
+        chart = yaml.safe_load(f)
+    images_block = (chart.get("annotations") or {}).get("images", "")
+    if not images_block:
+        return []
+    image_items = yaml.safe_load(images_block) or []
+    return [item["image"] for item in image_items if isinstance(item, dict) and "image" in item]
+
+
+def _split_image_ref(ref: str) -> Tuple[str, str]:
+    """拆分镜像引用为 (registry, repository_with_tag)
+
+    判断首段是否为 registry 地址（含 . 或 :），否则视为 docker.io。
+
+    Examples:
+        docker.io/bitnami/redis:8.2.1 -> ("docker.io", "bitnami/redis:8.2.1")
+        quay.io/jetstack/cert-manager:v1.0 -> ("quay.io", "jetstack/cert-manager:v1.0")
+        nginx:1.25 -> ("docker.io", "library/nginx:1.25")
+    """
+    parts = ref.split("/", 1)
+    if len(parts) == 2 and ("." in parts[0] or ":" in parts[0]):
+        return parts[0], parts[1]
+    return "docker.io", f"library/{ref}" if "/" not in ref else ref
+
+
+def _parse_image_ref(ref: str) -> Dict[str, str]:
+    """将镜像引用解析为各组成部分，用于镜像源地址模板渲染
+
+    解析 docker.io/bitnami/kubectl:1.33.4-debian-12-r0 得到：
+      {
+        "original": "docker.io/bitnami/kubectl:1.33.4-debian-12-r0",
+        "registry": "docker.io",
+        "repo":     "bitnami/kubectl",
+        "name":     "kubectl",
+        "tag":      "1.33.4-debian-12-r0"
+      }
+    """
+    registry, repo_tag = _split_image_ref(ref)
+    if ":" in repo_tag:
+        repo, tag = repo_tag.rsplit(":", 1)
+    else:
+        repo, tag = repo_tag, "latest"
+    name = repo.rsplit("/", 1)[-1] if "/" in repo else repo
+    return {
+        "original": ref,
+        "registry": registry,
+        "repo": repo,
+        "name": name,
+        "tag": tag,
+    }
+
+
+def _render_template(template: str, parts: Dict[str, str]) -> str:
+    """用镜像组成部分渲染模板，支持 {original}/{registry}/{repo}/{name}/{tag}"""
+    out = template
+    for key, val in parts.items():
+        out = out.replace("{" + key + "}", val)
+    return out
+
+
+# ======================== sync-bitnami 命令组 ========================
+
+@cli.group(name="sync-bitnami")
+def sync_bitnami() -> None:
+    """同步 bitnami charts 到 Harbor（离线三步：export + pull-images + import）
+
+    \b
+    流程（适配互联网环境与纯内网环境）：
+      1. export       —— 打包 chart + 依赖 + 镜像清单
+      2. pull-images  —— 【互联网】经国内镜像源逐个下载镜像并导出 tar
+      3. import       —— 【内网】将 chart 与镜像 tar 导入 Harbor
+
+    \b
+    示例：
+      # 1. 打包 redis（chart + 依赖 + 镜像清单）
+      $ python k8s.py sync-bitnami export redis
+
+      # 2. 互联网机器：经镜像源下载镜像（支持模板 + 逐个覆盖）
+      $ python k8s.py sync-bitnami pull-images /tmp/bitnami-bundles/redis-images.txt \\
+          --template 'swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/{name}:{tag}'
+
+      # 3. 内网机器：导入到 Harbor
+      $ python k8s.py sync-bitnami import /tmp/bitnami-bundles/redis-21.0.1.tgz \\
+          --images-tar /tmp/bitnami-bundles/redis-images.images.tar
+    """
+    pass
+
+
+# -------------------- export 子命令（互联网环境） --------------------
+
+@sync_bitnami.command(name="export")
+@click.argument('charts', nargs=-1)
+@click.option(
+    '--charts-dir',
+    default='/opt/charts/bitnami',
+    show_default=True,
+    help="bitnami charts 根目录"
+)
+@click.option(
+    '-o', '--output-dir',
+    default='/tmp/bitnami-bundles',
+    show_default=True,
+    help="离线产物输出目录"
+)
+@click.option(
+    '--dry-run',
+    is_flag=True,
+    help="仅展示将执行的操作，不实际执行"
+)
+def sync_export(
+    charts: tuple,
+    charts_dir: str,
+    output_dir: str,
+    dry_run: bool
+) -> None:
+    """【阶段一·互联网环境】打包 bitnami chart + 依赖 + 镜像清单
+
+    将目标 chart 源码拷贝到工作目录，从本地 charts-dir 拷贝依赖项到
+    charts/ 子目录，然后 helm package 打包（目标 chart 和依赖项分别打包）。
+    同时从 Chart.yaml annotations.images 提取镜像清单写入文件。
+
+    \b
+    产物结构（直接输出到 output_dir，不打包 bundle）：
+      {chart}-{ver}.tgz       目标 chart 包
+      {dep}-{ver}.tgz         依赖 chart 包（如 common）
+      {chart}-images.txt      镜像清单（每行一个镜像引用）
+
+    示例：
+      $ python k8s.py sync-bitnami export redis
+      $ python k8s.py sync-bitnami export redis postgresql -o /data/bundles
+    """
+    import tempfile
+
+    charts_root = Path(charts_dir)
+    if not charts_root.exists():
+        click.echo(click.style(f"charts 目录不存在: {charts_dir}", fg="red"), err=True)
+        exit(1)
+
+    # 确定待导出的 chart 列表
+    if charts:
+        chart_names = list(charts)
+    else:
+        chart_names = sorted([
+            d.name for d in charts_root.iterdir()
+            if d.is_dir() and (d / "Chart.yaml").exists()
+        ])
+
+    if not chart_names:
+        click.echo(click.style("未找到可导出的 chart", fg="red"), err=True)
+        exit(1)
+
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(click.style("[阶段一] 打包 bitnami chart + 依赖 + 镜像清单", fg="blue", bold=True))
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(f"  charts 目录:     {charts_dir}")
+    click.echo(f"  输出目录:        {output_dir}")
+    click.echo(f"  待导出 chart:    {', '.join(chart_names)}")
+    click.echo(f"  dry-run:         {'是' if dry_run else '否'}")
+    click.echo("")
+
+    if not dry_run:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    ok_count, fail_count = 0, 0
+
+    for chart_name in chart_names:
+        chart_dir = charts_root / chart_name
+        chart_yaml = chart_dir / "Chart.yaml"
+
+        if not chart_yaml.exists():
+            click.echo(click.style(f"[{chart_name}] Chart.yaml 不存在，跳过", fg="yellow"))
+            fail_count += 1
+            continue
+
+        # 读取 chart 版本和依赖
+        try:
+            with open(chart_yaml, "r", encoding="utf-8") as f:
+                chart_meta = yaml.safe_load(f)
+            chart_version = chart_meta.get("version", "")
+            dependencies = chart_meta.get("dependencies", []) or []
+        except Exception as e:
+            click.echo(click.style(f"[{chart_name}] 读取 Chart.yaml 失败: {e}", fg="red"), err=True)
+            fail_count += 1
+            continue
+
+        dep_names = [d.get("name") for d in dependencies if d.get("name")]
+
+        click.echo(click.style(f"\n[{chart_name}] (v{chart_version})", fg="cyan", bold=True))
+        if dep_names:
+            click.echo(f"  依赖项: {', '.join(dep_names)}")
+
+        # 提取镜像清单
+        images = _bitnami_extract_images(chart_yaml)
+        click.echo(f"  镜像数: {len(images)}")
+
+        if dry_run:
+            click.echo(f"  [dry-run] 拷贝 {chart_name} -> 工作目录")
+            for dn in dep_names:
+                dep_src = charts_root / dn
+                if dep_src.exists():
+                    click.echo(f"  [dry-run] 拷贝依赖 {dn} -> charts/{dn}")
+                    click.echo(f"  [dry-run] helm package {dn} -> {output_dir}/")
+                else:
+                    click.echo(click.style(
+                        f"  [dry-run] 依赖 {dn} 在 {charts_dir} 未找到", fg="yellow"))
+            click.echo(f"  [dry-run] helm package {chart_name} -> {output_dir}/")
+            click.echo(f"  [dry-run] 镜像清单 -> {output_dir}/{chart_name}-images.txt")
+            ok_count += 1
+            continue
+
+        # 使用临时工作目录
+        work_dir = Path(tempfile.mkdtemp(prefix=f"sync_{chart_name}_"))
+        try:
+            # ---- 1. 拷贝目标 chart 到工作目录 ----
+            work_chart_dir = work_dir / chart_name
+            shutil.copytree(chart_dir, work_chart_dir)
+            click.echo(f"  拷贝 chart -> {work_chart_dir}")
+
+            # ---- 2. 拷贝依赖项到 charts/ 子目录 ----
+            charts_subdir = work_chart_dir / "charts"
+            charts_subdir.mkdir(exist_ok=True)
+            dep_packed: List[str] = []
+
+            for dep_name in dep_names:
+                dep_src = charts_root / dep_name
+                if not dep_src.exists():
+                    click.echo(click.style(
+                        f"  依赖 {dep_name} 在 {charts_dir} 未找到，跳过", fg="yellow"))
+                    continue
+
+                dep_dest = charts_subdir / dep_name
+                shutil.copytree(dep_src, dep_dest)
+                click.echo(f"  拷贝依赖 {dep_name} -> charts/{dep_name}")
+
+                # ---- 3. 依赖项也 helm package ----
+                dep_pkg_result = execute_command(
+                    f"helm package {dep_dest} -d {output_dir}",
+                    timeout=60
+                )
+                if dep_pkg_result.is_failure():
+                    click.echo(click.style(
+                        f"  helm package 依赖 {dep_name} 失败: "
+                        f"{dep_pkg_result.get_error_lines()}", fg="yellow"))
+                else:
+                    # 获取依赖版本用于日志
+                    try:
+                        dep_yaml = dep_src / "Chart.yaml"
+                        with open(dep_yaml, "r", encoding="utf-8") as f:
+                            dep_meta = yaml.safe_load(f)
+                        dep_ver = dep_meta.get("version", "?")
+                    except Exception:
+                        dep_ver = "?"
+                    click.echo(click.style(
+                        f"  ✅ 依赖打包: {dep_name}-{dep_ver}.tgz", fg="green"))
+                    dep_packed.append(dep_name)
+
+            # ---- 4. helm package 目标 chart（依赖已就位） ----
+            pkg_result = execute_command(
+                f"helm package {work_chart_dir} -d {output_dir}",
+                timeout=60
+            )
+            if pkg_result.is_failure():
+                click.echo(click.style(
+                    f"  helm package 失败: {pkg_result.get_error_lines()}", fg="red"), err=True)
+                fail_count += 1
+                continue
+
+            tgz_name = f"{chart_name}-{chart_version}.tgz"
+            click.echo(click.style(f"  ✅ chart 打包: {tgz_name}", fg="green"))
+
+            # ---- 5. 生成镜像清单文件 ----
+            images_file = Path(output_dir) / f"{chart_name}-images.txt"
+            with open(images_file, "w", encoding="utf-8") as f:
+                for img in images:
+                    f.write(img + "\n")
+            click.echo(click.style(
+                f"  ✅ 镜像清单: {images_file.name} ({len(images)} 个)", fg="green"))
+
+            ok_count += 1
+
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    # ---- 汇总 ----
+    click.echo(click.style("\n" + "=" * 70, fg="blue"))
+    click.echo(click.style("导出完成", fg="blue", bold=True))
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(f"  成功 {ok_count}，失败 {fail_count}")
+    if ok_count > 0:
+        click.echo(click.style(f"  产物目录: {output_dir}", fg="cyan"))
+        click.echo(click.style(
+            "  下一步: 将 .tgz 和 *-images.txt 拷贝到内网，执行 sync-bitnami import",
+            fg="cyan"))
+
+    exit(0 if fail_count == 0 else 1)
+
+
+# -------------------- pull-images 子命令（互联网环境） --------------------
+
+@sync_bitnami.command(name="pull-images")
+@click.argument('images_file', type=click.Path(exists=True))
+@click.option(
+    '-o', '--output',
+    help='导出的镜像 tar 路径（默认: 与输入同目录的 {stem}.images.tar）'
+)
+@click.option(
+    '-t', '--template',
+    help='镜像源地址模板，支持 {original}/{registry}/{repo}/{name}/{tag}。'
+         '例: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/{name}:{tag}'
+)
+@click.option(
+    '-n', '--namespace',
+    default='k8s.io',
+    show_default=True,
+    help='containerd namespace'
+)
+@click.option(
+    '--timeout',
+    type=int,
+    default=600,
+    show_default=True,
+    help='单个镜像 pull 超时时间（秒）'
+)
+def sync_pull_images(
+    images_file: str,
+    output: Optional[str],
+    template: Optional[str],
+    namespace: str,
+    timeout: int
+) -> None:
+    """【互联网环境】经国内镜像源批量下载镜像并导出 tar
+
+    读取 export 生成的镜像清单文件，逐个镜像交互式确认镜像源地址，
+    pull 后 tag 回原引用，最终批量导出为单个 tar，供拷贝到内网 import。
+
+    \b
+    支持模板占位符（--template），适配路径中段变化，例如 bitnami->bitnamilegacy：
+      原引用: docker.io/bitnami/kubectl:1.33.4-debian-12-r0
+      模板:   swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/{name}:{tag}
+      渲染后: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/kubectl:1.33.4-debian-12-r0
+
+    \b
+    每个镜像交互操作：
+      - 回车: 使用模板渲染的地址
+      - 输入完整地址: 本次使用该地址（模板渲染不符时覆盖）
+      - 输入 s: 跳过该镜像（镜像源未同步时）
+      - 输入 r: 直接用原引用从 docker.io 拉取（可直连场景）
+    """
+    img_path = Path(images_file)
+    with open(img_path, "r", encoding="utf-8") as f:
+        images = [
+            line.strip() for line in f
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+    if not images:
+        click.echo(click.style("镜像清单为空", fg="red"), err=True)
+        exit(1)
+
+    if not output:
+        output = str(img_path.parent / f"{img_path.stem}.images.tar")
+
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(click.style("[镜像下载] 经国内镜像源批量下载并导出 tar", fg="blue", bold=True))
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(f"  镜像清单:    {images_file} ({len(images)} 个)")
+    click.echo(f"  模板:        {template or '无（需逐个输入）'}")
+    click.echo(f"  输出 tar:    {output}")
+    click.echo(f"  namespace:   {namespace}")
+    click.echo(f"  超时:        {timeout}s/个")
+    click.echo("")
+
+    success_refs: List[str] = []
+    total = len(images)
+
+    for idx, original_ref in enumerate(images, 1):
+        parts = _parse_image_ref(original_ref)
+        default_ref = _render_template(template, parts) if template else ""
+
+        click.echo(click.style(
+            f"\n[{idx}/{total}] {original_ref}", fg="cyan", bold=True))
+
+        # 交互获取镜像源地址（用 click.prompt 确保 stdout 刷新，避免卡死）
+        mirror_ref = ""
+        skip = False
+        try:
+            raw = click.prompt(
+                f"  镜像源地址 [回车={'默认' if default_ref else '跳过'} s=跳过 r=原引用]",
+                default=default_ref,
+                show_default=False,
+                prompt_suffix=": "
+            ).strip()
+        except (click.exceptions.Abort, KeyboardInterrupt, EOFError, SystemExit):
+            click.echo("")
+            click.echo(click.style("已中止", fg="yellow"))
+            skip = True
+
+        if not skip:
+            low = raw.lower()
+            if low in ("s", "skip"):
+                skip = True
+            elif low in ("r", "raw"):
+                mirror_ref = original_ref
+            elif not raw and not default_ref:
+                skip = True
+            else:
+                mirror_ref = raw
+
+        if skip:
+            click.echo(click.style("  ⏭ 跳过", fg="yellow"))
+            continue
+
+        click.echo(f"  镜像源: {mirror_ref}")
+
+        # ---- 1. 从镜像源 pull ----
+        pull_res = execute_command(
+            f"ctr -n {namespace} i pull {mirror_ref}",
+            timeout=timeout
+        )
+        if pull_res.is_failure():
+            click.echo(click.style(f"  ❌ pull 失败: {mirror_ref}", fg="red"))
+            err = pull_res.get_error_lines()
+            if err:
+                click.echo(f"  {err}")
+            continue
+        click.echo(click.style("  ✅ pull 成功", fg="green"))
+
+        # ---- 2. tag 回原引用 ----
+        if mirror_ref != original_ref:
+            tag_res = execute_command(
+                f"ctr -n {namespace} i tag {mirror_ref} {original_ref}"
+            )
+            if tag_res.is_failure():
+                # 目标引用可能已存在（重跑），删除后重试
+                execute_command(
+                    f"ctr -n {namespace} i rm {original_ref}",
+                    timeout=30
+                )
+                tag_res = execute_command(
+                    f"ctr -n {namespace} i tag {mirror_ref} {original_ref}"
+                )
+            if tag_res.is_failure():
+                click.echo(click.style(
+                    f"  ❌ tag 失败: {mirror_ref} -> {original_ref}", fg="red"))
+                continue
+            click.echo(click.style(f"  ✅ tag -> {original_ref}", fg="green"))
+
+        success_refs.append(original_ref)
+
+    # ---- 3. 批量导出 tar ----
+    if not success_refs:
+        click.echo(click.style("\n无成功镜像，跳过导出", fg="yellow"))
+        exit(1)
+
+    click.echo(click.style(
+        f"\n导出 {len(success_refs)} 个镜像到 tar...", fg="blue"))
+    export_cmd = (
+        f"ctr -n {namespace} i export {output} "
+        + " ".join(success_refs)
+    )
+    export_res = execute_command(
+        export_cmd,
+        timeout=max(300, timeout * len(success_refs))
+    )
+    if export_res.is_failure():
+        click.echo(click.style(
+            f"❌ 导出失败: {export_res.get_error_lines()}", fg="red"), err=True)
+        exit(1)
+
+    size_mb = Path(output).stat().st_size / (1024 * 1024)
+    click.echo(click.style("=" * 70, fg="green"))
+    click.echo(click.style("完成", fg="green", bold=True))
+    click.echo(click.style("=" * 70, fg="green"))
+    click.echo(f"  成功: {len(success_refs)}/{total}")
+    click.echo(f"  产物: {output} ({size_mb:.1f} MB)")
+    click.echo(click.style(
+        "  下一步: 将 .tgz 与此 tar 拷贝到内网，执行 sync-bitnami import",
+        fg="cyan"))
+
+
+# -------------------- import 子命令（纯内网环境） --------------------
+
+@sync_bitnami.command(name="import")
+@click.argument('tgzs', nargs=-1, required=True)
+@click.option(
+    '--images-tar',
+    help='镜像 tar 路径（pull-images 产物），不提供则只导入 chart'
+)
+@click.option(
+    '--images-file',
+    help='镜像清单文件（export 产物），用于 tag+push；未指定时自动探测'
+)
+@click.option(
+    '--dry-run',
+    is_flag=True,
+    help="仅展示将执行的操作，不实际执行"
+)
+@click.option(
+    '--image-timeout',
+    type=int,
+    default=600,
+    show_default=True,
+    help="单个镜像 push 超时时间（秒）"
+)
+def sync_import(
+    tgzs: tuple,
+    images_tar: Optional[str],
+    images_file: Optional[str],
+    dry_run: bool,
+    image_timeout: int
+) -> None:
+    """【阶段二·纯内网环境】将 chart 包与镜像 tar 导入 Harbor
+
+    helm push 每个 .tgz 到 oci://{DOMAIN}/charts；
+    若提供 --images-tar，则 ctr i import 后按清单 tag+push 到 Harbor。
+
+    \b
+    示例：
+      # 仅导入 chart（含依赖）
+      $ python k8s.py sync-bitnami import common-2.31.10.tgz redis-21.0.1.tgz
+
+      # chart + 镜像一起导入
+      $ python k8s.py sync-bitnami import redis-21.0.1.tgz \\
+          --images-tar redis-images.images.tar --images-file redis-images.txt
+    """
+    domain = Application.DOMAIN
+    registry_user = Application.REGISTRY.USERNAME
+    registry_pass = Application.REGISTRY.PASSWORD
+
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(click.style("[阶段二] 导入 bitnami 离线包到 Harbor（内网环境）", fg="blue", bold=True))
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(f"  Harbor 地址:     https://{domain}")
+    click.echo(f"  chart 包:        {len(tgzs)} 个")
+    click.echo(f"  镜像 tar:        {images_tar or '无'}")
+    click.echo(f"  dry-run:         {'是' if dry_run else '否'}")
+    click.echo("")
+
+    # 探测 images-file：未指定时根据 images-tar 名字推导
+    resolved_images: List[str] = []
+    if images_tar:
+        if not Path(images_tar).exists():
+            click.echo(click.style(f"镜像 tar 不存在: {images_tar}", fg="red"), err=True)
+            exit(1)
+        if not images_file:
+            # redis-images.images.tar -> redis-images.txt
+            derived = images_tar.replace(".images.tar", ".txt")
+            if not Path(derived).exists():
+                # redis.images.tar -> redis-images.txt
+                derived = images_tar.replace(".tar", ".txt")
+            images_file = derived if Path(derived).exists() else None
+
+        if images_file and Path(images_file).exists():
+            with open(images_file, "r", encoding="utf-8") as f:
+                resolved_images = [
+                    line.strip() for line in f
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+            click.echo(f"  镜像清单:        {images_file} ({len(resolved_images)} 个)")
+        else:
+            click.echo(click.style(
+                "  未找到镜像清单文件，镜像 tar 将导入但不 push", fg="yellow"))
+
+    # 等待 Harbor 就绪
+    harbor_client: Optional[HarborClient] = None
+    if not dry_run:
+        harbor_client = HarborClient()
+        click.echo("等待 Harbor 服务就绪...")
+        if not harbor_client.wait_for_ready(timeout=300, interval=10):
+            click.echo(click.style(
+                "Harbor 未就绪，请先执行 kubectl get pods -n harbor-system 检查",
+                fg="red"), err=True)
+            exit(1)
+        click.echo(click.style("Harbor 已就绪", fg="green"))
+    click.echo("")
+
+    needed_projects: set = set()
+    chart_ok, chart_fail = 0, 0
+    image_ok, image_fail = 0, 0
+
+    # ---- 1. helm push 每个 chart 包 ----
+    for tgz_str in tgzs:
+        tgz_path = Path(tgz_str)
+        if not tgz_path.exists():
+            click.echo(click.style(f"chart 包不存在: {tgz_path}", fg="red"), err=True)
+            chart_fail += 1
+            continue
+
+        click.echo(click.style(
+            f"\nchart: {tgz_path.name}", fg="cyan", bold=True))
+
+        if dry_run:
+            click.echo(f"  [dry-run] helm push -> oci://{domain}/charts")
+            chart_ok += 1
+            continue
+
+        push_res = execute_command(
+            " ".join([
+                "helm", "push", str(tgz_path),
+                f"oci://{domain}/charts",
+                f"--username {registry_user}",
+                f"--password {registry_pass}",
+            ]),
+            timeout=120
+        )
+        if push_res.is_failure():
+            click.echo(click.style(
+                f"  ❌ helm push 失败: {push_res.get_error_lines()}", fg="red"), err=True)
+            chart_fail += 1
+        else:
+            click.echo(click.style("  ✅ chart 推送成功", fg="green"))
+            chart_ok += 1
+
+    # ---- 2. 导入镜像 tar + tag + push ----
+    if images_tar:
+        click.echo(click.style(
+            f"\n镜像导入: {images_tar}", fg="cyan", bold=True))
+
+        if dry_run:
+            for img_ref in resolved_images:
+                registry, repo_tag = _split_image_ref(img_ref)
+                needed_projects.add(registry)
+                target = f"{domain}/{registry}/{repo_tag}"
+                click.echo(f"  [dry-run] {img_ref} -> {target}")
+            image_ok = len(resolved_images)
+        else:
+            # ctr i import（本地导入，不联网）
+            import_res = execute_command(
+                f"ctr -n k8s.io i import {images_tar}",
+                timeout=600
+            )
+            if import_res.is_failure():
+                click.echo(click.style(
+                    f"  ❌ images.tar 导入失败: {import_res.get_error_lines()}",
+                    fg="red"), err=True)
+                image_fail = len(resolved_images)
+            elif not resolved_images:
+                click.echo(click.style(
+                    "  镜像已导入本地，但无清单文件无法 push", fg="yellow"))
+            else:
+                click.echo(click.style("  ✅ 镜像导入本地", fg="green"))
+                for img_ref in resolved_images:
+                    registry, repo_tag = _split_image_ref(img_ref)
+                    needed_projects.add(registry)
+
+                    # 确保 Harbor 项目存在
+                    if harbor_client and not harbor_client.create_project(
+                            registry, public=True):
+                        click.echo(click.style(
+                            f"  Harbor 项目 '{registry}' 创建失败，跳过",
+                            fg="yellow"))
+                        image_fail += 1
+                        continue
+
+                    # 直接 push 原引用，certs.d 自动转发到 Harbor
+                    push_res = execute_command(
+                        f"ctr -n k8s.io i push --hosts-dir /etc/containerd/certs.d/ "
+                        f"-u {registry_user}:{registry_pass} {img_ref}",
+                        timeout=image_timeout
+                    )
+                    if push_res.is_failure():
+                        click.echo(click.style(
+                            f"  ❌ push 失败: {img_ref}", fg="red"))
+                        image_fail += 1
+                    else:
+                        click.echo(click.style(
+                            f"  ✅ {img_ref}", fg="green"))
+                        image_ok += 1
+
+    # ---- 汇总 ----
+    click.echo(click.style("\n" + "=" * 70, fg="blue"))
+    click.echo(click.style("导入完成", fg="blue", bold=True))
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(f"  Chart:  成功 {chart_ok}，失败 {chart_fail}")
+    if images_tar:
+        click.echo(f"  镜像:   成功 {image_ok}，失败 {image_fail}")
+    if needed_projects:
+        click.echo(f"  涉及 Harbor 项目: {', '.join(sorted(needed_projects))}")
+        click.echo(click.style(
+            f"  提示: 执行 `python ctr.py add-proxy "
+            f"{' '.join(sorted(needed_projects))}` 配置透明转发",
+            fg="cyan"))
+
+    exit(0 if (chart_fail == 0 and image_fail == 0) else 1)
 
 
 if __name__ == '__main__':

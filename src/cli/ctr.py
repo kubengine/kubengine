@@ -9,6 +9,7 @@ from __future__ import annotations
 from functools import wraps
 import sys
 import traceback
+from pathlib import Path
 from typing import Any, Optional, Callable, TypeVar, ParamSpec
 
 import click
@@ -231,40 +232,235 @@ def push(
 @cli.command()
 @click.argument('registrys', required=True, nargs=-1)
 @click.option('--yes', '-y', is_flag=True, help='跳过确认')
+@click.option(
+    '--no-restart', is_flag=True,
+    help='仅写入配置，不重启 containerd（默认写入后自动重启）'
+)
+@click.option(
+    '--no-sync', is_flag=True,
+    help='不同步到集群其他节点（默认自动同步到所有 worker/master 节点）'
+)
+@click.option(
+    '--ssh-user', default='root', show_default=True,
+    help='远程节点 SSH 用户名'
+)
+@click.option(
+    '--ssh-password', help='远程节点 SSH 密码（与 --ssh-key 二选一）'
+)
+@click.option(
+    '--ssh-key', default='~/.ssh/id_rsa', show_default=True,
+    help='远程节点 SSH 私钥路径（默认使用互信密钥）'
+)
 @cli_command
-def add_proxy(registrys: list[str], yes: bool) -> None:
-    """添加镜像仓库代理
+def add_proxy(
+    registrys: list[str],
+    yes: bool,
+    no_restart: bool,
+    no_sync: bool,
+    ssh_user: str,
+    ssh_password: Optional[str],
+    ssh_key: str
+) -> None:
+    """添加镜像仓库代理（写入 containerd hosts.toml）
 
-    如果镜像仓库代理已存在，则会覆盖当前配置
+    将指定上游仓库的镜像拉取请求透明转发到本地 Harbor。
+    配置写入 /etc/containerd/certs.d/<registry>/hosts.toml，并重启 containerd 生效。
+    默认同步到集群所有节点（worker + master）并重启各自 containerd。
+
+    若镜像仓库代理已存在，则会覆盖当前配置。
 
     示例:
         kubengine image ctr add-proxy docker.io
 
         kubengine image ctr add-proxy quay.io registry.k8s.io
+
+        kubengine image ctr add-proxy docker.io -y --no-restart
+
+        # 仅本机，不同步集群
+        kubengine image ctr add-proxy docker.io --no-sync
     """
+    from pathlib import Path
     from rich.table import Table
 
-    table = Table(title="[bold]当前仓库代理配置[/bold]", show_lines=True)
+    certs_d_path = Path("/etc/containerd/certs.d")
+    ca_crt = Application.TLS_CONFIG.CA_CRT
+
+    # 预览配置
+    table = Table(title="[bold]将写入的仓库代理配置[/bold]", show_lines=True)
     table.add_column("目标仓库", style="cyan")
-    table.add_column("代理仓库地址", style="magenta")
-    table.add_column("代理功能")
-    table.add_column("override_path")
+    table.add_column("代理地址", style="magenta")
+    table.add_column("配置文件路径", style="dim")
 
     for registry in registrys:
-        table.add_row(
-            registry,
-            f"{Application.DOMAIN}/v2/{registry}",
-            "pull,push,resolve",
-            "True"
-        )
+        proxy_url = f"https://{Application.DOMAIN}/v2/{registry}"
+        hosts_toml = certs_d_path / registry / "hosts.toml"
+        table.add_row(registry, proxy_url, str(hosts_toml))
 
     console.print(table)
 
+    if not (yes or click.confirm("确认写入以上配置并重启 containerd？", default=True)):
+        console.print("[yellow]已取消[/yellow]")
+        return
+
+    # 写入 hosts.toml
+    written: list[str] = []
+    for registry in registrys:
+        proxy_url = f"https://{Application.DOMAIN}/v2/{registry}"
+        registry_dir = certs_d_path / registry
+        registry_dir.mkdir(parents=True, exist_ok=True)
+        hosts_toml_path = registry_dir / "hosts.toml"
+
+        # 标准 containerd hosts.toml 格式（嵌套 [host."..."] 段）
+        content = (
+            f'server = "{proxy_url}"\n'
+            f'\n'
+            f'[host."{proxy_url}"]\n'
+            f'  capabilities = ["pull", "push", "resolve"]\n'
+            f'  override_path = true\n'
+        )
+        # CA 证书存在则附加，启用 TLS 校验
+        if Path(ca_crt).exists():
+            content += f'  ca = "{ca_crt}"\n'
+        else:
+            content += f'  skip_verify = true\n'
+
+        hosts_toml_path.write_text(content, encoding="utf-8")
+        written.append(registry)
+        logger.info(f"写入 hosts.toml: {hosts_toml_path}")
+
+    console.print(
+        f"[green]✅ 已写入 {len(written)} 个仓库代理配置: {', '.join(written)}[/green]"
+    )
+
+    # 在 Harbor 中创建对应的公开项目（与 registry 同名）
     try:
-        if yes or click.confirm("确认镜像仓库代理配置"):
-            console.print("\n完成", style="green")
-    except click.exceptions.Abort:
-        print()
+        from core.http_api_client.harbor_client import HarborClient
+        harbor = HarborClient()
+        console.print(
+            f"[blue]📋 在 Harbor 中创建对应公开项目: {', '.join(written)}[/blue]")
+        for project in written:
+            if harbor.create_project(project, public=True):
+                console.print(f"[green]  ✅ Harbor 项目: {project}[/green]")
+            else:
+                console.print(
+                    f"[yellow]  ⚠ Harbor 项目 '{project}' 创建失败（可能已存在或 Harbor 未就绪）[/yellow]")
+    except Exception as e:
+        console.print(
+            f"[yellow]⚠ Harbor 项目创建跳过: {e}[/yellow]")
+
+    # 重启本机 containerd 使配置生效
+    if not no_restart:
+        console.print("[blue]🔄 重启本机 containerd 使配置生效...[/blue]")
+        try:
+            result = execute_command("systemctl restart containerd")
+            if result.is_success():
+                console.print("[green]✅ 本机 containerd 重启成功[/green]")
+            else:
+                console.print(
+                    f"[yellow]⚠ 本机 containerd 重启失败，请手动执行: systemctl restart containerd[/yellow]"
+                )
+                logger.warning(f"containerd 重启失败: {result.get_error_lines()}")
+        except Exception as e:
+            console.print(
+                f"[yellow]⚠ 本机 containerd 重启异常，请手动执行: systemctl restart containerd ({e})[/yellow]"
+            )
+    else:
+        console.print("[yellow]⚠ 已跳过本机 containerd 重启[/yellow]")
+
+    # 同步到集群其他节点
+    if no_sync:
+        console.print("[yellow]⚠ 已跳过集群节点同步（--no-sync）[/yellow]")
+        return
+
+    # 收集集群节点（排除本机）
+    from core.config.application import Application as App
+    additional_masters = getattr(App.K8S_CONFIG, 'ADDITIONAL_MASTER_IPS', []) or []
+    workers = getattr(App.K8S_CONFIG, 'WORKER_IPS', []) or []
+    remote_nodes = list(additional_masters) + list(workers)
+
+    if not remote_nodes:
+        console.print("[yellow]⚠ 未配置其他集群节点（WORKER_IPS/ADDITIONAL_MASTER_IPS），跳过同步[/yellow]")
+        return
+
+    console.print(
+        f"[blue]📡 同步代理配置到 {len(remote_nodes)} 个集群节点: {', '.join(remote_nodes)}[/blue]")
+
+    # 构建 SSH 参数
+    ssh_kwargs: dict = {"username": ssh_user}
+    if ssh_password:
+        ssh_kwargs["password"] = ssh_password
+    else:
+        import os
+        ssh_kwargs["client_keys"] = [os.path.expanduser(ssh_key)]
+
+    # 同步文件 + 远程重启
+    import asyncio
+    from core.ssh import AsyncSSHClient
+
+    async def _sync_to_nodes() -> None:
+        ssh_client = AsyncSSHClient()
+
+        # 1. 上传 hosts.toml 和 CA 证书到每个节点
+        upload_tasks = []
+        ca_exists = Path(ca_crt).exists()
+        for node in remote_nodes:
+            for registry in written:
+                local_hosts = str(certs_d_path / registry / "hosts.toml")
+                remote_hosts = f"/etc/containerd/certs.d/{registry}/hosts.toml"
+                # mkdir -p + 上传一条龙命令前缀
+                upload_tasks.append((node, registry, local_hosts, remote_hosts))
+
+        for node, registry, local_hosts, remote_hosts in upload_tasks:
+            # 先确保远程目录存在
+            mkdir_cmd = f"mkdir -p /etc/containerd/certs.d/{registry}"
+            await ssh_client.execute_command(node, mkdir_cmd, **ssh_kwargs)
+            # 上传 hosts.toml
+            res = await ssh_client.upload_file(node, local_hosts, remote_hosts, **ssh_kwargs)
+            if res.get("error"):
+                console.print(
+                    f"[yellow]  ⚠ {node} 上传 {registry}/hosts.toml 失败: {res['error']}[/yellow]")
+            else:
+                console.print(
+                    f"[green]  ✅ {node} <- {registry}/hosts.toml[/green]")
+
+        # 同步 CA 证书（hosts.toml 引用了 ca 路径）
+        if ca_exists:
+            for node in remote_nodes:
+                # 确保远程 ca 目录存在
+                remote_ca_dir = str(Path(ca_crt).parent)
+                await ssh_client.execute_command(
+                    node, f"mkdir -p {remote_ca_dir}", **ssh_kwargs)
+                res = await ssh_client.upload_file(
+                    node, ca_crt, ca_crt, **ssh_kwargs)
+                if res.get("error"):
+                    console.print(
+                        f"[yellow]  ⚠ {node} 上传 CA 证书失败: {res['error']}[/yellow]")
+
+        # 2. 远程重启 containerd（除非 --no-restart）
+        if no_restart:
+            console.print("[yellow]⚠ 已跳过远程节点 containerd 重启[/yellow]")
+            return
+
+        console.print(f"[blue]🔄 重启 {len(remote_nodes)} 个节点的 containerd...[/blue]")
+        restart_cmds = [
+            (node, "systemctl restart containerd")
+            for node in remote_nodes
+        ]
+        results = await ssh_client.execute_multiple_commands(restart_cmds, **ssh_kwargs)
+        for r in results:
+            node = r.get("host", "?")
+            if r.get("error"):
+                console.print(
+                    f"[yellow]  ⚠ {node} containerd 重启失败: {r['error']}[/yellow]")
+            else:
+                console.print(f"[green]  ✅ {node} containerd 重启成功[/green]")
+
+    try:
+        asyncio.run(_sync_to_nodes())
+        console.print("[green bold]✅ 集群同步完成[/green bold]")
+    except Exception as e:
+        console.print(f"[yellow]⚠ 集群同步异常: {e}[/yellow]")
+        logger.warning(f"集群同步异常: {e}", exc_info=True)
 
 
 @cli.command()
