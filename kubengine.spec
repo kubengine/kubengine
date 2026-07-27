@@ -193,7 +193,7 @@ echo "Installation completed"
 echo "=========================================="
 
 # 初始化数据库
-if [ ! -f %{_localstatedir}/lib/%{project_name}/kubekylin.db ]; then
+if [ ! -f %{_localstatedir}/lib/%{project_name}/kubengine.db ]; then
     %{python311} -m cli.app init-data 2>/dev/null || true
 fi
 

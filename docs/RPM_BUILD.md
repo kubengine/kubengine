@@ -191,7 +191,7 @@ Requires:       python311, python311-pip, sqlite
 └── application.yaml                        # 配置文件
 
 /var/lib/kubengine/
-└── kubekylin.db                           # SQLite 数据库
+└── kubengine.db                           # SQLite 数据库
 
 /var/log/kubengine/
 └── *.log                                  # 日志文件
@@ -274,7 +274,7 @@ kubengine --help
 curl http://localhost:8080/api/v1/health
 
 # 检查数据库
-ls -la /var/lib/kubengine/kubekylin.db
+ls -la /var/lib/kubengine/kubengine.db
 ```
 
 ### 5. 默认管理员账户

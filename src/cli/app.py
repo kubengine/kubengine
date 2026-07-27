@@ -510,7 +510,7 @@ def _get_default_apps() -> list[AppSchema]:
                 order=0,
                 form_item_props={"required": True},
                 type="password",
-                initial_value="kubekylin@redis*SVR",
+                initial_value="kubengine@redis*SVR",
                 rules=[
                     {
                         "type": "string",

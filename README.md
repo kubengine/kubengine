@@ -377,7 +377,7 @@ kubengine/
 ├── logs/                      # 日志文件目录
 ├── tests/                     # 测试文件
 ├── pyproject.toml             # 项目配置
-├── kubekylin.db               # SQLite 数据库
+├── kubengine.db               # SQLite 数据库
 └── README.md                  # 项目文档
 ```
 
