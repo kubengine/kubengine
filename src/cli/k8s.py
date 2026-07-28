@@ -538,6 +538,7 @@ class K8sDeployer:
     def _get_deployment_files(self) -> List[Tuple[Path, str]]:
         """获取部署文件列表（按执行顺序）"""
         filenames = [
+            ("install_chrony.py", "时间同步(Chrony)"),
             ("install_cni.py", "CNI网络插件"),
             ("install_containerd.py", "容器运行时组件"),
         ]
@@ -566,7 +567,8 @@ class K8sDeployer:
             ("install_longhorn.py", "分布式存储"),
             ("install_harbor.py", "镜像仓库"),
             ("install_metrics_server.py", "监控组件"),
-            ("install_dashboard.py", "Dashboard")
+            ("install_dashboard.py", "Dashboard"),
+            ("install_cert_manager.py", "证书管理组件")
         ]
 
         # 返回完整的文件路径（Path对象）

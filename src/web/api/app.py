@@ -82,6 +82,10 @@ def deploy_app(task_id: int, cluster_id: int):
                     "--version", cluster.helm_chart_version or "",
                     "-n", "apps",
                     "--create-namespace",
+                    # 失败时自动回滚清理所有已创建资源，
+                    # 避免残留资源（如 Flink Operator 固定名 SA "flink"）阻塞下次部署
+                    "--atomic",
+                    "--timeout", "5m",
                     "-f", values_file_path]
             res = execute_command(" ".join(cmds))
             if res.is_failure():

@@ -29,6 +29,7 @@ import uuid
 import click
 
 from typing import Any
+from sqlalchemy import text
 from core.config import Application, ConfigDict
 from core.logger import get_logger, setup_cli_logging
 from core.orm.app import App, create_application
@@ -264,12 +265,41 @@ def init_data(force: bool) -> None:
     数据会插入到 app 和 app_field_config 表中。
 
     Args:
-        force: 是否强制覆盖已存在的应用
+        force: 是否强制覆盖已存在的应用。启用时会清空 app / app_field_config
+            表并重置自增序列，使应用 ID 从 1 开始重新排列
     """
     # 创建数据库表
     click.echo("检查数据库表...")
     Base.metadata.create_all(bind=engine)
     click.echo(click.style("数据库表已就绪", fg="green"))
+
+    # 强制模式下：清空旧数据并重置自增序列，保证 ID 从 1 开始
+    if force:
+        with engine.begin() as conn:
+            # 按外键依赖顺序删除（app_field_config 依赖 app）
+            conn.execute(text("DELETE FROM app_field_config"))
+            conn.execute(text("DELETE FROM app"))
+            # 重置 SQLite 自增计数器（sqlite_sequence 仅在使用 AUTOINCREMENT 时存在）
+            # 先判断表存在，避免在全新库上抛 "no such table: sqlite_sequence"
+            seq_exists = conn.execute(
+                text(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='sqlite_sequence'"
+                )
+            ).first()
+            if seq_exists:
+                conn.execute(
+                    text(
+                        "DELETE FROM sqlite_sequence "
+                        "WHERE name IN ('app', 'app_field_config')"
+                    )
+                )
+        click.echo(
+            click.style(
+                "已清空旧数据并重置 ID 序列（app, app_field_config）",
+                fg="yellow",
+            )
+        )
 
     # 默认应用配置
     default_apps = get_default_apps()
