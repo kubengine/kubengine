@@ -155,6 +155,12 @@ def clean_up_cluster(task_id: int, cluster_id: int):
 @router.post("/deploy", summary="部署应用")
 @auth_with_renew()
 async def deploy(request: Request, data: ClusterSchema, background_tasks: BackgroundTasks):
+    if not data.name:
+        raise HTTPException(status_code=500, detail="集群名称(name)不能为空")
+    if not data.helm_chart:
+        raise HTTPException(status_code=500, detail="Helm Chart(helm_chart)不能为空")
+    if not data.helm_chart_version:
+        raise HTTPException(status_code=500, detail="Chart版本(helm_chart_version)不能为空")
     cluster = create_cluster(data)
     if cluster:
         # 提交后台任务，开始创建资源

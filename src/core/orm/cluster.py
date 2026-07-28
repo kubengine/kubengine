@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, field_serializer
 from sqlalchemy import JSON, Column, DateTime, Enum, Integer, String, asc, desc
 
-from core.misc.properties import convert_dot_notation_to_dict
+from core.misc.properties import convert_dot_notation_to_dict, split_key_levels
 from core.orm.app import find_application_by_id
 from core.orm.engine import Base, get_db
 from core.logger import get_logger
@@ -174,9 +174,10 @@ def build_helm_config(cluster_schema: ClusterSchema) -> Dict[str, Any]:
 
                 # Handle array values (list) vs scalar values (string/number/boolean)
                 if isinstance(value, list):
-                    # Array type: traverse dot notation and assign list directly
+                    # Array type: traverse dot notation and assign list directly.
+                    # Honor [[ ]] escapes so flat keys with dots are preserved.
                     sub = helm_config
-                    keys = helm_key.split(".")
+                    keys = split_key_levels(helm_key)
                     for k in keys[:-1]:
                         sub = sub.setdefault(k, {})
                     sub[keys[-1]] = value

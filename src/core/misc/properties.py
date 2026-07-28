@@ -108,8 +108,58 @@ def parse_properties_to_dict(properties_data: str) -> Dict[str, Any]:
     return result
 
 
+def split_key_levels(keys_str: str) -> List[str]:
+    """Split a dot-separated key string into hierarchical levels.
+
+    Segments wrapped in ``[[ ]]`` are treated as atomic: dots inside are
+    preserved as part of the key name. This allows representing flat keys
+    that themselves contain dots (e.g. Kafka's ``log.retention.hours``)
+    under a nested container.
+
+    Examples:
+        ``a.b.c`` -> ``["a", "b", "c"]``
+        ``overrideConfiguration.[[log.retention.hours]]`` -> ``["overrideConfiguration", "log.retention.hours"]``
+
+    Args:
+        keys_str: Dot-separated key string, optionally containing ``[[ ]]`` escapes.
+
+    Returns:
+        List of non-empty key levels.
+    """
+    levels: List[str] = []
+    current = ""
+    i = 0
+    in_escape = False
+    while i < len(keys_str):
+        # Detect escape boundaries
+        if not in_escape and keys_str[i:i + 2] == "[[":
+            in_escape = True
+            i += 2
+            continue
+        if in_escape and keys_str[i:i + 2] == "]]":
+            in_escape = False
+            i += 2
+            continue
+        ch = keys_str[i]
+        # Outside escapes, '.' is the level separator
+        if not in_escape and ch == ".":
+            if current:
+                levels.append(current)
+                current = ""
+            i += 1
+            continue
+        current += ch
+        i += 1
+    if current:
+        levels.append(current)
+    return levels
+
+
 def convert_dot_notation_to_dict(dot_string: str) -> Dict[str, Any]:
     """Convert dot-separated key-value string to nested dictionary.
+
+    Key segments may be wrapped in ``[[ ]]`` to keep internal dots as part of
+    the leaf name (see :func:`split_key_levels`).
 
     Args:
         dot_string: Dot-separated key-value string in format "key.key.key=value".
@@ -128,11 +178,11 @@ def convert_dot_notation_to_dict(dot_string: str) -> Dict[str, Any]:
 
     keys_str, value = parts[0].strip(), parts[1].strip()
 
-    # Split hierarchical keys
-    key_levels = keys_str.split(".")
-    if not key_levels or key_levels[-1] == "":
+    # Split hierarchical keys, honoring [[ ]] escape segments
+    key_levels = split_key_levels(keys_str)
+    if not key_levels:
         raise ValueError(
-            f"Invalid key format, cannot end with dot: {dot_string}")
+            f"Invalid key format, empty key: {dot_string}")
 
     # Build nested dictionary (from innermost to outermost)
     result: Dict[str, Any] = {}
