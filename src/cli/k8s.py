@@ -971,6 +971,200 @@ def init_harbor(timeout: int, interval: int) -> None:
         exit(1)
 
 
+@cli.command(name="push-images")
+@click.option(
+    '--dry-run',
+    is_flag=True,
+    help="仅展示将要推送的镜像，不实际推送"
+)
+@click.option(
+    '--image-timeout',
+    default=600,
+    type=int,
+    help="单个镜像推送超时（秒），默认 600"
+)
+def push_images(dry_run: bool, image_timeout: int) -> None:
+    """推送集群所有节点的镜像到 Harbor 镜像仓库
+
+    遍历集群全部节点（Master/Worker），收集 containerd 中已存在的镜像，
+    去重后统一推送至 Harbor。后续集群扩容时，新节点可直接从 Harbor 拉取，
+    无需再通过离线 tar 包加载镜像。
+
+    \b
+    示例：
+      # 推送所有节点镜像到 Harbor
+      $ python k8s.py push-images
+
+      # 仅预览将推送的镜像清单
+      $ python k8s.py push-images --dry-run
+    """
+    domain = Application.DOMAIN
+    registry_user = Application.REGISTRY.USERNAME
+    registry_pass = Application.REGISTRY.PASSWORD
+
+    # 解析所有节点（@local 表示本机 Master）
+    hosts = ["@local", *Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS,
+             *Application.K8S_CONFIG.WORKER_IPS]
+
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(click.style("推送集群节点镜像到 Harbor", fg="blue", bold=True))
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(f"  Harbor 地址:  https://{domain}")
+    click.echo(f"  集群节点:     {', '.join(h.replace('@local', '本机') for h in hosts)}")
+    click.echo(f"  dry-run:      {'是' if dry_run else '否'}")
+    click.echo("")
+
+    # ---- 1. 并行收集各节点镜像清单 ----
+    click.echo("正在收集各节点镜像清单...")
+
+    list_cmd = "ctr -n k8s.io i ls -q"
+
+    async def _collect_images() -> Dict[str, List[str]]:
+        ssh_client = AsyncSSHClient()
+        node_images: Dict[str, List[str]] = {}
+        try:
+            # 本机
+            local_res = execute_command(list_cmd, timeout=120)
+            local_images = [
+                line.strip() for line in local_res.get_output_lines()
+                if line.strip()
+            ] if not local_res.is_failure() else []
+            node_images["@local"] = local_images
+
+            # 远程节点并行收集
+            remote_hosts = [h for h in hosts if h != "@local"]
+            if remote_hosts:
+                results = await ssh_client.execute_multiple_commands(
+                    [(h, list_cmd) for h in remote_hosts],
+                    connect_timeout=30
+                )
+                for item in results:
+                    host = item.get("host", "")
+                    stdout = str(item.get("stdout", "") or "")
+                    if item.get("exit_status") == 0 and stdout:
+                        node_images[host] = [
+                            line.strip() for line in stdout.splitlines()
+                            if line.strip()
+                        ]
+                    else:
+                        node_images[host] = []
+                        click.echo(click.style(
+                            f"  ⚠ {host}: 镜像列表获取失败",
+                            fg="yellow"))
+        finally:
+            await ssh_client.close_all_connections()
+        return node_images
+
+    node_images = asyncio.run(_collect_images())
+
+    for host, imgs in node_images.items():
+        label = "本机" if host == "@local" else host
+        click.echo(f"  {label}: {len(imgs)} 个镜像")
+
+    # ---- 2. 汇总去重，过滤已在 Harbor 的镜像 ----
+    image_hosts: Dict[str, List[str]] = {}
+    for host, imgs in node_images.items():
+        for ref in imgs:
+            # 跳过无标签的 sha256 digest 引用
+            if ref.startswith("sha256:"):
+                continue
+            # 跳过已在 Harbor（以 domain 为前缀）的镜像
+            if ref.startswith(f"{domain}/"):
+                continue
+            image_hosts.setdefault(ref, []).append(host)
+
+    all_images = sorted(image_hosts.keys())
+
+    click.echo(click.style(
+        f"\n去重后待推送镜像: {len(all_images)} 个", fg="cyan"))
+
+    if not all_images:
+        click.echo(click.style("没有需要推送的镜像", fg="green"))
+        exit(0)
+
+    if dry_run:
+        for ref in all_images:
+            click.echo(f"  [dry-run] {ref}")
+        exit(0)
+
+    # ---- 3. 等待 Harbor 就绪 ----
+    harbor_client = HarborClient()
+    click.echo("等待 Harbor 服务就绪...")
+    if not harbor_client.wait_for_ready(timeout=300, interval=10):
+        click.echo(click.style(
+            "Harbor 未就绪，请先执行 kubectl get pods -n harbor-system 检查",
+            fg="red"), err=True)
+        exit(1)
+    click.echo(click.style("Harbor 已就绪", fg="green"))
+
+    # 确保所有 registry 对应的 Harbor 项目存在
+    needed_registries: set = set()
+    for ref in all_images:
+        registry, _ = _split_image_ref(ref)
+        needed_registries.add(registry)
+    for project in sorted(needed_registries):
+        harbor_client.create_project(project, public=True)
+
+    # ---- 4. 逐个推送（单事件循环，复用 SSH 连接池）----
+    click.echo(click.style("\n开始推送镜像...", fg="cyan", bold=True))
+
+    async def _push_all() -> Tuple[int, int, List[str]]:
+        ssh_client = AsyncSSHClient()
+        ok_count, fail_count = 0, 0
+        failed_images: List[str] = []
+        try:
+            for idx, ref in enumerate(all_images, 1):
+                # 优先从本机推送（更快），本机没有则从首个拥有该镜像的远程节点推送
+                candidate_hosts = image_hosts[ref]
+                push_host = "@local" if "@local" in candidate_hosts else candidate_hosts[0]
+                label = "本机" if push_host == "@local" else push_host
+                click.echo(f"  [{idx}/{len(all_images)}] {ref}  (from {label})")
+
+                push_cmd = (
+                    f"ctr -n k8s.io i push --hosts-dir /etc/containerd/certs.d/ "
+                    f"-u {registry_user}:{registry_pass} {ref}"
+                )
+
+                if push_host == "@local":
+                    res = execute_command(push_cmd, timeout=image_timeout)
+                    failed = res.is_failure()
+                    err_msg = res.get_error_lines()
+                else:
+                    result = await ssh_client.execute_command(
+                        push_host, push_cmd, connect_timeout=30)
+                    failed = result.get("exit_status") != 0
+                    err_msg = str(result.get("stderr", "") or result.get("error", ""))
+
+                if failed:
+                    click.echo(click.style(
+                        f"    ❌ 推送失败: {err_msg}", fg="red"))
+                    fail_count += 1
+                    failed_images.append(ref)
+                else:
+                    click.echo(click.style("    ✅ 成功", fg="green"))
+                    ok_count += 1
+        finally:
+            await ssh_client.close_all_connections()
+        return ok_count, fail_count, failed_images
+
+    ok_count, fail_count, failed_images = asyncio.run(_push_all())
+
+    # ---- 汇总 ----
+    click.echo(click.style("\n" + "=" * 70, fg="blue"))
+    click.echo(click.style("推送完成", fg="blue", bold=True))
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(f"  成功: {ok_count}")
+    click.echo(f"  失败: {fail_count}")
+    if needed_registries:
+        click.echo(f"  涉及 Harbor 项目: {', '.join(sorted(needed_registries))}")
+    if failed_images:
+        click.echo(click.style("\n失败镜像:", fg="red"))
+        for ref in failed_images:
+            click.echo(f"    {ref}")
+
+    exit(0 if fail_count == 0 else 1)
+
+
 # ======================== Bitnami 同步辅助函数 ========================
 
 def _bitnami_extract_images(chart_yaml_path: Path) -> List[str]:
