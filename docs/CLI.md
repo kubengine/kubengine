@@ -319,12 +319,12 @@ kubengine image clean [OPTIONS]
 
 ## Kubernetes 部署
 
-### 使用 kubengine_k8s 独立命令（推荐）
+### 使用 kubengine-k8s 独立命令（推荐）
 
-kubengine_k8s 是专门用于 Kubernetes 部署的独立命令行工具，提供更强大的功能和更好的用户体验：
+kubengine-k8s 是专门用于 Kubernetes 部署的独立命令行工具，提供更强大的功能和更好的用户体验：
 
 ```bash
-kubengine_k8s --help
+kubengine-k8s --help
 ```
 
 **可用命令：**
@@ -337,7 +337,7 @@ kubengine_k8s --help
 #### 部署 Kubernetes 集群
 
 ```bash
-kubengine_k8s deploy [OPTIONS]
+kubengine-k8s deploy [OPTIONS]
 ```
 
 **选项：**
@@ -350,16 +350,16 @@ kubengine_k8s deploy [OPTIONS]
 **示例：**
 ```bash
 # 使用默认配置部署
-kubengine_k8s deploy
+kubengine-k8s deploy
 
 # 指定离线部署目录
-kubengine_k8s deploy --deploy-src /path/to/offline-files
+kubengine-k8s deploy --deploy-src /path/to/offline-files
 
 # 显示配置但不执行部署
-kubengine_k8s deploy --show-config
+kubengine-k8s deploy --show-config
 
 # 详细输出日志
-kubengine_k8s deploy -vvv
+kubengine-k8s deploy -vvv
 ```
 
 ---
@@ -367,7 +367,7 @@ kubengine_k8s deploy -vvv
 #### 显示和验证配置
 
 ```bash
-kubengine_k8s config [OPTIONS]
+kubengine-k8s config [OPTIONS]
 ```
 
 **选项：**
@@ -379,10 +379,10 @@ kubengine_k8s config [OPTIONS]
 **示例：**
 ```bash
 # 显示当前配置
-kubengine_k8s config --show
+kubengine-k8s config --show
 
 # 验证配置
-kubengine_k8s config --validate
+kubengine-k8s config --validate
 ```
 
 ---
@@ -390,7 +390,7 @@ kubengine_k8s config --validate
 #### 重置部署状态
 
 ```bash
-kubengine_k8s reset-state [OPTIONS]
+kubengine-k8s reset-state [OPTIONS]
 ```
 
 **选项：**
@@ -400,7 +400,7 @@ kubengine_k8s reset-state [OPTIONS]
 
 **示例：**
 ```bash
-kubengine_k8s reset-state --force
+kubengine-k8s reset-state --force
 ```
 
 ---
@@ -537,7 +537,7 @@ kubengine cluster configure-cluster \
 kubengine cluster disable-firewalld
 
 # 3. 部署 Kubernetes
-kubengine_k8s deploy
+kubengine-k8s deploy
 
 # 4. 初始化应用数据
 kubengine app init-data

@@ -141,7 +141,7 @@ pip install --no-index --find-links=./packages kubengine
 
 ~/.local/bin/                                 # CLI 工具位置
 ├── kubengine                                 # 主命令行工具
-└── kubengine_k8s                             # Kubernetes 部署专用工具
+└── kubengine-k8s                             # Kubernetes 部署专用工具
 ```
 
 ## 配置文件说明
@@ -230,10 +230,10 @@ kubengine image build --help
 kubengine image list-apps --help
 
 # 测试 Kubernetes 部署专用命令
-kubengine_k8s --help
-kubengine_k8s deploy --help
-kubengine_k8s config --help
-kubengine_k8s reset-state --help
+kubengine-k8s --help
+kubengine-k8s deploy --help
+kubengine-k8s config --help
+kubengine-k8s reset-state --help
 ```
 
 ### 3. 测试导入

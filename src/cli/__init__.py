@@ -8,7 +8,7 @@ KubeEngine CLI 模块
    - cluster: 集群管理（主机配置、SSH 互信）
    - image: 镜像构建工具（用于构建自定义容器镜像）
 
-2. kubengine_k8s - Kubernetes 集群部署
+2. kubengine-k8s - Kubernetes 集群部署
    - deploy: 自动化 Kubernetes 集群部署
    - config: 生成 Kubernetes 配置文件
    - join: 节点加入集群

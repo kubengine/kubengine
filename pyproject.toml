@@ -59,7 +59,7 @@ redis-exporter = "builder.image.redis.exporter_builder:Builder"
 
 [project.scripts]
 kubengine = "cli.app:cli"
-kubengine_k8s = "cli.k8s:cli"
+kubengine-k8s = "cli.k8s:cli"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

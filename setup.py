@@ -35,7 +35,7 @@ _METADATA: dict[str, Any] = {
     "entry_points": {
         "console_scripts": [
             "kubengine=cli.app:cli",
-            "kubengine_k8s=cli.k8s:cli",
+            "kubengine-k8s=cli.k8s:cli",
         ],
         "image_builders": [
             "kylin-v11 = builder.image.os.kylin_v11:Builder",

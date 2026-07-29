@@ -21,7 +21,7 @@ KubeEngine 统一命令行工具
     kubengine image list-apps
 
     # K8s 部署
-    请使用 kubengine_k8s 命令，例如：kubengine_k8s deploy --deploy-src /root/offline-deploy
+    请使用 kubengine-k8s 命令，例如：kubengine-k8s deploy --deploy-src /root/offline-deploy
 """
 
 import os

@@ -181,7 +181,7 @@ Requires:       python311, python311-pip, sqlite
 /usr/
 ├── bin/
 │   ├── kubengine                          # 主 CLI 工具
-│   └── kubengine_k8s                      # Kubernetes 部署专用 CLI 工具
+│   └── kubengine-k8s                      # Kubernetes 部署专用 CLI 工具
 ├── lib/python3.11/site-packages/
 │   └── kubengine/                         # Python 包
 └── share/kubengine/
@@ -408,28 +408,28 @@ kubengine image build redis -v 7.2               # 构建镜像
 kubengine image list-apps                         # 列出应用
 ```
 
-### 2. Kubernetes 部署专用命令：kubengine_k8s
+### 2. Kubernetes 部署专用命令：kubengine-k8s
 
 专门用于 Kubernetes 部署的独立命令行工具，提供更强大的功能：
 
 ```bash
 # 查看帮助
-kubengine_k8s --help
+kubengine-k8s --help
 
 # 显示配置
-kubengine_k8s config --show
+kubengine-k8s config --show
 
 # 验证配置
-kubengine_k8s config --validate
+kubengine-k8s config --validate
 
 # 部署 Kubernetes 集群
-kubengine_k8s deploy --deploy-src /path/to/offline-files
+kubengine-k8s deploy --deploy-src /path/to/offline-files
 
 # 详细输出日志
-kubengine_k8s deploy --deploy-src /path/to/offline-files -vvv
+kubengine-k8s deploy --deploy-src /path/to/offline-files -vvv
 
 # 重置部署状态
-kubengine_k8s reset-state --force
+kubengine-k8s reset-state --force
 ```
 
 ## 日志配置

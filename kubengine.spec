@@ -151,7 +151,7 @@ chmod 644 %{buildroot}%{kubengine_dir}/config/application.yaml
 %doc README.md
 %license LICENSE.txt
 %{_bindir}/kubengine
-%{_bindir}/kubengine_k8s
+%{_bindir}/kubengine-k8s
 /usr/lib64/python3.11/site-packages/builder
 /usr/lib64/python3.11/site-packages/cli
 /usr/lib64/python3.11/site-packages/core
