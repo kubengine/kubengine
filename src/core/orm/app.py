@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
-from sqlalchemy import JSON, Column, DateTime, Integer, String, asc, desc
+from sqlalchemy import JSON, Column, DateTime, Integer, String, asc, desc, text
 from sqlalchemy.orm import relationship, joinedload
 
 from core.logger import get_logger
@@ -90,7 +90,11 @@ def find_applications_paginated(
             query = query.filter(App.name.like(name_filter))
 
         if "category" in filter_conditions and filter_conditions["category"]:
-            query = query.filter(App.category == filter_conditions["category"])
+            # category 字段为 JSON 数组，使用 json_each 实现包含匹配
+            query = query.filter(
+                text("EXISTS (SELECT 1 FROM json_each(app.category) WHERE json_each.value = :cat)")
+                .bindparams(cat=filter_conditions["category"])
+            )
 
         # Validate sort field to prevent SQL injection
         valid_sort_fields = ["app_id", "name", "category", "create_time"]

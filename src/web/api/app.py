@@ -27,11 +27,12 @@ logger = get_logger(__name__)
 @auth_with_renew()
 async def list(request: Request,
                pagination: PageParams = Depends(pagination_params),
-               name: Optional[str] = Query(None, description="模糊匹配名称")):
+               name: Optional[str] = Query(None, description="模糊匹配名称"),
+               category: Optional[str] = Query(None, description="按分类筛选")):
     return find_applications_paginated(
         page=pagination.page,
         page_size=pagination.page_size,
-        filters={"name": name}
+        filters={"name": name, "category": category}
     )
 
 
