@@ -260,7 +260,7 @@ kubengine app set-password
 **使用 CLI 配置集群**：
 
 ```bash
-kubengine cluster configure-cluster \
+kubengine cluster config \
   --hosts 172.31.57.23,172.31.57.22,172.31.57.21 \
   --hostname-map 172.31.57.23:kubengine3,172.31.57.22:kubengine2,172.31.57.21:kubengine1
 ```
@@ -418,7 +418,7 @@ Harbor 镜像仓库密码。
 
 ```bash
 # 显示当前配置
-kubengine cluster show-cluster-config
+kubengine cluster show
 ```
 
 ### 常见配置问题
@@ -446,7 +446,7 @@ kubengine cluster show-cluster-config
 
 **解决方法**：
 ```bash
-kubengine cluster configure-cluster --hosts <节点IP列表>
+kubengine cluster config --hosts <节点IP列表>
 ```
 
 #### 3. CIDR 地址冲突

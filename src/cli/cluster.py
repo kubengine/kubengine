@@ -9,17 +9,17 @@
 
 使用示例：
     # 配置集群
-    python cluster.py configure-cluster --hosts 172.31.65.150,localhost \\
+    kubengine cluster config --hosts 172.31.65.150,localhost \\
         --hostname-map 172.31.65.150:node-1,localhost:node-2
 
     # 显示集群配置
-    python cluster.py show-cluster-config
+    kubengine cluster show
 
     # 执行命令
-    python cluster.py execute-cmd --cmd "df -h"
+    kubengine cluster exec "df -h"
 
     # 禁用防火墙
-    python cluster.py disable-firewalld
+    kubengine cluster disable-firewalld
 """
 
 import asyncio
@@ -537,7 +537,7 @@ def _display_command_result(result: Dict[str, Any]) -> None:
 # ============================ CLI 命令 ============================
 
 
-@cli.command(name="configure-cluster")
+@cli.command(name="config")
 @click.option(
     "--hosts",
     type=ListType,
@@ -580,14 +580,14 @@ def configure_cluster_command(
     如果未提供 --hosts 和 --hostname-map，命令将尝试从应用配置文件加载集群配置。
 
     示例：
-        $ python cluster.py configure-cluster \\
+        $ kubengine cluster config \\
             --hosts 172.31.65.150,localhost \\
             --hostname-map 172.31.65.150:node-1,localhost:node-2 \\
             --username root \\
             --key-file ~/.ssh/id_rsa
 
         # 从配置文件加载：
-        $ python cluster.py configure-cluster --username root --key-file ~/.ssh/id_rsa
+        $ kubengine cluster config --username root --key-file ~/.ssh/id_rsa
     """
     try:
         # 从输入或配置获取主机列表
@@ -623,7 +623,7 @@ def configure_cluster_command(
         )
 
 
-@cli.command(name="show-cluster-config")
+@cli.command(name="show")
 def show_cluster_config() -> None:
     """显示当前集群配置"""
     cluster_config = _load_cluster_config()
@@ -652,16 +652,11 @@ def show_cluster_config() -> None:
     click.echo()
 
 
-@cli.command(name="execute-cmd")
+@cli.command(name="exec")
 @click.option(
     "--hosts",
     type=ListType,
     help="集群节点 IP 列表，逗号分隔（未提供则从配置加载）"
-)
-@click.option(
-    "--cmd",
-    required=True,
-    help="要执行的命令 (如: 'df -h', 'systemctl status docker')"
 )
 @click.option(
     "--username",
@@ -677,9 +672,10 @@ def show_cluster_config() -> None:
     default="~/.ssh/id_rsa",
     help="SSH 私钥文件路径"
 )
+@click.argument("cmd", required=True)
 def execute_command(
-    hosts: Optional[List[str]],
     cmd: str,
+    hosts: Optional[List[str]],
     username: str,
     password: str,
     key_file: str
@@ -690,20 +686,15 @@ def execute_command(
 
     示例：
         1. 检查已配置节点的磁盘使用情况：
-            $ python cluster.py execute-cmd --cmd "df -h" --username root
+            $ kubengine cluster exec "df -h" --username root
 
         2. 在指定节点上执行：
-            $ python cluster.py execute-cmd \\
+            $ kubengine cluster exec "df -h" \\
                 --hosts 172.31.65.150,localhost \\
-                --cmd "df -h" \\
-                --username root \\
-                --key-file ~/.ssh/id_rsa
+                --username root --key-file ~/.ssh/id_rsa
 
         3. 重启 Docker 服务：
-            $ python cluster.py execute-cmd \\
-                --cmd "systemctl restart docker" \\
-                --username root \\
-                --password your-password
+            $ kubengine cluster exec "systemctl restart docker" --password your-password
     """
     try:
         # 从输入或配置获取主机列表

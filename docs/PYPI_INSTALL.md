@@ -222,8 +222,8 @@ kubengine --help
 kubengine app --help
 
 # 测试集群管理命令
-kubengine cluster configure-cluster --help
-kubengine cluster execute-cmd --help
+kubengine cluster config --help
+kubengine cluster exec --help
 
 # 测试镜像构建命令
 kubengine image build --help

@@ -13,7 +13,7 @@ KubeEngine 统一命令行工具
     kubengine app init-data
 
     # 集群管理
-    kubengine cluster configure-cluster --hosts 172.31.65.150,localhost \
+    kubengine cluster config --hosts 172.31.65.150,localhost \
         --hostname-map 172.31.65.150:node-1,localhost:node-2
 
     # 镜像构建
@@ -61,7 +61,7 @@ def cli() -> None:
 
     核心功能模块：\n
         1. 应用管理：app run, set-password, init-data\n
-        2. 集群管理：cluster configure-cluster, execute-cmd\n
+        2. 集群管理：cluster config, exec\n
         3. 镜像构建：image build, image list-apps\n
     """
     pass

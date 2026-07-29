@@ -98,13 +98,13 @@ kubengine app init-data [OPTIONS]
 #### 原生 Python 方式
 
 ```bash
-python -m cli.cluster configure-cluster [OPTIONS]
+python -m cli.cluster config [OPTIONS]
 ```
 
 #### kubengine 命令方式
 
 ```bash
-kubengine cluster configure-cluster [OPTIONS]
+kubengine cluster config [OPTIONS]
 ```
 
 **选项：**
@@ -120,13 +120,13 @@ kubengine cluster configure-cluster [OPTIONS]
 **示例：**
 ```bash
 # 原生 Python 方式
-python -m cli.cluster configure-cluster \
+python -m cli.cluster config \
   --hosts 172.31.57.23,172.31.57.22,172.31.57.21 \
   --hostname-map 172.31.57.23:kubengine3,172.31.57.22:kubengine2,172.31.57.21:kubengine1 \
   --username root
 
 # kubengine 命令方式
-kubengine cluster configure-cluster \
+kubengine cluster config \
   --hosts 172.31.57.23,172.31.57.22,172.31.57.21 \
   --hostname-map 172.31.57.23:kubengine3,172.31.57.22:kubengine2,172.31.57.21:kubengine1 \
   --username root
@@ -139,13 +139,13 @@ kubengine cluster configure-cluster \
 #### 原生 Python 方式
 
 ```bash
-python -m cli.cluster show-cluster-config
+python -m cli.cluster show
 ```
 
 #### kubengine 命令方式
 
 ```bash
-kubengine cluster show-cluster-config
+kubengine cluster show
 ```
 
 ---
@@ -155,20 +155,19 @@ kubengine cluster show-cluster-config
 #### 原生 Python 方式
 
 ```bash
-python -m cli.cluster execute-cmd [OPTIONS]
+python -m cli.cluster exec [OPTIONS] "COMMAND"
 ```
 
 #### kubengine 命令方式
 
 ```bash
-kubengine cluster execute-cmd [OPTIONS]
+kubengine cluster exec [OPTIONS] "COMMAND"
 ```
 
 **选项：**
 | 选项 | 说明 |
 |------|------|
 | `--hosts TEXT` | 节点 IP 列表 |
-| `--cmd TEXT` | 要执行的命令（必需） |
 | `--username TEXT` | SSH 用户名 |
 | `--password TEXT` | SSH 密码 |
 | `--key-file TEXT` | SSH 私钥文件路径 |
@@ -176,7 +175,7 @@ kubengine cluster execute-cmd [OPTIONS]
 **示例：**
 ```bash
 # 在所有节点执行命令
-kubengine cluster execute-cmd --hosts 172.31.57.23,172.31.57.22 --cmd "hostname"
+kubengine cluster exec "hostname" --hosts 172.31.57.23,172.31.57.22
 ```
 
 ---
@@ -613,7 +612,7 @@ kubengine app run --host 0.0.0.0 --port 8080
 
 ```bash
 # 1. 配置集群
-kubengine cluster configure-cluster \
+kubengine cluster config \
   --hosts 172.31.57.23,172.31.57.22,172.31.57.21 \
   --hostname-map 172.31.57.23:kubengine3,172.31.57.22:kubengine2,172.31.57.21:kubengine1
 
@@ -646,7 +645,7 @@ kubengine app run
 
 ```bash
 # 1. 纳管新节点（SSH 互信 + 主机名）
-kubengine cluster configure-cluster \
+kubengine cluster config \
   --hosts <新节点IP>,<已有节点IP列表> \
   --hostname-map <新节点IP>:<主机名>,...
 

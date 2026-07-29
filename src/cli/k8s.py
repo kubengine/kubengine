@@ -915,7 +915,7 @@ def scale(
 
     前置条件：
     1. 已通过 kubengine-k8s deploy 完成集群部署
-    2. 新节点已通过 kubengine cluster configure-cluster 纳管（SSH 互信已配置）
+    2. 新节点已通过 kubengine cluster config 纳管（SSH 互信已配置）
     3. 本机为 Master 节点
 
     示例：

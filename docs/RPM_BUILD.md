@@ -400,8 +400,8 @@ kubengine app set-password                      # 设置管理员密码
 kubengine app init-data                         # 初始化数据
 
 # 集群管理
-kubengine cluster configure-cluster ...          # 配置集群
-kubengine cluster execute-cmd ...                 # 执行命令
+kubengine cluster config ...                       # 配置集群
+kubengine cluster exec ...                         # 执行命令
 
 # 镜像构建
 kubengine image build redis -v 7.2               # 构建镜像
