@@ -32,7 +32,7 @@ from core.command import execute_command  # noqa
 from core.http_api_client.harbor_client import HarborClient  # noqa
 import ipaddress  # noqa
 import click  # noqa
-from typing import Any, Dict, List, Optional, Tuple  # noqa
+from typing import Any, Dict, List, Optional, Set, Tuple  # noqa
 from pathlib import Path  # noqa
 import os  # noqa
 import json  # noqa
@@ -1955,6 +1955,137 @@ def sync_pull_images(
 
 # -------------------- import 子命令（纯内网环境） --------------------
 
+
+def _do_sync_import(
+    tgzs: Tuple[str, ...],
+    images_tar: Optional[str],
+    images_file: Optional[str],
+    dry_run: bool,
+    image_timeout: int,
+    harbor_client: Optional[HarborClient],
+) -> Tuple[int, int, int, int, Set[str]]:
+    """执行单个 bundle 的导入逻辑（chart push + 镜像 import+push）
+
+    Returns:
+        (chart_ok, chart_fail, image_ok, image_fail, needed_projects)
+    """
+    domain = Application.DOMAIN
+    registry_user = Application.REGISTRY.USERNAME
+    registry_pass = Application.REGISTRY.PASSWORD
+
+    needed_projects: Set[str] = set()
+    chart_ok, chart_fail = 0, 0
+    image_ok, image_fail = 0, 0
+
+    # 探测 images-file：未指定时根据 images-tar 名字推导
+    resolved_images: List[str] = []
+    if images_tar:
+        if not Path(images_tar).exists():
+            click.echo(click.style(
+                f"  镜像 tar 不存在: {images_tar}", fg="red"), err=True)
+            return chart_ok, chart_fail, 0, 0, needed_projects
+        if not images_file:
+            derived = images_tar.replace(".images.tar", ".txt")
+            if not Path(derived).exists():
+                derived = images_tar.replace(".tar", ".txt")
+            images_file = derived if Path(derived).exists() else None
+
+        if images_file and Path(images_file).exists():
+            with open(images_file, "r", encoding="utf-8") as f:
+                resolved_images = [
+                    line.strip() for line in f
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+
+    # ---- 1. helm push 每个 chart 包 ----
+    for tgz_str in tgzs:
+        tgz_path = Path(tgz_str)
+        if not tgz_path.exists():
+            click.echo(click.style(
+                f"  chart 包不存在: {tgz_path}", fg="red"), err=True)
+            chart_fail += 1
+            continue
+
+        click.echo(click.style(f"\n  chart: {tgz_path.name}", fg="cyan"))
+
+        if dry_run:
+            click.echo(f"    [dry-run] helm push -> oci://{domain}/charts")
+            chart_ok += 1
+            continue
+
+        push_res = execute_command(
+            " ".join([
+                "helm", "push", str(tgz_path),
+                f"oci://{domain}/charts",
+                f"--username {registry_user}",
+                f"--password {registry_pass}",
+            ]),
+            timeout=120
+        )
+        if push_res.is_failure():
+            click.echo(click.style(
+                f"    ❌ helm push 失败: {push_res.get_error_lines()}",
+                fg="red"), err=True)
+            chart_fail += 1
+        else:
+            click.echo(click.style("    ✅ chart 推送成功", fg="green"))
+            chart_ok += 1
+
+    # ---- 2. 导入镜像 tar + push ----
+    if images_tar:
+        click.echo(click.style(
+            f"\n  镜像导入: {Path(images_tar).name}", fg="cyan"))
+
+        if dry_run:
+            for img_ref in resolved_images:
+                registry, repo_tag = _split_image_ref(img_ref)
+                needed_projects.add(registry)
+                target = f"{domain}/{registry}/{repo_tag}"
+                click.echo(f"    [dry-run] {img_ref} -> {target}")
+            image_ok = len(resolved_images)
+        else:
+            import_res = execute_command(
+                f"ctr -n k8s.io i import {images_tar}",
+                timeout=600
+            )
+            if import_res.is_failure():
+                click.echo(click.style(
+                    f"    ❌ images.tar 导入失败: {import_res.get_error_lines()}",
+                    fg="red"), err=True)
+                image_fail = len(resolved_images)
+            elif not resolved_images:
+                click.echo(click.style(
+                    "    镜像已导入本地，但无清单文件无法 push", fg="yellow"))
+            else:
+                click.echo(click.style("    ✅ 镜像导入本地", fg="green"))
+                for img_ref in resolved_images:
+                    registry, repo_tag = _split_image_ref(img_ref)
+                    needed_projects.add(registry)
+
+                    if harbor_client and not harbor_client.create_project(
+                            registry, public=True):
+                        click.echo(click.style(
+                            f"    Harbor 项目 '{registry}' 创建失败，跳过",
+                            fg="yellow"))
+                        image_fail += 1
+                        continue
+
+                    push_res = execute_command(
+                        f"ctr -n k8s.io i push --hosts-dir /etc/containerd/certs.d/ "
+                        f"-u {registry_user}:{registry_pass} {img_ref}",
+                        timeout=image_timeout
+                    )
+                    if push_res.is_failure():
+                        click.echo(click.style(
+                            f"    ❌ push 失败: {img_ref}", fg="red"))
+                        image_fail += 1
+                    else:
+                        click.echo(click.style(f"    ✅ {img_ref}", fg="green"))
+                        image_ok += 1
+
+    return chart_ok, chart_fail, image_ok, image_fail, needed_projects
+
+
 @sync_bitnami.command(name="import")
 @click.argument('tgzs', nargs=-1, required=True)
 @click.option(
@@ -2011,31 +2142,6 @@ def sync_import(
     click.echo(f"  dry-run:         {'是' if dry_run else '否'}")
     click.echo("")
 
-    # 探测 images-file：未指定时根据 images-tar 名字推导
-    resolved_images: List[str] = []
-    if images_tar:
-        if not Path(images_tar).exists():
-            click.echo(click.style(f"镜像 tar 不存在: {images_tar}", fg="red"), err=True)
-            exit(1)
-        if not images_file:
-            # redis-images.images.tar -> redis-images.txt
-            derived = images_tar.replace(".images.tar", ".txt")
-            if not Path(derived).exists():
-                # redis.images.tar -> redis-images.txt
-                derived = images_tar.replace(".tar", ".txt")
-            images_file = derived if Path(derived).exists() else None
-
-        if images_file and Path(images_file).exists():
-            with open(images_file, "r", encoding="utf-8") as f:
-                resolved_images = [
-                    line.strip() for line in f
-                    if line.strip() and not line.strip().startswith("#")
-                ]
-            click.echo(f"  镜像清单:        {images_file} ({len(resolved_images)} 个)")
-        else:
-            click.echo(click.style(
-                "  未找到镜像清单文件，镜像 tar 将导入但不 push", fg="yellow"))
-
     # 等待 Harbor 就绪
     harbor_client: Optional[HarborClient] = None
     if not dry_run:
@@ -2049,98 +2155,9 @@ def sync_import(
         click.echo(click.style("Harbor 已就绪", fg="green"))
     click.echo("")
 
-    needed_projects: set = set()
-    chart_ok, chart_fail = 0, 0
-    image_ok, image_fail = 0, 0
-
-    # ---- 1. helm push 每个 chart 包 ----
-    for tgz_str in tgzs:
-        tgz_path = Path(tgz_str)
-        if not tgz_path.exists():
-            click.echo(click.style(f"chart 包不存在: {tgz_path}", fg="red"), err=True)
-            chart_fail += 1
-            continue
-
-        click.echo(click.style(
-            f"\nchart: {tgz_path.name}", fg="cyan", bold=True))
-
-        if dry_run:
-            click.echo(f"  [dry-run] helm push -> oci://{domain}/charts")
-            chart_ok += 1
-            continue
-
-        push_res = execute_command(
-            " ".join([
-                "helm", "push", str(tgz_path),
-                f"oci://{domain}/charts",
-                f"--username {registry_user}",
-                f"--password {registry_pass}",
-            ]),
-            timeout=120
-        )
-        if push_res.is_failure():
-            click.echo(click.style(
-                f"  ❌ helm push 失败: {push_res.get_error_lines()}", fg="red"), err=True)
-            chart_fail += 1
-        else:
-            click.echo(click.style("  ✅ chart 推送成功", fg="green"))
-            chart_ok += 1
-
-    # ---- 2. 导入镜像 tar + tag + push ----
-    if images_tar:
-        click.echo(click.style(
-            f"\n镜像导入: {images_tar}", fg="cyan", bold=True))
-
-        if dry_run:
-            for img_ref in resolved_images:
-                registry, repo_tag = _split_image_ref(img_ref)
-                needed_projects.add(registry)
-                target = f"{domain}/{registry}/{repo_tag}"
-                click.echo(f"  [dry-run] {img_ref} -> {target}")
-            image_ok = len(resolved_images)
-        else:
-            # ctr i import（本地导入，不联网）
-            import_res = execute_command(
-                f"ctr -n k8s.io i import {images_tar}",
-                timeout=600
-            )
-            if import_res.is_failure():
-                click.echo(click.style(
-                    f"  ❌ images.tar 导入失败: {import_res.get_error_lines()}",
-                    fg="red"), err=True)
-                image_fail = len(resolved_images)
-            elif not resolved_images:
-                click.echo(click.style(
-                    "  镜像已导入本地，但无清单文件无法 push", fg="yellow"))
-            else:
-                click.echo(click.style("  ✅ 镜像导入本地", fg="green"))
-                for img_ref in resolved_images:
-                    registry, repo_tag = _split_image_ref(img_ref)
-                    needed_projects.add(registry)
-
-                    # 确保 Harbor 项目存在
-                    if harbor_client and not harbor_client.create_project(
-                            registry, public=True):
-                        click.echo(click.style(
-                            f"  Harbor 项目 '{registry}' 创建失败，跳过",
-                            fg="yellow"))
-                        image_fail += 1
-                        continue
-
-                    # 直接 push 原引用，certs.d 自动转发到 Harbor
-                    push_res = execute_command(
-                        f"ctr -n k8s.io i push --hosts-dir /etc/containerd/certs.d/ "
-                        f"-u {registry_user}:{registry_pass} {img_ref}",
-                        timeout=image_timeout
-                    )
-                    if push_res.is_failure():
-                        click.echo(click.style(
-                            f"  ❌ push 失败: {img_ref}", fg="red"))
-                        image_fail += 1
-                    else:
-                        click.echo(click.style(
-                            f"  ✅ {img_ref}", fg="green"))
-                        image_ok += 1
+    chart_ok, chart_fail, image_ok, image_fail, needed_projects = _do_sync_import(
+        tgzs, images_tar, images_file, dry_run, image_timeout, harbor_client
+    )
 
     # ---- 汇总 ----
     click.echo(click.style("\n" + "=" * 70, fg="blue"))
@@ -2157,6 +2174,143 @@ def sync_import(
             fg="cyan"))
 
     exit(0 if (chart_fail == 0 and image_fail == 0) else 1)
+
+
+@sync_bitnami.command(name="import-dir")
+@click.argument('dir_path')
+@click.option(
+    '--dry-run',
+    is_flag=True,
+    help="仅展示将执行的操作，不实际执行"
+)
+@click.option(
+    '--image-timeout',
+    type=int,
+    default=600,
+    show_default=True,
+    help="单个镜像 push 超时时间（秒）"
+)
+def sync_import_dir(
+    dir_path: str,
+    dry_run: bool,
+    image_timeout: int
+) -> None:
+    """【阶段二·批量】扫描目录下所有 bitnami 离线包，批量导入 Harbor
+
+    自动扫描 DIR_PATH 下的 *-bundles 子目录（若 DIR_PATH 本身即为单个
+    bundle 目录也可），依次将每个 bundle 的 chart 包（含 common 依赖、
+    子 chart 如 kibana）和镜像 tar 导入 Harbor。
+
+    \b
+    示例：
+      # 批量导入 bitnami-bundles 下所有应用
+      $ kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles
+
+      # 仅导入单个应用
+      $ kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles/redis-bitnami-bundles
+
+      # 预览
+      $ kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles --dry-run
+    """
+    base_dir = Path(dir_path)
+    if not base_dir.is_dir():
+        click.echo(click.style(f"目录不存在: {dir_path}", fg="red"), err=True)
+        exit(1)
+
+    def _is_bundle_dir(d: Path) -> bool:
+        return any(d.glob("*.tgz"))
+
+    # 判断是父目录（含多个 bundle 子目录）还是单个 bundle 目录
+    if _is_bundle_dir(base_dir):
+        bundle_dirs = [base_dir]
+    else:
+        bundle_dirs = sorted([
+            d for d in base_dir.iterdir()
+            if d.is_dir() and _is_bundle_dir(d)
+        ])
+
+    if not bundle_dirs:
+        click.echo(click.style(
+            f"未找到包含 chart 包的 bundle 目录: {dir_path}", fg="red"), err=True)
+        exit(1)
+
+    # 收集每个 bundle 的文件
+    bundles: List[Tuple[str, List[str], Optional[str], Optional[str]]] = []
+    for bdir in bundle_dirs:
+        tgzs = sorted(str(f) for f in bdir.glob("*.tgz"))
+        tar_files = sorted(bdir.glob("*.images.tar"))
+        images_tar = str(tar_files[0]) if tar_files else None
+        txt_files = sorted(bdir.glob("*-images.txt"))
+        images_file = str(txt_files[0]) if txt_files else None
+        bundles.append((bdir.name, tgzs, images_tar, images_file))
+
+    # ---- 展示扫描结果 ----
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(click.style(
+        "[阶段二·批量] 导入 bitnami 离线包到 Harbor", fg="blue", bold=True))
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(f"  扫描目录:  {dir_path}")
+    click.echo(f"  Bundle 数: {len(bundles)}")
+    click.echo(f"  dry-run:   {'是' if dry_run else '否'}")
+    click.echo("")
+
+    for idx, (name, tgzs, images_tar, images_file) in enumerate(bundles, 1):
+        tgz_names = [Path(t).name for t in tgzs]
+        click.echo(f"  [{idx}/{len(bundles)}] {name}")
+        click.echo(f"        charts: {tgz_names}")
+        click.echo(f"        images: {Path(images_tar).name if images_tar else '无'}"
+                   f" ({images_file or '无清单'})")
+    click.echo("")
+
+    # ---- 等待 Harbor 就绪（仅一次）----
+    harbor_client: Optional[HarborClient] = None
+    if not dry_run:
+        harbor_client = HarborClient()
+        click.echo("等待 Harbor 服务就绪...")
+        if not harbor_client.wait_for_ready(timeout=300, interval=10):
+            click.echo(click.style(
+                "Harbor 未就绪，请先执行 kubectl get pods -n harbor-system 检查",
+                fg="red"), err=True)
+            exit(1)
+        click.echo(click.style("Harbor 已就绪", fg="green"))
+    click.echo("")
+
+    # ---- 逐个 bundle 导入 ----
+    total_chart_ok, total_chart_fail = 0, 0
+    total_image_ok, total_image_fail = 0, 0
+    all_projects: Set[str] = set()
+
+    for idx, (name, tgzs, images_tar, images_file) in enumerate(bundles, 1):
+        click.echo(click.style(
+            f"\n{'─' * 70}", fg="blue"))
+        click.echo(click.style(
+            f"[{idx}/{len(bundles)}] {name}", fg="blue", bold=True))
+        click.echo(click.style(
+            f"{'─' * 70}", fg="blue"))
+
+        chart_ok, chart_fail, image_ok, image_fail, projects = _do_sync_import(
+            tuple(tgzs), images_tar, images_file,
+            dry_run, image_timeout, harbor_client
+        )
+
+        total_chart_ok += chart_ok
+        total_chart_fail += chart_fail
+        total_image_ok += image_ok
+        total_image_fail += image_fail
+        all_projects.update(projects)
+
+    # ---- 汇总 ----
+    click.echo(click.style("\n" + "=" * 70, fg="blue"))
+    click.echo(click.style("批量导入完成", fg="blue", bold=True))
+    click.echo(click.style("=" * 70, fg="blue"))
+    click.echo(f"  Bundle 数:       {len(bundles)}")
+    click.echo(f"  Chart:           成功 {total_chart_ok}，失败 {total_chart_fail}")
+    click.echo(f"  镜像:            成功 {total_image_ok}，失败 {total_image_fail}")
+    if all_projects:
+        click.echo(f"  涉及 Harbor 项目: {', '.join(sorted(all_projects))}")
+    click.echo("")
+
+    exit(0 if (total_chart_fail == 0 and total_image_fail == 0) else 1)
 
 
 if __name__ == '__main__':
