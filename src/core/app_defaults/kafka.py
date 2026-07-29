@@ -17,7 +17,7 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
     """
     return AppSchema(
         name="kafka",
-        category=["中间件"],
+        category=["消息与集成"],
         description="高可用分布式 Kafka 消息队列（KRaft 模式，无需外部 Zookeeper）",
         helm_chart="kafka",
         create_time=create_time,

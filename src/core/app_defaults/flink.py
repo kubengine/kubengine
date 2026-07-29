@@ -17,7 +17,7 @@ def get_flink_app(create_time: datetime) -> AppSchema:
     """
     return AppSchema(
         name="flink",
-        category=["计算"],
+        category=["消息与集成"],
         description="Apache Flink 分布式流处理框架，支持有状态计算与批流统一处理",
         helm_chart="flink",
         create_time=create_time,

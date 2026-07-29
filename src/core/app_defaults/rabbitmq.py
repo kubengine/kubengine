@@ -17,7 +17,7 @@ def get_rabbitmq_app(create_time: datetime) -> AppSchema:
     """
     return AppSchema(
         name="rabbitmq",
-        category=["中间件"],
+        category=["消息与集成"],
         description="高可用 RabbitMQ 消息队列，支持 AMQP、MQTT、STOMP 等协议",
         helm_chart="rabbitmq",
         create_time=create_time,

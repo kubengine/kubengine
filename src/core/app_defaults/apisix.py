@@ -17,7 +17,7 @@ def get_apisix_app(create_time: datetime) -> AppSchema:
     """
     return AppSchema(
         name="apisix",
-        category=["中间件"],
+        category=["消息与集成"],
         description="高性能实时 API 网关，提供负载均衡、动态上游、灰度发布、熔断、认证与可观测性等能力",
         helm_chart="apisix",
         create_time=create_time,

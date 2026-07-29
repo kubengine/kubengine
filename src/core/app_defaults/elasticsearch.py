@@ -17,7 +17,7 @@ def get_elasticsearch_app(create_time: datetime) -> AppSchema:
     """
     return AppSchema(
         name="elasticsearch",
-        category=["中间件"],
+        category=["数据库"],
         description="分布式搜索与分析引擎，适用于全文检索、日志监控与实时分析场景",
         helm_chart="elasticsearch",
         create_time=create_time,

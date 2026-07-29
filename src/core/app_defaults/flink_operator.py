@@ -17,7 +17,7 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
     """
     return AppSchema(
         name="flink_operator",
-        category=["计算"],
+        category=["消息与集成"],
         description="Apache Flink Kubernetes Operator，用于在 Kubernetes 上自动化管理 Flink 应用生命周期",
         helm_chart="flink-kubernetes-operator",
         create_time=create_time,
