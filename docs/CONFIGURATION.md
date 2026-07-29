@@ -72,11 +72,11 @@ cluster:
     172.31.57.22: kubengine2
     172.31.57.21: kubengine1
 
-# Kubernetes 配置
+# Kubernetes 配置（单 master 示例）
 kubernetes:
   master:
     ip: 172.31.57.23
-    schedulable: True
+    schedulable: false
   worker:
     ips:
       - 172.31.57.22
@@ -87,6 +87,13 @@ kubernetes:
   loadbalancer:
     ip-pools:
       - 172.31.57.30-172.31.57.40
+  nameserver:
+    - 8.8.8.8
+
+# 镜像仓库配置
+registry:
+  username: admin
+  password: Harbor@123
 ```
 
 ---
@@ -269,13 +276,37 @@ Master 节点 IP 地址。
 - **类型**：字符串
 - **必需**：是
 
+#### `kubernetes.master.additional_ips`
+
+附加 Master 节点 IP 列表（高可用模式）。
+
+- **类型**：数组
+- **默认值**：`[]`
+- **说明**：配置后启用 HA 模式，附加 Master 通过 `--control-plane` join 加入控制面
+
+#### `kubernetes.master.control-plane-endpoint`
+
+控制面端点（VIP），用于 apiserver 高可用。
+
+- **类型**：字符串
+- **默认值**：空（单 master 模式）
+- **说明**：HA 模式下必须配置，通常为 Keepalived VIP
+
+#### `kubernetes.master.interface`
+
+Master 节点网卡名称。
+
+- **类型**：字符串
+- **默认值**：空（自动检测）
+- **说明**：Keepalived VIP 绑定的网卡，不指定时自动检测
+
 #### `kubernetes.master.schedulable`
 
 Master 节点是否可调度 Pod。
 
 - **类型**：布尔值
-- **默认值**：`True`
-- **说明**：小型集群可设为 True 以充分利用资源
+- **默认值**：`false`
+- **说明**：小型集群可设为 true 以充分利用资源
 
 #### `kubernetes.worker.ips`
 
@@ -321,6 +352,33 @@ MetalLB 负载均衡的 IP 地址池。
   ```
 - **说明**：地址范围需在同一网段且未被占用
 
+#### `kubernetes.nameserver`
+
+DNS 服务器列表，写入各节点 `/etc/resolv.conf`。
+
+- **类型**：数组
+- **默认值**：`["8.8.8.8"]`
+- **说明**：内网环境应配置内部 DNS 服务器
+
+---
+
+### 镜像仓库配置
+
+#### `registry.username`
+
+Harbor 镜像仓库用户名。
+
+- **类型**：字符串
+- **默认值**：`admin`
+
+#### `registry.password`
+
+Harbor 镜像仓库密码。
+
+- **类型**：字符串
+- **默认值**：`Harbor@123`
+- **说明**：生产环境请及时修改
+
 ---
 
 ## 配置项速查表
@@ -340,11 +398,17 @@ MetalLB 负载均衡的 IP 地址池。
 | `cluster.nodes` | 集群节点 IP 列表 | `[]` | 是 |
 | `cluster.hostnames` | 节点 IP 到主机名映射 | `{}` | 是 |
 | `kubernetes.master.ip` | Master 节点 IP | - | 是 |
-| `kubernetes.master.schedulable` | Master 是否可调度 | `True` | 否 |
+| `kubernetes.master.additional_ips` | 附加 Master IP（HA 模式） | `[]` | 否 |
+| `kubernetes.master.control-plane-endpoint` | 控制面 VIP（HA 模式） | 空 | 否 |
+| `kubernetes.master.interface` | Master 网卡名 | 自动检测 | 否 |
+| `kubernetes.master.schedulable` | Master 是否可调度 | `false` | 否 |
 | `kubernetes.worker.ips` | Worker 节点 IP 列表 | `[]` | 是 |
 | `kubernetes.cidr.pod` | Pod CIDR | `10.96.0.0/16` | 否 |
 | `kubernetes.cidr.service` | Service CIDR | `10.97.0.0/16` | 否 |
 | `kubernetes.loadbalancer.ip-pools` | 负载均衡 IP 池 | `[]` | 否 |
+| `kubernetes.nameserver` | DNS 服务器 | `["8.8.8.8"]` | 否 |
+| `registry.username` | Harbor 用户名 | `admin` | 否 |
+| `registry.password` | Harbor 密码 | `Harbor@123` | 否 |
 
 ---
 

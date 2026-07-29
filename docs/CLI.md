@@ -331,8 +331,12 @@ kubengine-k8s --help
 | 命令 | 说明 |
 |------|------|
 | `deploy` | 部署 Kubernetes 集群 |
-| `config` | 配置管理命令 |
+| `config` | 配置管理（显示/验证） |
 | `reset-state` | 重置部署状态 |
+| `scale` | 集群扩容（添加 Worker 节点） |
+| `init-harbor` | 初始化 Harbor 项目 |
+| `push-images` | 推送集群节点镜像到 Harbor |
+| `sync-bitnami` | 离线同步 Bitnami Charts 与镜像 |
 
 #### 部署 Kubernetes 集群
 
@@ -401,6 +405,86 @@ kubengine-k8s reset-state [OPTIONS]
 **示例：**
 ```bash
 kubengine-k8s reset-state --force
+```
+
+---
+
+#### 集群扩容
+
+```bash
+kubengine-k8s scale [OPTIONS]
+```
+
+**选项：**
+| 选项 | 说明 |
+|------|------|
+| `--worker-ip TEXT` | 新 Worker 节点 IP（可多次指定，必需） |
+| `--deploy-src TEXT` | 离线部署文件根目录 | `/root/offline-deploy` |
+| `--dry-run` | 仅预览，不执行 |
+| `-v, --verbose` | 日志详细级别 |
+
+**示例：**
+```bash
+# 扩容单个节点
+kubengine-k8s scale --worker-ip 172.31.57.30
+
+# 扩容多个节点并预览
+kubengine-k8s scale --worker-ip 172.31.57.30 --worker-ip 172.31.57.31 --dry-run
+```
+
+---
+
+#### 初始化 Harbor 项目
+
+```bash
+kubengine-k8s init-harbor [OPTIONS]
+```
+
+**选项：**
+| 选项 | 说明 | 默认值 |
+|------|------|--------|
+| `--timeout INTEGER` | 等待 Harbor 就绪最大时间（秒） | `600` |
+| `--interval INTEGER` | 轮询间隔（秒） | `10` |
+
+---
+
+#### 推送集群镜像到 Harbor
+
+```bash
+kubengine-k8s push-images [OPTIONS]
+```
+
+收集集群所有节点 containerd 中的镜像，去重后推送到 Harbor。
+
+**选项：**
+| 选项 | 说明 |
+|------|------|
+| `--dry-run` | 仅展示待推送镜像，不执行 |
+| `--image-timeout INTEGER` | 单个镜像推送超时（秒），默认 `600` |
+
+---
+
+#### 离线同步 Bitnami Charts
+
+`sync-bitnami` 命令组用于在互联网环境导出 Bitnami Charts 与镜像，在内网环境导入 Harbor。
+
+**子命令：**
+| 子命令 | 说明 |
+|--------|------|
+| `export` | 阶段一：打包 chart 并提取镜像清单 |
+| `pull-images` | 阶段一.五：通过国内镜像源拉取镜像并导出 tar |
+| `import` | 阶段二：导入单个 chart 包与镜像到 Harbor |
+| `import-dir` | 阶段二：批量扫描目录导入所有 bundle |
+
+```bash
+# 批量导入所有应用（推荐）
+kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles/
+
+# 导入单个应用
+kubengine-k8s sync-bitnami import redis-23.1.1.tgz --images-tar redis-images.images.tar
+
+# 预览批量导入
+kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles/ --dry-run
 ```
 
 ---
@@ -539,12 +623,33 @@ kubengine cluster disable-firewalld
 # 3. 部署 Kubernetes
 kubengine-k8s deploy
 
-# 4. 初始化应用数据
+# 4. 初始化 Harbor 项目
+kubengine-k8s init-harbor
+
+# 5. 推送集群镜像到 Harbor
+kubengine-k8s push-images
+
+# 6. 导入应用离线包到 Harbor
+kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles/
+
+# 7. 初始化应用数据
 kubengine app init-data
 
-# 5. 设置管理员密码
+# 8. 设置管理员密码
 kubengine app set-password
 
-# 6. 启动 API 服务
+# 9. 启动 API 服务（或配置 systemd 托管）
 kubengine app run
+```
+
+### 集群扩容流程
+
+```bash
+# 1. 纳管新节点（SSH 互信 + 主机名）
+kubengine cluster configure-cluster \
+  --hosts <新节点IP>,<已有节点IP列表> \
+  --hostname-map <新节点IP>:<主机名>,...
+
+# 2. 执行扩容
+kubengine-k8s scale --worker-ip <新节点IP>
 ```
