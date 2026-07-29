@@ -881,6 +881,300 @@ def reset_state(force: bool) -> None:
         exit(1)
 
 
+@cli.command(name="scale")
+@click.option(
+    '--worker-ip',
+    'worker_ips',
+    multiple=True,
+    required=True,
+    help="新 Worker 节点 IP（可多次指定）"
+)
+@click.option(
+    '--deploy-src',
+    default="/root/offline-deploy",
+    help="离线部署文件根目录（覆盖配置文件中的设置）"
+)
+@click.option(
+    '--dry-run',
+    is_flag=True,
+    help="仅预览将要扩容的节点，不执行部署"
+)
+@click.option(
+    '-v', '--verbose',
+    count=True,
+    help="日志详细级别：-v/-vv/-vvv"
+)
+def scale(
+    worker_ips: Tuple[str, ...],
+    deploy_src: str,
+    dry_run: bool,
+    verbose: int
+) -> None:
+    """
+    集群扩容：向已有 K8s 集群添加 Worker 节点
+
+    前置条件：
+    1. 已通过 kubengine-k8s deploy 完成集群部署
+    2. 新节点已通过 kubengine cluster configure-cluster 纳管（SSH 互信已配置）
+    3. 本机为 Master 节点
+
+    示例：
+      kubengine-k8s scale --worker-ip 172.31.57.30
+      kubengine-k8s scale --worker-ip 172.31.57.30 --worker-ip 172.31.57.31 --dry-run
+    """
+    logger.info("=============== 开始集群扩容 ===============")
+
+    try:
+        # ---- 1. 基础校验 ----
+        new_workers = list(worker_ips)
+
+        # 校验 IP 格式
+        for ip in new_workers:
+            try:
+                ipaddress.IPv4Address(ip)
+            except ValueError:
+                click.echo(click.style(f"无效的 IP 地址: {ip}", fg="red"), err=True)
+                exit(1)
+
+        # 校验 master 为本机
+        local_ip_list = local_ips()
+        if Application.K8S_CONFIG.MASTER_IP not in local_ip_list:
+            click.echo(click.style(
+                "本机不是 Master 节点，扩容命令必须在 Master 上执行", fg="red"), err=True)
+            exit(1)
+
+        # 校验新节点不与已有节点重复
+        existing_workers = set(Application.K8S_CONFIG.WORKER_IPS)
+        existing_masters = set(Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS) | {Application.K8S_CONFIG.MASTER_IP}
+        dup_existing = [ip for ip in new_workers if ip in existing_workers]
+        dup_master = [ip for ip in new_workers if ip in existing_masters]
+        if dup_existing:
+            click.echo(click.style(
+                f"以下节点已在 WORKER_IPS 配置中: {dup_existing}", fg="yellow"))
+        if dup_master:
+            click.echo(click.style(
+                f"以下节点已是 Master 节点: {dup_master}", fg="red"), err=True)
+            exit(1)
+
+        # ---- 2. 获取集群中已有的节点列表 ----
+        click.echo(click.style("\n检查集群已有节点...", fg="cyan"))
+        result = execute_command(
+            "kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}'",
+            timeout=15
+        )
+        if result.is_failure():
+            click.echo(click.style(
+                f"无法获取集群节点列表（kubectl 不可用或集群未初始化）: {result.get_error_lines()}",
+                fg="red"), err=True)
+            exit(1)
+
+        cluster_node_ips_raw = result.get_output().strip()
+        cluster_node_ips = set(
+            ip.strip() for ip in cluster_node_ips_raw.split() if ip.strip()
+        )
+        click.echo(f"  集群已有节点: {sorted(cluster_node_ips)}")
+
+        # 过滤掉已加入集群的节点
+        truly_new = [ip for ip in new_workers if ip not in cluster_node_ips]
+        already_in_cluster = [ip for ip in new_workers if ip in cluster_node_ips]
+
+        if already_in_cluster:
+            click.echo(click.style(
+                f"以下节点已在集群中，将跳过: {already_in_cluster}", fg="yellow"))
+
+        if not truly_new:
+            click.echo(click.style(
+                "没有需要扩容的新节点", fg="yellow"))
+            return
+
+        # ---- 3. 展示扩容计划 ----
+        click.echo(click.style(f"\n{'=' * 60}", fg="cyan", bold=True))
+        click.echo(click.style("扩容计划:", fg="cyan", bold=True))
+        click.echo(click.style(f"{'=' * 60}", fg="cyan", bold=True))
+        click.echo(f"  Master 节点:     {Application.K8S_CONFIG.MASTER_IP}")
+        click.echo(f"  待扩容节点:      {truly_new}")
+        click.echo(f"  部署源目录:      {deploy_src}")
+        click.echo(f"\n  将执行以下组件（仅针对新节点）:")
+        scale_steps = [
+            ("install_chrony.py", "时间同步(Chrony)"),
+            ("install_containerd.py", "容器运行时(Containerd)"),
+            ("install_cni.py", "CNI网络插件"),
+            ("issue_cert.py", "证书分发"),
+            ("install_kubernetes.py", "K8s核心组件安装(跳过kubeadm init)"),
+            ("kubernetes_join_node.py", "Worker节点加入集群"),
+        ]
+        for idx, (_, desc) in enumerate(scale_steps, 1):
+            click.echo(f"    {idx}. {desc}")
+        click.echo(click.style(f"{'=' * 60}\n", fg="cyan", bold=True))
+
+        if dry_run:
+            click.echo(click.style("--dry-run 模式，不执行部署", fg="yellow"))
+            return
+
+        # 确认扩容
+        if not click.confirm("确认执行扩容？"):
+            click.echo("扩容已取消")
+            return
+
+        # ---- 4. 执行扩容 ----
+        infra_path = os.path.join(Path(__file__).parent.parent, "infra")
+
+        executor_config = InfraExecutionConfig(
+            parallel=3,
+            connect_timeout=30,
+            verbosity=verbose,
+            fail_fast=True
+        )
+        infra_executor = InfraFileExecutor(executor_config)
+
+        # 构造 deploy_data（复用现有配置）
+        config = K8sDeploymentConfig(deploy_src)
+        deploy_data = config.deploy_data()
+
+        # Phase 1: 不含 master 的组件（新 worker 独立执行）
+        # 这些脚本通过 host.groups 判断角色，新节点全在 worker 组
+        phase1_files = [
+            ("install_chrony.py", "时间同步(Chrony)"),
+            ("install_containerd.py", "容器运行时(Containerd)"),
+            ("install_cni.py", "CNI网络插件"),
+            ("issue_cert.py", "证书分发"),
+            ("install_kubernetes.py", "K8s核心组件安装"),
+        ]
+
+        # Phase 1 inventory: 仅新 worker
+        phase1_hosts = truly_new
+        phase1_groups: Dict[str, Tuple[list[str], Dict[str, Any]]] = {
+            "worker": (truly_new, {})
+        }
+
+        for filename, description in phase1_files:
+            file_path = Path(infra_path) / filename
+            click.echo(click.style(f"\n[{description}] 执行中...", fg="blue"))
+
+            result = infra_executor.execute_file(
+                infra_file_path=file_path,
+                host_ips=phase1_hosts,
+                shared_data=deploy_data,
+                target_groups=phase1_groups
+            )
+
+            if not result.success:
+                click.echo(click.style(f"{description} 部署失败", fg="red"))
+                _show_scale_failure(result)
+                exit(1)
+
+            click.echo(click.style(f"✅ {description} 完成", fg="green"))
+
+        # Phase 2: join（需要 master 在 inventory 中以获取 join token）
+        join_file = Path(infra_path) / "kubernetes_join_node.py"
+        click.echo(click.style(f"\n[Worker节点加入集群] 执行中...", fg="blue"))
+
+        # Phase 2 inventory: master(@local) + 新 worker
+        phase2_hosts = ["@local", *truly_new]
+        phase2_groups: Dict[str, Tuple[list[str], Dict[str, Any]]] = {
+            "master": (["@local"], {}),
+            "worker": (truly_new, {})
+        }
+
+        result = infra_executor.execute_file(
+            infra_file_path=join_file,
+            host_ips=phase2_hosts,
+            shared_data=deploy_data,
+            target_groups=phase2_groups
+        )
+
+        if not result.success:
+            click.echo(click.style("Worker 节点加入集群失败", fg="red"))
+            _show_scale_failure(result)
+            exit(1)
+
+        click.echo(click.style("✅ Worker 节点加入集群完成", fg="green"))
+
+        # ---- 5. 更新配置文件 ----
+        click.echo(click.style("\n更新配置文件...", fg="cyan"))
+        _update_worker_ips(truly_new)
+
+        # ---- 6. 结果展示 ----
+        click.echo(click.style(
+            f"\n{'=' * 60}", fg="green", bold=True))
+        click.echo(click.style(
+            "集群扩容成功！", fg="green", bold=True))
+        click.echo(click.style(
+            f"{'=' * 60}", fg="green", bold=True))
+        click.echo(f"  新增 Worker 节点: {truly_new}")
+        updated_workers = list(Application.K8S_CONFIG.WORKER_IPS) + truly_new
+        click.echo(f"  当前 Worker 总数: {len(updated_workers)}")
+        click.echo(f"\n  请稍候，通过以下命令确认节点状态:")
+        click.echo(f"    kubectl get nodes")
+        click.echo(click.style(
+            f"{'=' * 60}", fg="green", bold=True))
+
+        logger.info("=============== 集群扩容完成 ===============")
+
+    except K8sDeploymentError as e:
+        click.echo(click.style(f"配置错误: {e}", fg="red"), err=True)
+        exit(1)
+    except Exception as e:
+        logger.error(f"扩容过程中发生异常: {str(e)}", exc_info=True)
+        click.echo(click.style(f"扩容失败: {e}", fg="red"), err=True)
+        exit(1)
+
+
+def _show_scale_failure(result: InfraExecutionResult) -> None:
+    """显示扩容失败详情"""
+    click.echo(click.style("失败详情:", fg="red", bold=True))
+
+    if result.global_error:
+        click.echo(click.style(f"全局错误: {result.global_error}", fg="red"))
+
+    failed_hosts = result.get_failed_hosts()
+    if failed_hosts:
+        click.echo(click.style(f"失败主机: {failed_hosts}", fg="red"))
+
+    for hostname, host_result in result.host_results.items():
+        if not host_result.success:
+            click.echo(click.style(f"\n主机 {hostname}:", fg="red", bold=True))
+            for op in host_result.operations:
+                if not op.success:
+                    click.echo(f"  操作: {op.name}")
+                    if op.stderr:
+                        click.echo(click.style(
+                            f"  错误: {op.stderr[:500]}", fg="red"))
+
+
+def _update_worker_ips(new_workers: List[str]) -> None:
+    """扩容成功后将新节点追加到 application.yaml 的 worker.ips"""
+    try:
+        from core.config.config_dict import ConfigDict
+        config = ConfigDict.get_instance()
+
+        # 读取现有 worker ips
+        existing = list(Application.K8S_CONFIG.WORKER_IPS)
+
+        # 追加新节点
+        merged = existing + [w for w in new_workers if w not in existing]
+
+        # 更新配置对象
+        if not hasattr(config, 'kubernetes') or config.kubernetes is None:
+            config.kubernetes = ConfigDict({})
+        if not hasattr(config.kubernetes, 'worker') or config.kubernetes.worker is None:
+            config.kubernetes.worker = ConfigDict({})
+
+        config.kubernetes.worker.ips = merged
+
+        # 保存到文件
+        config_path = os.path.join(
+            Application.ROOT_DIR, "config", "application.yaml")
+        config.save_to_file(config_path)
+
+        click.echo(click.style(
+            f"  配置已更新: worker.ips = {merged}", fg="green"))
+    except Exception as e:
+        click.echo(click.style(
+            f"  配置更新失败（扩容已成功，请手动更新 application.yaml）: {e}",
+            fg="yellow"))
+
+
 @cli.command(name="init-harbor")
 @click.option(
     '--timeout',
