@@ -5,8 +5,6 @@ for creating, reading, updating, and deleting application clusters.
 """
 
 import enum
-import random
-import string
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -205,7 +203,14 @@ def create_cluster(cluster_schema: ClusterSchema) -> ClusterSchema:
     try:
         with get_db() as db:
             # Generate unique Helm name
-            helm_name = f"{random.choice(string.ascii_lowercase)}{str(uuid.uuid4()).replace('-', '')}"
+            # 限制在12字符以内，避免与 chart 资源名拼接后超过 K8s 63 字符 label 限制
+            # （如 elasticsearch: {name}-elasticsearch-coordinating-{hash}）
+            # 首字符必须为字母：K8s 资源名遵循 DNS-1035 规范（如 8d22297b-etcd 会因
+            # 以数字开头被拒绝），把首位的 0-9 映射成 a-j，既保留随机性又满足规范
+            raw = uuid.uuid4().hex[:12]
+            if raw[0].isdigit():
+                raw = chr(ord("a") + int(raw[0])) + raw[1:]
+            helm_name = raw
 
             # Build Helm configuration
             helm_config = build_helm_config(cluster_schema)

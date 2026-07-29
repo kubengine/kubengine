@@ -12,6 +12,9 @@ from core.app_defaults.redis_cluster import get_redis_cluster_app
 from core.app_defaults.kafka import get_kafka_app
 from core.app_defaults.rabbitmq import get_rabbitmq_app
 from core.app_defaults.flink import get_flink_app
+from core.app_defaults.elasticsearch import get_elasticsearch_app
+from core.app_defaults.etcd import get_etcd_app
+from core.app_defaults.apisix import get_apisix_app
 # from core.app_defaults.flink_operator import get_flink_operator_app
 
 
@@ -28,5 +31,8 @@ def get_default_apps() -> list[AppSchema]:
         get_kafka_app(now),
         get_rabbitmq_app(now),
         get_flink_app(now),
+        get_elasticsearch_app(now),
+        get_etcd_app(now),
+        get_apisix_app(now),
         # get_flink_operator_app(now),  # 默认不注册flink-operator
     ]
