@@ -17,7 +17,7 @@ def get_nacos_app(create_time: datetime) -> AppSchema:
     """
     return AppSchema(
         name="nacos",
-        category=["消息与集成"],
+        category=["应用支撑"],
         description="易于使用的动态服务发现、配置管理和服务管理平台，用于构建云原生应用",
         helm_chart="nacos",
         create_time=create_time,
