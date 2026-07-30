@@ -212,11 +212,11 @@ def get_nacos_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="mysqlRootPassword",
                 label="MySQL root密码",
-                extra="内置 MySQL root 用户密码。留空则自动生成",
+                extra="内置 MySQL root 用户密码",
                 order=2,
-                form_item_props={"required": False},
+                form_item_props={"required": True},
                 type="password",
-                initial_value="",
+                initial_value="kubengine@nacos*SVR",
                 rules=[
                     {
                         "type": "string",
@@ -225,7 +225,7 @@ def get_nacos_app(create_time: datetime) -> AppSchema:
                         "max": 20,
                     },
                 ],
-                field_props={"placeholder": "留空则自动生成"},
+                field_props={"placeholder": "请输入密码"},
                 helm_props={
                     "keys": ["mysql.auth.rootPassword"],
                     "type": "string",
@@ -237,11 +237,11 @@ def get_nacos_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="mysqlPassword",
                 label="MySQL业务密码",
-                extra="内置 MySQL 业务用户（nacos）密码。留空则自动生成",
+                extra="内置 MySQL 业务用户（nacos）密码",
                 order=3,
-                form_item_props={"required": False},
+                form_item_props={"required": True},
                 type="password",
-                initial_value="",
+                initial_value="kubengine@nacos*SVR",
                 rules=[
                     {
                         "type": "string",
@@ -250,7 +250,7 @@ def get_nacos_app(create_time: datetime) -> AppSchema:
                         "max": 20,
                     },
                 ],
-                field_props={"placeholder": "留空则自动生成"},
+                field_props={"placeholder": "请输入密码"},
                 helm_props={
                     "keys": ["mysql.auth.password"],
                     "type": "string",
