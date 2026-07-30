@@ -110,10 +110,17 @@ class HelmResourceChecker:
             container.restart_count
             for container in pod.status.container_statuses or [])  # type: ignore
 
+        # Job Pod 成功完成后 phase 为 Succeeded（kubectl 显示为 Completed）
+        is_job_succeeded = (
+            pod_phase == "Succeeded"
+            and any(owner.kind == "Job"
+                    for owner in pod.metadata.owner_references or [])
+        )
+
         # 定义「明确结果状态」
         is_normal = (
-            pod_phase in ["Running",
-                          "Completed"] and pod_ready and restart_count < 5
+            (pod_phase == "Running" and pod_ready and restart_count < 5)
+            or is_job_succeeded
         )
         is_abnormal = (
             pod_phase == "Failed" or restart_count >= 5
