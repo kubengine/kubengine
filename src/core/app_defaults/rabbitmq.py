@@ -114,6 +114,29 @@ def get_rabbitmq_app(create_time: datetime) -> AppSchema:
                     "unit": "Gi",
                 },
             ),
+            # Service 类型
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="service",
+                label="Service服务",
+                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                order=4,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="ClusterIP",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "ClusterIP", "value": "ClusterIP"},
+                        {"label": "LoadBalancer", "value": "LoadBalancer"},
+                    ],
+                },
+                helm_props={
+                    "keys": ["service.type"],
+                    "type": "string",
+                    "unit": "",
+                },
+            ),
             # ========== 服务环境参数设置 ==========
             # 用户名
             AppFieldConfigSchema(
