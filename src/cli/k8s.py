@@ -568,6 +568,7 @@ class K8sDeployer:
             ("install_harbor.py", "镜像仓库"),
             ("install_metrics_server.py", "监控组件"),
             ("install_dashboard.py", "Dashboard"),
+            ("install_kuboard.py", "KubeBoard"),
             ("install_cert_manager.py", "证书管理组件")
         ]
 
@@ -644,6 +645,7 @@ class K8sDeployer:
     {loadbalancer_ip:<15} {Application.DOMAIN}              # Harbor镜像仓库
     {loadbalancer_ip:<15} longhorn.{Application.DOMAIN}     # Longhorn存储管理
     {loadbalancer_ip:<15} dashboard.{Application.DOMAIN}    # K8s Dashboard
+    {loadbalancer_ip:<15} kuboard.{Application.DOMAIN}      # KubeBoard管理面板
     """
 
         success_msg = f"""
@@ -667,6 +669,7 @@ class K8sDeployer:
     ├─ Harbor镜像仓库:        https://{Application.DOMAIN}
     ├─ Longhorn管理面板:      https://longhorn.{Application.DOMAIN}
     ├─ K8s Dashboard:         https://dashboard.{Application.DOMAIN}
+    ├─ KubeBoard管理面板:     https://kuboard.{Application.DOMAIN}
     └─ K8s APIServer:         http://{apiserver_endpoint}:6443
 
     默认账号密码（请及时修改！）：
@@ -679,7 +682,8 @@ class K8sDeployer:
     ├─ 查看节点状态:          kubectl get nodes
     ├─ 查看集群组件:          kubectl get pods -A
     ├─ 查看Longhorn状态:      kubectl get pods -n longhorn-system
-    └─ 查看Harbor状态:        kubectl get pods -n harbor-system
+    ├─ 查看Harbor状态:        kubectl get pods -n harbor-system
+    └─ 查看KubeBoard状态:     kubectl get pods -n kuboard-system
 
     重要提醒：
     1. 请确保所有节点已配置上述域名映射（/etc/hosts）
