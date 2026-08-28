@@ -45,8 +45,13 @@ tls:
   root_dir: /opt/kubengine/config/certs
   ca_country_code: CN
   ca_state_name: Beijing
+  ca_locality_name: Beijing
   ca_organization_name: kubengine
+  ca_common_name: kubengine root ca
+  ca_email_address: ssl@kubengine.io
+  ca_password: kubengine
   ca_valid_days: 3650
+  ca_key_length: 4096
 
 # 认证配置
 auth:
@@ -112,11 +117,11 @@ KubeEngine 根目录，用于存放数据、日志等文件。
 
 #### `domain`
 
-平台域名，用于 TLS 证书生成等服务。
+平台域名，用于 TLS 证书生成（Server 证书 SAN、各组件访问地址）等服务。
 
 - **类型**：字符串
 - **默认值**：`kubengine.io`
-- **说明**：根据实际部署环境修改
+- **说明**：根据实际部署环境修改。修改后重新执行部署会自动重新生成证书链（见下方「证书重新生成」说明）
 
 ---
 
@@ -154,9 +159,38 @@ CA 证书省/州名称。
 - **类型**：字符串
 - **默认值**：`Beijing`
 
+#### `tls.ca_locality_name`
+
+CA 证书所在城市名称。
+
+- **类型**：字符串
+- **默认值**：`Beijing`
+
 #### `tls.ca_organization_name`
 
 CA 证书组织名称。
+
+- **类型**：字符串
+- **默认值**：`kubengine`
+
+#### `tls.ca_common_name`
+
+CA 证书通用名称（CN），用于 CA 自签名证书的 Subject CN 字段。
+
+- **类型**：字符串
+- **默认值**：`kubengine root ca`
+- **说明**：与 `domain` 相互独立；需要自定义 CA 名称时在此配置
+
+#### `tls.ca_email_address`
+
+CA 证书联系邮箱。
+
+- **类型**：字符串
+- **默认值**：`ssl@kubengine.io`
+
+#### `tls.ca_password`
+
+CA 私钥密码（预留，用于后续私钥加密）。
 
 - **类型**：字符串
 - **默认值**：`kubengine`
@@ -168,6 +202,14 @@ CA 证书有效期（天）。
 - **类型**：整数
 - **默认值**：`3650`（10年）
 - **说明**：生产环境建议使用较长有效期
+
+#### `tls.ca_key_length`
+
+CA 私钥长度（位）。
+
+- **类型**：整数
+- **默认值**：`4096`
+- **说明**：仅在下一次证书重新生成时生效（见下方「证书重新生成」说明）
 
 ---
 
@@ -390,8 +432,13 @@ Harbor 镜像仓库密码。
 | `tls.root_dir` | TLS 证书目录 | `/opt/kubengine/config/certs` | 否 |
 | `tls.ca_country_code` | CA 国家代码 | `CN` | 否 |
 | `tls.ca_state_name` | CA 省/州 | `Beijing` | 否 |
+| `tls.ca_locality_name` | CA 城市 | `Beijing` | 否 |
 | `tls.ca_organization_name` | CA 组织名 | `kubengine` | 否 |
+| `tls.ca_common_name` | CA 通用名称（CN） | `kubengine root ca` | 否 |
+| `tls.ca_email_address` | CA 联系邮箱 | `ssl@kubengine.io` | 否 |
+| `tls.ca_password` | CA 私钥密码 | `kubengine` | 否 |
 | `tls.ca_valid_days` | CA 证书有效期(天) | `3650` | 否 |
+| `tls.ca_key_length` | CA 私钥长度(位) | `4096` | 否 |
 | `auth.jwt.algorithm` | JWT 算法 | `HS256` | 否 |
 | `auth.token.expire_minutes` | Token 过期时间(分钟) | `30` | 否 |
 | `auth.token.renew_threshold_minutes` | Token 刷新阈值(分钟) | `5` | 否 |

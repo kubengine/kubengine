@@ -314,6 +314,32 @@ emailAddress            = optional
                     logger.warning(f"Failed to delete file {item}: {e}")
 
 
+def _config_fingerprint() -> str:
+    """计算证书相关配置的指纹，用于检测配置变更后重新生成证书。
+
+    指纹覆盖 domain 与全部 tls.ca_* 配置项；任一变更都会导致
+    create_cert() 重新生成整条证书链。
+    """
+    import hashlib
+    import json
+
+    config_items = {
+        "domain": Application.DOMAIN,
+        "tls_root_dir": Application.TLS_CONFIG.ROOT_DIR,
+        "ca_country_code": Application.TLS_CONFIG.CA_COUNTRY_CODE,
+        "ca_state_name": Application.TLS_CONFIG.CA_STATE_NAME,
+        "ca_locality_name": Application.TLS_CONFIG.CA_LOCALITY_NAME,
+        "ca_organization_name": Application.TLS_CONFIG.CA_ORGANIZATION_NAME,
+        "ca_common_name": Application.TLS_CONFIG.CA_COMMON_NAME,
+        "ca_email_address": Application.TLS_CONFIG.CA_EMAIL_ADDRESS,
+        "ca_password": Application.TLS_CONFIG.CA_PASSWORD,
+        "ca_valid_days": Application.TLS_CONFIG.CA_VALID_DAYS,
+        "ca_key_length": Application.TLS_CONFIG.CA_KEY_LENGTH,
+    }
+    return hashlib.sha256(
+        json.dumps(config_items, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def create_cert() -> None:
     """Create certificates."""
     # Check if .Done file exists in ROOT_DIR
@@ -322,14 +348,19 @@ def create_cert() -> None:
         raise ValueError("Application.TLS_ROOT_DIR is not configured")
 
     done_file = Path(tls_root_dir) / ".Done"
-    if done_file.exists():
+    fingerprint = _config_fingerprint()
+
+    # 证书已按当前配置生成过（指纹一致）则跳过；
+    # 配置变更或旧版空 .Done 时重新生成证书链
+    if done_file.exists() and done_file.read_text(
+            encoding="utf-8").strip() == fingerprint:
         return
 
     ca = CA()
     result = ca.generate_ca()
     if not result:
         raise RuntimeError("Failed to create CA certificate.")
-    done_file.touch(exist_ok=True)
+    done_file.write_text(fingerprint, encoding="utf-8")
 
 
 def k8s_create_tls(namespace: str, tls_name: str) -> None:

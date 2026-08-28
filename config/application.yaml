@@ -2,6 +2,15 @@ root_dir: /opt/kubengine
 domain: kubengine.io
 tls:
   root_dir: /opt/kubengine/config/certs
+  ca_country_code: CN
+  ca_state_name: Beijing
+  ca_locality_name: Beijing
+  ca_organization_name: kubengine
+  ca_common_name: kubengine root ca
+  ca_email_address: ssl@kubengine.io
+  ca_password: kubengine
+  ca_valid_days: 3650
+  ca_key_length: 4096
 auth:
   jwt:
     algorithm: HS256

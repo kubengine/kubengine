@@ -327,6 +327,7 @@ class K8sDeploymentConfig:
         """获取配置哈希值（用于检测配置变更）"""
         import hashlib
         config_str = json.dumps({
+            "domain": Application.DOMAIN,
             "master_ip": Application.K8S_CONFIG.MASTER_IP,
             "additional_master_ips": sorted(Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS),
             "control_plane_endpoint": Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT,
