@@ -17,6 +17,7 @@ from core.app_defaults.etcd import get_etcd_app
 from core.app_defaults.apisix import get_apisix_app
 from core.app_defaults.nacos import get_nacos_app
 from core.app_defaults.mysql import get_mysql_app
+from core.app_defaults.postgresql import get_postgresql_app
 from core.app_defaults.xxl_job_admin import get_xxl_job_admin_app
 # from core.app_defaults.flink_operator import get_flink_operator_app
 
@@ -39,6 +40,7 @@ def get_default_apps() -> list[AppSchema]:
         get_apisix_app(now),
         get_nacos_app(now),
         get_mysql_app(now),
+        get_postgresql_app(now),
         get_xxl_job_admin_app(now),
         # get_flink_operator_app(now),  # 默认不注册flink-operator
     ]
