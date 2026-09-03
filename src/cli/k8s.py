@@ -949,8 +949,9 @@ def scale(
             exit(1)
 
         # 校验新节点不与已有节点重复
-        existing_workers = set(Application.K8S_CONFIG.WORKER_IPS)
-        existing_masters = set(Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS) | {Application.K8S_CONFIG.MASTER_IP}
+        existing_workers = set[str](Application.K8S_CONFIG.WORKER_IPS)
+        existing_masters = set[str](Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS) | {
+            Application.K8S_CONFIG.MASTER_IP}
         dup_existing = [ip for ip in new_workers if ip in existing_workers]
         dup_master = [ip for ip in new_workers if ip in existing_masters]
         if dup_existing:
@@ -973,15 +974,16 @@ def scale(
                 fg="red"), err=True)
             exit(1)
 
-        cluster_node_ips_raw = result.get_output().strip()
-        cluster_node_ips = set(
+        cluster_node_ips_raw = result.stdout.strip()
+        cluster_node_ips = set[str](
             ip.strip() for ip in cluster_node_ips_raw.split() if ip.strip()
         )
         click.echo(f"  集群已有节点: {sorted(cluster_node_ips)}")
 
         # 过滤掉已加入集群的节点
         truly_new = [ip for ip in new_workers if ip not in cluster_node_ips]
-        already_in_cluster = [ip for ip in new_workers if ip in cluster_node_ips]
+        already_in_cluster = [
+            ip for ip in new_workers if ip in cluster_node_ips]
 
         if already_in_cluster:
             click.echo(click.style(
@@ -999,7 +1001,7 @@ def scale(
         click.echo(f"  Master 节点:     {Application.K8S_CONFIG.MASTER_IP}")
         click.echo(f"  待扩容节点:      {truly_new}")
         click.echo(f"  部署源目录:      {deploy_src}")
-        click.echo(f"\n  将执行以下组件（仅针对新节点）:")
+        click.echo("\n  将执行以下组件（仅针对新节点）:")
         scale_steps = [
             ("install_chrony.py", "时间同步(Chrony)"),
             ("install_containerd.py", "容器运行时(Containerd)"),
@@ -1072,7 +1074,7 @@ def scale(
 
         # Phase 2: join（需要 master 在 inventory 中以获取 join token）
         join_file = Path(infra_path) / "kubernetes_join_node.py"
-        click.echo(click.style(f"\n[Worker节点加入集群] 执行中...", fg="blue"))
+        click.echo(click.style("\n[Worker节点加入集群] 执行中...", fg="blue"))
 
         # Phase 2 inventory: master(@local) + 新 worker
         phase2_hosts = ["@local", *truly_new]
@@ -1109,8 +1111,8 @@ def scale(
         click.echo(f"  新增 Worker 节点: {truly_new}")
         updated_workers = list(Application.K8S_CONFIG.WORKER_IPS) + truly_new
         click.echo(f"  当前 Worker 总数: {len(updated_workers)}")
-        click.echo(f"\n  请稍候，通过以下命令确认节点状态:")
-        click.echo(f"    kubectl get nodes")
+        click.echo("\n  请稍候，通过以下命令确认节点状态:")
+        click.echo("    kubectl get nodes")
         click.echo(click.style(
             f"{'=' * 60}", fg="green", bold=True))
 
@@ -1139,12 +1141,15 @@ def _show_scale_failure(result: InfraExecutionResult) -> None:
     for hostname, host_result in result.host_results.items():
         if not host_result.success:
             click.echo(click.style(f"\n主机 {hostname}:", fg="red", bold=True))
-            for op in host_result.operations:
-                if not op.success:
-                    click.echo(f"  操作: {op.name}")
-                    if op.stderr:
+            for op_name, op_result in host_result.operations.items():
+                if not op_result.success:
+                    click.echo(f"  操作: {op_name}")
+                    err_msg = op_result.error
+                    if not err_msg and op_result.output:
+                        err_msg = "\n".join(op_result.output)
+                    if err_msg:
                         click.echo(click.style(
-                            f"  错误: {op.stderr[:500]}", fg="red"))
+                            f"  错误: {err_msg[:500]}", fg="red"))
 
 
 def _update_worker_ips(new_workers: List[str]) -> None:
@@ -1208,7 +1213,7 @@ def init_harbor(timeout: int, interval: int) -> None:
     $ python k8s.py init-harbor --timeout 900 --interval 15
     """
     # 1. 默认项目
-    projects: list = [("apps", True), ("charts", True)]
+    projects: list[tuple[str, bool]] = [("apps", True), ("charts", True)]
 
     # 2. 扫描 certs.d 目录，收集已配置代理的 registry
     certs_d_path = Path("/etc/containerd/certs.d")
@@ -1309,7 +1314,8 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
     click.echo(click.style("推送集群节点镜像到 Harbor", fg="blue", bold=True))
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(f"  Harbor 地址:  https://{domain}")
-    click.echo(f"  集群节点:     {', '.join(h.replace('@local', '本机') for h in hosts)}")
+    click.echo(
+        f"  集群节点:     {', '.join(h.replace('@local', '本机') for h in hosts)}")
     click.echo(f"  dry-run:      {'是' if dry_run else '否'}")
     click.echo("")
 
@@ -1397,7 +1403,7 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
     click.echo(click.style("Harbor 已就绪", fg="green"))
 
     # 确保所有 registry 对应的 Harbor 项目存在
-    needed_registries: set = set()
+    needed_registries: set[str] = set()
     for ref in all_images:
         registry, _ = _split_image_ref(ref)
         needed_registries.add(registry)
@@ -1417,7 +1423,8 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
                 candidate_hosts = image_hosts[ref]
                 push_host = "@local" if "@local" in candidate_hosts else candidate_hosts[0]
                 label = "本机" if push_host == "@local" else push_host
-                click.echo(f"  [{idx}/{len(all_images)}] {ref}  (from {label})")
+                click.echo(
+                    f"  [{idx}/{len(all_images)}] {ref}  (from {label})")
 
                 push_cmd = (
                     f"ctr -n k8s.io i push --hosts-dir /etc/containerd/certs.d/ "
@@ -1432,7 +1439,8 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
                     result = await ssh_client.execute_command(
                         push_host, push_cmd, connect_timeout=30)
                     failed = result.get("exit_status") != 0
-                    err_msg = str(result.get("stderr", "") or result.get("error", ""))
+                    err_msg = str(result.get("stderr", "")
+                                  or result.get("error", ""))
 
                 if failed:
                     click.echo(click.style(
@@ -1613,7 +1621,8 @@ def sync_export(
 
     charts_root = Path(charts_dir)
     if not charts_root.exists():
-        click.echo(click.style(f"charts 目录不存在: {charts_dir}", fg="red"), err=True)
+        click.echo(click.style(
+            f"charts 目录不存在: {charts_dir}", fg="red"), err=True)
         exit(1)
 
     # 确定待导出的 chart 列表
@@ -1630,7 +1639,8 @@ def sync_export(
         exit(1)
 
     click.echo(click.style("=" * 70, fg="blue"))
-    click.echo(click.style("[阶段一] 打包 bitnami chart + 依赖 + 镜像清单", fg="blue", bold=True))
+    click.echo(click.style(
+        "[阶段一] 打包 bitnami chart + 依赖 + 镜像清单", fg="blue", bold=True))
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(f"  charts 目录:     {charts_dir}")
     click.echo(f"  输出目录:        {output_dir}")
@@ -1648,7 +1658,8 @@ def sync_export(
         chart_yaml = chart_dir / "Chart.yaml"
 
         if not chart_yaml.exists():
-            click.echo(click.style(f"[{chart_name}] Chart.yaml 不存在，跳过", fg="yellow"))
+            click.echo(click.style(
+                f"[{chart_name}] Chart.yaml 不存在，跳过", fg="yellow"))
             fail_count += 1
             continue
 
@@ -1659,13 +1670,15 @@ def sync_export(
             chart_version = chart_meta.get("version", "")
             dependencies = chart_meta.get("dependencies", []) or []
         except Exception as e:
-            click.echo(click.style(f"[{chart_name}] 读取 Chart.yaml 失败: {e}", fg="red"), err=True)
+            click.echo(click.style(
+                f"[{chart_name}] 读取 Chart.yaml 失败: {e}", fg="red"), err=True)
             fail_count += 1
             continue
 
         dep_names = [d.get("name") for d in dependencies if d.get("name")]
 
-        click.echo(click.style(f"\n[{chart_name}] (v{chart_version})", fg="cyan", bold=True))
+        click.echo(click.style(
+            f"\n[{chart_name}] (v{chart_version})", fg="cyan", bold=True))
         if dep_names:
             click.echo(f"  依赖项: {', '.join(dep_names)}")
 
@@ -1679,12 +1692,15 @@ def sync_export(
                 dep_src = charts_root / dn
                 if dep_src.exists():
                     click.echo(f"  [dry-run] 拷贝依赖 {dn} -> charts/{dn}")
-                    click.echo(f"  [dry-run] helm package {dn} -> {output_dir}/")
+                    click.echo(
+                        f"  [dry-run] helm package {dn} -> {output_dir}/")
                 else:
                     click.echo(click.style(
                         f"  [dry-run] 依赖 {dn} 在 {charts_dir} 未找到", fg="yellow"))
-            click.echo(f"  [dry-run] helm package {chart_name} -> {output_dir}/")
-            click.echo(f"  [dry-run] 镜像清单 -> {output_dir}/{chart_name}-images.txt")
+            click.echo(
+                f"  [dry-run] helm package {chart_name} -> {output_dir}/")
+            click.echo(
+                f"  [dry-run] 镜像清单 -> {output_dir}/{chart_name}-images.txt")
             ok_count += 1
             continue
 
@@ -2139,7 +2155,8 @@ def sync_import(
     registry_pass = Application.REGISTRY.PASSWORD
 
     click.echo(click.style("=" * 70, fg="blue"))
-    click.echo(click.style("[阶段二] 导入 bitnami 离线包到 Harbor（内网环境）", fg="blue", bold=True))
+    click.echo(click.style(
+        "[阶段二] 导入 bitnami 离线包到 Harbor（内网环境）", fg="blue", bold=True))
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(f"  Harbor 地址:     https://{domain}")
     click.echo(f"  chart 包:        {len(tgzs)} 个")
