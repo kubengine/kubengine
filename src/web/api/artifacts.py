@@ -11,7 +11,9 @@
 """
 
 import os
+import shlex
 import shutil
+import sys
 from typing import Any, Optional, Set
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Path, Query, Request, UploadFile
@@ -23,7 +25,6 @@ from core.http_api_client.harbor_client import HarborClient
 from core.logger import get_logger
 from web.utils.auth import auth_with_renew
 from web.utils.page import PageParams, pagination_params
-from web.utils.response import success_response
 
 logger = get_logger(__name__)
 
@@ -54,7 +55,11 @@ def _validate_file_extension(filename: Optional[str], allowed_extensions: Set[st
     """
     if filename is None:
         return False
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in allowed_extensions
+    normalized_filename = filename.lower()
+    return any(
+        normalized_filename.endswith(f".{extension.lower()}")
+        for extension in allowed_extensions
+    )
 
 
 def _check_file_size(file: UploadFile, max_size_mb: int) -> bool:
@@ -72,6 +77,14 @@ def _check_file_size(file: UploadFile, max_size_mb: int) -> bool:
     file_size = file.file.tell()
     file.file.seek(0)  # 重置文件指针
     return file_size <= max_size_mb * 1024 * 1024
+
+
+def _split_image_ref(ref: str) -> tuple[str, str]:
+    """Split an image reference into registry and repository with tag."""
+    parts = ref.split("/", 1)
+    if len(parts) == 2 and ("." in parts[0] or ":" in parts[0]):
+        return parts[0], parts[1]
+    return "docker.io", f"library/{ref}" if "/" not in ref else ref
 
 
 # ============================ 项目管理 ============================
@@ -474,7 +487,7 @@ async def upload_chart(
             "file_size_mb": round(file_size_mb, 2),
         }
 
-        return success_response(data=data, message="文件上传成功")
+        return 200, "文件上传成功", data
 
     finally:
         # 清理临时文件
@@ -495,7 +508,7 @@ async def upload_image(
     """
     上传镜像
 
-    支持 .tar、.tgz、.tar.gz 格式的镜像文件上传，最大文件大小 10GB。
+    支持 .tar、.tgz、.tar.gz 格式的镜像文件上传。
 
     Args:
         request: FastAPI 请求对象
@@ -505,7 +518,6 @@ async def upload_image(
         上传结果
     """
     ALLOWED_EXTENSIONS: Set[str] = {"tar", "tgz", "tar.gz"}
-    MAX_SIZE_MB = 10240  # 10GB
 
     # 1. 验证 file extension
     if not _validate_file_extension(file.filename, ALLOWED_EXTENSIONS):
@@ -514,15 +526,8 @@ async def upload_image(
             detail=f"文件类型不允许！仅支持：{','.join(ALLOWED_EXTENSIONS)}",
         )
 
-    # 2. 验证文件大小
-    if not _check_file_size(file, MAX_SIZE_MB):
-        raise HTTPException(
-            status_code=400,
-            detail=f"文件大小超过限制！最大支持 {MAX_SIZE_MB}MB",
-        )
-
-    # 3. 保存文件到本地
-    file_path = os.path.join("/tmp", file.filename or "")
+    # 2. 保存文件到本地
+    file_path = os.path.join("/tmp", os.path.basename(file.filename or ""))
     try:
         # 流式写入（避免大文件占用过多内存）
         with open(file_path, "wb") as buffer:
@@ -533,16 +538,16 @@ async def upload_image(
     finally:
         await file.close()
 
-    # 4. 导入并推送镜像到仓库
+    # 3. 导入并推送镜像到仓库
     try:
         file_size_mb = os.path.getsize(file_path) / 1024 / 1024
         logger.info(f"开始导入镜像: {file.filename} ({file_size_mb:.2f}MB)")
 
-        # 清理旧的未使用镜像
-        execute_command("ctr -n apps i prune --all")
-
         # 导入镜像
-        import_result = execute_command(f"ctr -n apps i import {file_path}")
+        import_result = execute_command(
+            f"ctr -n apps i import {shlex.quote(file_path)}",
+            timeout=600,
+        )
         if import_result.is_failure():
             error_msg = f"导入镜像失败：{import_result.get_error_lines()}"
             logger.error(error_msg)
@@ -550,32 +555,64 @@ async def upload_image(
 
         logger.info(f"镜像导入成功: {file.filename}")
 
-        # 获取镜像信息并验证镜像名称
-        list_result = execute_command(
-            "ctr -n apps i ls |awk '{print $1}'|grep -v REF")
+        # 获取本次导入的镜像信息
+        list_result = execute_command("ctr -n apps i ls -q", timeout=120)
         if list_result.is_failure():
             error_msg = f"获取镜像信息失败：{list_result.get_error_lines()}"
             logger.error(error_msg)
             raise HTTPException(status_code=500, detail=error_msg)
 
-        image_names: str = "\n".join(list_result.get_output_lines())
-        image_name_list = image_names.split()
+        all_image_names = [
+            image_name.strip()
+            for image_name in list_result.get_output_lines()
+            if image_name.strip()
+        ]
 
-        # 验证镜像名称格式
-        for image_name in image_name_list:
-            if not image_name.strip().startswith(f"{Application.DOMAIN}/apps"):
-                error_msg = (
-                    f"镜像名称有误 [{image_name}]，"
-                    f"请变更为 {Application.DOMAIN}/apps/xxx 格式"
-                )
+        # apps namespace 仅作为镜像上传的临时工作区，直接处理其中
+        # 的全部镜像，不依赖不同 containerd 版本的 import 输出格式。
+        image_name_list = all_image_names
+        if not image_name_list:
+            error_msg = "未从上传文件中识别到可推送的镜像"
+            logger.error(error_msg)
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        # 推送镜像到仓库
+        registry_auth = (
+            f"{Application.REGISTRY.USERNAME}:{Application.REGISTRY.PASSWORD}"
+        )
+        harbor_client = HarborClient()
+        needed_projects = {
+            _split_image_ref(image_name)[0]
+            for image_name in image_name_list
+        }
+        for registry in sorted(needed_projects):
+            if not harbor_client.create_project(registry, public=True):
+                error_msg = f"Harbor 项目 [{registry}] 创建失败"
                 logger.error(error_msg)
                 raise HTTPException(status_code=500, detail=error_msg)
 
-        # 推送镜像到仓库
+        proxy_command = (
+            f"{shlex.quote(sys.executable)} -m cli.app "
+            "image ctr add-proxy -y "
+            + " ".join(shlex.quote(project) for project in sorted(needed_projects))
+        )
+        proxy_result = execute_command(proxy_command, timeout=600)
+        if proxy_result.is_failure():
+            error_msg = (
+                "containerd 透明代理配置失败："
+                f"{proxy_result.get_error_lines()}"
+            )
+            logger.error(error_msg)
+            raise HTTPException(status_code=500, detail=error_msg)
+
         for image_name in image_name_list:
             logger.info(f"开始推送镜像: {image_name.strip()}")
             push_result = execute_command(
-                f"ctr -n apps i push -u admin:Harbor@123 {image_name.strip()}"
+                "ctr -n apps i push "
+                "--hosts-dir /etc/containerd/certs.d/ "
+                f"-u {shlex.quote(registry_auth)} "
+                f"{shlex.quote(image_name.strip())}",
+                timeout=600,
             )
             if push_result.is_failure():
                 error_msg = f"推送镜像 [{image_name}] 失败：{push_result.get_error_lines()}"
@@ -589,11 +626,28 @@ async def upload_image(
             "file_path": file_path,
             "file_size_mb": round(file_size_mb, 2),
             "images": image_name_list,
+            "needed_projects": sorted(needed_projects),
+            "proxy_command": proxy_command,
+            "proxy_configured": True,
         }
 
-        return success_response(data=data, message="文件上传成功")
+        return 200, "文件上传成功", data
 
     finally:
+        # apps namespace 是临时工作区，无论成功或失败都要清理。
+        try:
+            prune_result = execute_command(
+                "ctr -n apps i prune --all", timeout=600)
+            if prune_result.is_failure():
+                logger.warning(
+                    "清理 apps namespace 镜像失败："
+                    f"{prune_result.get_error_lines()}"
+                )
+            else:
+                logger.info("已清理 apps namespace 中未使用的镜像")
+        except Exception as e:
+            logger.warning(f"清理 apps namespace 镜像异常：{str(e)}")
+
         # 清理临时文件
         if os.path.exists(file_path):
             try:
@@ -601,10 +655,3 @@ async def upload_image(
                 logger.debug(f"已删除临时文件: {file_path}")
             except Exception as e:
                 logger.warning(f"删除临时文件失败：{str(e)}")
-
-        # 清理未使用的镜像
-        try:
-            execute_command("ctr -n apps i prune --all")
-            logger.debug("已清理未使用的镜像")
-        except Exception as e:
-            logger.warning(f"清理镜像失败：{str(e)}")

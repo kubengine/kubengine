@@ -38,7 +38,9 @@ import os  # noqa
 import json  # noqa
 import asyncio  # noqa
 import re  # noqa
+import shlex  # noqa
 import shutil  # noqa
+import sys  # noqa
 import yaml  # noqa
 
 
@@ -1977,6 +1979,70 @@ def sync_pull_images(
 # -------------------- import 子命令（纯内网环境） --------------------
 
 
+def _load_image_refs(images_file: Optional[str]) -> List[str]:
+    """读取镜像清单，过滤空行和注释。"""
+    if not images_file or not Path(images_file).exists():
+        return []
+    with open(images_file, "r", encoding="utf-8") as f:
+        return [
+            line.strip() for line in f
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+
+def _resolve_images_file(
+    images_tar: Optional[str],
+    images_file: Optional[str],
+) -> Optional[str]:
+    """解析镜像清单路径，未指定时根据镜像 tar 名称探测。"""
+    if images_file and Path(images_file).exists():
+        return images_file
+    if not images_tar:
+        return None
+
+    candidates = [
+        images_tar.replace(".images.tar", ".txt"),
+        images_tar.replace(".tar", ".txt"),
+    ]
+    return next((path for path in candidates if Path(path).exists()), None)
+
+
+def _configure_registry_proxies(
+    registries: Set[str],
+    harbor_client: Optional[HarborClient],
+) -> bool:
+    """创建 Harbor 项目并在 push 前配置 containerd 透明代理。"""
+    if not registries:
+        return True
+
+    sorted_registries = sorted(registries)
+    if harbor_client:
+        for registry in sorted_registries:
+            if not harbor_client.create_project(registry, public=True):
+                click.echo(click.style(
+                    f"  Harbor 项目 '{registry}' 创建失败",
+                    fg="red"), err=True)
+                return False
+
+    proxy_cmd = (
+        f"{shlex.quote(sys.executable)} -m cli.app "
+        "image ctr add-proxy -y "
+        + " ".join(shlex.quote(registry) for registry in sorted_registries)
+    )
+    click.echo(
+        f"  配置 containerd 透明代理: {', '.join(sorted_registries)}")
+    proxy_res = execute_command(proxy_cmd, timeout=600)
+    if proxy_res.is_failure():
+        click.echo(click.style(
+            f"  ❌ containerd 透明代理配置失败: "
+            f"{proxy_res.get_error_lines()}",
+            fg="red"), err=True)
+        return False
+
+    click.echo(click.style("  ✅ containerd 透明代理配置完成", fg="green"))
+    return True
+
+
 def _do_sync_import(
     tgzs: Tuple[str, ...],
     images_tar: Optional[str],
@@ -1984,6 +2050,7 @@ def _do_sync_import(
     dry_run: bool,
     image_timeout: int,
     harbor_client: Optional[HarborClient],
+    configure_proxy: bool = True,
 ) -> Tuple[int, int, int, int, Set[str]]:
     """执行单个 bundle 的导入逻辑（chart push + 镜像 import+push）
 
@@ -2005,18 +2072,11 @@ def _do_sync_import(
             click.echo(click.style(
                 f"  镜像 tar 不存在: {images_tar}", fg="red"), err=True)
             return chart_ok, chart_fail, 0, 0, needed_projects
-        if not images_file:
-            derived = images_tar.replace(".images.tar", ".txt")
-            if not Path(derived).exists():
-                derived = images_tar.replace(".tar", ".txt")
-            images_file = derived if Path(derived).exists() else None
-
-        if images_file and Path(images_file).exists():
-            with open(images_file, "r", encoding="utf-8") as f:
-                resolved_images = [
-                    line.strip() for line in f
-                    if line.strip() and not line.strip().startswith("#")
-                ]
+        images_file = _resolve_images_file(images_tar, images_file)
+        resolved_images = _load_image_refs(images_file)
+        needed_projects = {
+            _split_image_ref(img_ref)[0] for img_ref in resolved_images
+        }
 
     # ---- 1. helm push 每个 chart 包 ----
     for tgz_str in tgzs:
@@ -2058,15 +2118,26 @@ def _do_sync_import(
             f"\n  镜像导入: {Path(images_tar).name}", fg="cyan"))
 
         if dry_run:
+            if needed_projects and configure_proxy:
+                click.echo(
+                    "    [dry-run] kubengine image ctr add-proxy -y "
+                    + " ".join(sorted(needed_projects)))
             for img_ref in resolved_images:
                 registry, repo_tag = _split_image_ref(img_ref)
-                needed_projects.add(registry)
                 target = f"{domain}/{registry}/{repo_tag}"
                 click.echo(f"    [dry-run] {img_ref} -> {target}")
             image_ok = len(resolved_images)
         else:
+            if configure_proxy and not _configure_registry_proxies(
+                    needed_projects, harbor_client):
+                image_fail = len(resolved_images)
+                return (
+                    chart_ok, chart_fail, image_ok, image_fail,
+                    needed_projects
+                )
+
             import_res = execute_command(
-                f"ctr -n k8s.io i import {images_tar}",
+                f"ctr -n apps i import {shlex.quote(images_tar)}",
                 timeout=600
             )
             if import_res.is_failure():
@@ -2080,20 +2151,11 @@ def _do_sync_import(
             else:
                 click.echo(click.style("    ✅ 镜像导入本地", fg="green"))
                 for img_ref in resolved_images:
-                    registry, repo_tag = _split_image_ref(img_ref)
-                    needed_projects.add(registry)
-
-                    if harbor_client and not harbor_client.create_project(
-                            registry, public=True):
-                        click.echo(click.style(
-                            f"    Harbor 项目 '{registry}' 创建失败，跳过",
-                            fg="yellow"))
-                        image_fail += 1
-                        continue
-
                     push_res = execute_command(
-                        f"ctr -n k8s.io i push --hosts-dir /etc/containerd/certs.d/ "
-                        f"-u {registry_user}:{registry_pass} {img_ref}",
+                        "ctr -n apps i push "
+                        "--hosts-dir /etc/containerd/certs.d/ "
+                        f"-u {shlex.quote(registry_user + ':' + registry_pass)} "
+                        f"{shlex.quote(img_ref)}",
                         timeout=image_timeout
                     )
                     if push_res.is_failure():
@@ -2103,6 +2165,17 @@ def _do_sync_import(
                     else:
                         click.echo(click.style(f"    ✅ {img_ref}", fg="green"))
                         image_ok += 1
+
+                if image_ok == len(resolved_images) and image_fail == 0:
+                    prune_res = execute_command(
+                        "ctr -n apps i prune --all", timeout=600)
+                    if prune_res.is_failure():
+                        click.echo(click.style(
+                            "    ⚠ apps namespace 镜像清理失败: "
+                            f"{prune_res.get_error_lines()}", fg="yellow"))
+                    else:
+                        click.echo(click.style(
+                            "    ✅ apps namespace 镜像清理完成", fg="green"))
 
     return chart_ok, chart_fail, image_ok, image_fail, needed_projects
 
@@ -2139,7 +2212,7 @@ def sync_import(
     """【阶段二·纯内网环境】将 chart 包与镜像 tar 导入 Harbor
 
     helm push 每个 .tgz 到 oci://{DOMAIN}/charts；
-    若提供 --images-tar，则 ctr i import 后按清单 tag+push 到 Harbor。
+    若提供 --images-tar，则配置透明代理后导入并 push 到 Harbor。
 
     \b
     示例：
@@ -2190,10 +2263,9 @@ def sync_import(
         click.echo(f"  镜像:   成功 {image_ok}，失败 {image_fail}")
     if needed_projects:
         click.echo(f"  涉及 Harbor 项目: {', '.join(sorted(needed_projects))}")
-        click.echo(click.style(
-            f"  提示: 执行 `python ctr.py add-proxy "
-            f"{' '.join(sorted(needed_projects))}` 配置透明转发",
-            fg="cyan"))
+        if not dry_run and image_fail == 0:
+            click.echo(click.style(
+                "  containerd 透明代理已配置", fg="green"))
 
     exit(0 if (chart_fail == 0 and image_fail == 0) else 1)
 
@@ -2264,7 +2336,17 @@ def sync_import_dir(
         images_tar = str(tar_files[0]) if tar_files else None
         txt_files = sorted(bdir.glob("*-images.txt"))
         images_file = str(txt_files[0]) if txt_files else None
+        images_file = _resolve_images_file(images_tar, images_file)
         bundles.append((bdir.name, tgzs, images_tar, images_file))
+
+    all_projects: Set[str] = set()
+    for _, _, images_tar, images_file in bundles:
+        if not images_tar:
+            continue
+        all_projects.update(
+            _split_image_ref(img_ref)[0]
+            for img_ref in _load_image_refs(images_file)
+        )
 
     # ---- 展示扫描结果 ----
     click.echo(click.style("=" * 70, fg="blue"))
@@ -2295,13 +2377,17 @@ def sync_import_dir(
                 fg="red"), err=True)
             exit(1)
         click.echo(click.style("Harbor 已就绪", fg="green"))
+        if not _configure_registry_proxies(all_projects, harbor_client):
+            exit(1)
+    elif all_projects:
+        click.echo(
+            "[dry-run] kubengine image ctr add-proxy -y "
+            + " ".join(sorted(all_projects)))
     click.echo("")
 
     # ---- 逐个 bundle 导入 ----
     total_chart_ok, total_chart_fail = 0, 0
     total_image_ok, total_image_fail = 0, 0
-    all_projects: Set[str] = set()
-
     for idx, (name, tgzs, images_tar, images_file) in enumerate(bundles, 1):
         click.echo(click.style(
             f"\n{'─' * 70}", fg="blue"))
@@ -2312,7 +2398,8 @@ def sync_import_dir(
 
         chart_ok, chart_fail, image_ok, image_fail, projects = _do_sync_import(
             tuple(tgzs), images_tar, images_file,
-            dry_run, image_timeout, harbor_client
+            dry_run, image_timeout, harbor_client,
+            configure_proxy=False,
         )
 
         total_chart_ok += chart_ok
