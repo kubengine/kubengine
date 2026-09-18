@@ -3,6 +3,8 @@ from io import StringIO
 from pyinfra.operations import server, files
 from pyinfra.context import host
 
+from _offline_transfer import YUM_OP_SECONDS
+
 data = host.data
 
 # 仅 master 和 additional_master 组部署 keepalived，且需配置 VIP
@@ -28,7 +30,10 @@ if is_master and vip:
     server.yum.packages(
         name="Install keepalived",
         packages=["keepalived"],
-        extra_install_args=f"--disablerepo=* --enablerepo={repo_name}"
+        extra_install_args=f"--disablerepo=* --enablerepo={repo_name}",
+        _timeout=YUM_OP_SECONDS,
+        _retries=1,
+        _retry_delay=10,
     )
     server.yum.repo(
         name="Remove kubengine yum repository",

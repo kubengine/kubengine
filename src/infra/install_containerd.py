@@ -4,6 +4,8 @@ import os
 from pyinfra.operations import server
 from pyinfra.context import host
 
+from _offline_transfer import op_timeout, pull, pull_to_file
+
 deploy_src = host.data.deploy_src
 containerd_dir = os.path.join(deploy_src, "containerd")
 containerd_path = os.path.join(
@@ -23,12 +25,20 @@ server.files.directory(
     name=f"Create {target_containerd_dir} directory", path=target_containerd_dir)
 
 if "master" not in host.groups:
-    command = f"curl sftp://{master_ip}{containerd_path} -o - | tar zxf - -C {target_containerd_dir}"
+    command, timeout = pull(
+        f"sftp://{master_ip}{containerd_path}", containerd_path,
+        f"tar zxf - -C {target_containerd_dir}")
 else:
     command = f"tar zxf {containerd_path} -C {target_containerd_dir}"
+    timeout = op_timeout(containerd_path)
 
 server.shell(
-    name=f"Extract containerd to {target_containerd_dir}", commands=command)
+    name=f"Extract containerd to {target_containerd_dir}",
+    commands=command,
+    _timeout=timeout,
+    _retries=4,
+    _retry_delay=10,
+)
 
 # 创建软链
 server.files.link(
@@ -49,22 +59,35 @@ if "master" in host.groups:
         mode="755"
     )
 if "master" not in host.groups:
+    runc_src = os.path.join(containerd_dir, "runc.amd64")
+    runc_pull, runc_timeout = pull_to_file(
+        f"sftp://{master_ip}{runc_src}", runc_src, "/usr/local/bin/runc")
     server.shell(
         name="Copy runc binary to /usr/local/bin/runc",
         commands=[
-            f"curl -o /usr/local/bin/runc sftp://{master_ip}{containerd_dir}/runc.amd64",
+            runc_pull,
             "chmod 755 /usr/local/bin/runc"
-        ]
+        ],
+        _timeout=runc_timeout,
+        _retries=4,
+        _retry_delay=10,
     )
 
 
 # kata相关
 if "master" not in host.groups:
-    command = f"curl sftp://{master_ip}{kata_path} -o - | tar zxf - -C /opt"
+    command, timeout = pull(
+        f"sftp://{master_ip}{kata_path}", kata_path, "tar zxf - -C /opt")
 else:
     command = f"tar zxf {kata_path} -C /opt"
+    timeout = op_timeout(kata_path)
 server.shell(
-    name="Extract Kata Containers to /opt", commands=command)
+    name="Extract Kata Containers to /opt",
+    commands=command,
+    _timeout=timeout,
+    _retries=4,
+    _retry_delay=10,
+)
 server.files.link(
     name="Create symlink for containerd-shim-kata-v2",
     path="/usr/local/bin/containerd-shim-kata-v2",
@@ -85,21 +108,36 @@ if "master" in host.groups:
         dest="/etc/containerd/config.toml",
         src=config_path)
 if "master" not in host.groups:
+    config_pull, config_timeout = pull_to_file(
+        f"sftp://{master_ip}{config_path}", config_path,
+        "/etc/containerd/config.toml")
     server.shell(
         name="Configure containerd with config.toml",
         commands=[
             "mkdir -p /etc/containerd",
-            f"curl -o /etc/containerd/config.toml sftp://{master_ip}{config_path}"
-        ]
+            config_pull,
+        ],
+        _timeout=config_timeout,
+        _retries=4,
+        _retry_delay=10,
     )
 
 # proxy
 if "master" not in host.groups:
-    command = f"curl sftp://{master_ip}{certs_path} -o - | tar zxf - -C /etc/containerd"
+    command, timeout = pull(
+        f"sftp://{master_ip}{certs_path}", certs_path,
+        "tar zxf - -C /etc/containerd")
 else:
     command = f"tar zxf {certs_path} -C /etc/containerd"
+    timeout = op_timeout(certs_path)
 
-server.shell(name="Extract certs.d to /etc/containerd", commands=command)
+server.shell(
+    name="Extract certs.d to /etc/containerd",
+    commands=command,
+    _timeout=timeout,
+    _retries=4,
+    _retry_delay=10,
+)
 
 # systemd 管理 containerd
 server.files.put(

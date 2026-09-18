@@ -4,6 +4,8 @@ import os
 from pyinfra.operations import server
 from pyinfra.context import host
 
+from _offline_transfer import import_seconds, op_timeout, pull
+
 data = host.data
 master_ip = data.master_ip
 deploy_src = data.deploy_src
@@ -13,12 +15,23 @@ images_file = os.path.join(
 helm_charts_dir = os.path.join(
     deploy_src, "/root/offline-deploy/charts/metallb")
 
+images_budget = import_seconds(images_file)
+
 # 加载离线镜像
 if "master" not in host.groups:
-    command = f"curl sftp://{master_ip}{images_file} -o - | ctr -n k8s.io i import -"
+    command, timeout = pull(
+        f"sftp://{master_ip}{images_file}", images_file,
+        "ctr -n k8s.io i import -", extra_seconds=images_budget)
 else:
     command = f"ctr -n k8s.io i import {images_file}"
-server.shell(name="Load offline metallb images", commands=command)
+    timeout = op_timeout(images_file, extra_seconds=images_budget)
+server.shell(
+    name="Load offline metallb images",
+    commands=command,
+    _timeout=timeout,
+    _retries=4,
+    _retry_delay=10,
+)
 
 if "master" in host.groups:
     commands = [

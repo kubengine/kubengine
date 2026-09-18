@@ -34,13 +34,24 @@ class InfraExecutionConfig:
         connect_timeout: Connection timeout in seconds
         fail_percent: Failure percentage threshold
         verbosity: Verbosity level (0-3)
-        dry_run: Whether to run in dry-run mode
+        check_for_changes: 是否让 pyinfra 在操作注册阶段预检变更与否
+        op_timeout: 未显式指定 _timeout 的操作的默认超时（秒）
     """
     parallel: int = 5
     connect_timeout: int = 10
     fail_percent: int = 0
     verbosity: int = 1
+    # True 时 pyinfra 会在每个操作注册时逐台取 fact 判断变更，等于每台多一轮
+    # SSH 往返；而这里的注册是逐台串行的，实测 containerd 阶段 29 台要多花
+    # 十几分钟且全程无输出。默认关闭（等价 pyinfra -y），变更与否在执行阶段
+    # 照样会打印 Success / No changes。
     check_for_changes: bool = False
+    # 兜底超时：pyinfra 的 _timeout 默认是 None（永不超时），于是任何一条
+    # 远端命令卡住都会让部署无声地停在那儿（实测遇到过 7 分钟）。传输类操作
+    # 已在 infra 脚本里按文件大小显式给了 _timeout，这个默认值管住剩下的：
+    # files.put / helm / kubectl / kubeadm / systemd 等。取 1 小时是纯失控
+    # 保险，正常单条命令远用不到。
+    op_timeout: int = 3600
     fail_fast: bool = True  # 为True时，一个文件失败立即停止；为False时继续执行其他文件
 
 
@@ -351,8 +362,10 @@ class InfraFileExecutor:
             sys.path.insert(0, str(infra_file_path.parent))
 
         # 初始化PyInfra状态
+        # 注意：pyinfra 的 check_for_changes 表示"注册操作时先取 fact 预判变更"，
+        # 不是 dry-run；默认关闭，见 InfraExecutionConfig.check_for_changes。
         self._state = State(
-            check_for_changes=not self.config.check_for_changes)
+            check_for_changes=bool(self.config.check_for_changes))
         self._state.cwd = str(infra_file_path.parent)
         ctx_state.set(self._state)  # type: ignore
 
@@ -364,9 +377,13 @@ class InfraFileExecutor:
         ctx_config.set(config)  # type: ignore
 
         # 准备inventory数据（核心：IP列表 + 动态shared_data）
-        # shared_data结构：{IP: {"ssh_key": "...", "ssh_user": "...", ...}}
+        # shared_data 是发给所有主机的公共数据（master_ip、deploy_src 等），
+        # pyinfra 会把其中的键当作 host.data 的属性；_timeout 放在这里就变成
+        # 所有操作的默认超时（单条操作显式传 _timeout 仍然优先生效）。
+        inventory_data = dict(shared_data)
+        inventory_data.setdefault("_timeout", self.config.op_timeout)
         inventory = Inventory(
-            (host_ips, shared_data),  # 直接传入IP列表和动态连接配置
+            (host_ips, inventory_data),  # 直接传入IP列表和动态连接配置
             **(target_groups or {})
         )
         ctx_inventory.set(inventory)  # type: ignore

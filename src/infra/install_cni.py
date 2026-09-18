@@ -4,6 +4,8 @@ import os
 from pyinfra.operations import server
 from pyinfra.context import host
 
+from _offline_transfer import op_timeout, pull
+
 data = host.data
 
 deploy_src = data.deploy_src
@@ -16,11 +18,20 @@ server.files.directory(
     name=f"Create {target_cni_dir} directory for CNI plugins", path=target_cni_dir)
 
 if "master" not in host.groups:
-    command = f"curl sftp://{master_ip}{cni_path} -o - | tar zxf - -C {target_cni_dir}"
+    command, timeout = pull(
+        f"sftp://{master_ip}{cni_path}", cni_path,
+        f"tar zxf - -C {target_cni_dir}")
 else:
     command = f"tar zxf {cni_path} -C {target_cni_dir}"
+    timeout = op_timeout(cni_path)
 
-server.shell(name=f"Extract CNI plugins to {target_cni_dir}", commands=command)
+server.shell(
+    name=f"Extract CNI plugins to {target_cni_dir}",
+    commands=command,
+    _timeout=timeout,
+    _retries=4,
+    _retry_delay=10,
+)
 
 server.files.put(
     name="Create CNI configuration file 10-mynet.conf",  # type: ignore

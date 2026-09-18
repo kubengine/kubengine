@@ -3,6 +3,8 @@ import os
 from pyinfra.operations import server
 from pyinfra.context import host
 
+from _offline_transfer import import_seconds, op_timeout, pull
+
 
 deploy_src: str = host.data.deploy_src
 master_ip: str = host.data.master_ip
@@ -11,12 +13,23 @@ manifests_dir: str = host.data.manifest_dir
 images_path: str = os.path.join(
     deploy_src, "images", "calico.images.v3.27.0.tar.gz")
 
+images_budget = import_seconds(images_path)
+
 if "master" not in host.groups:
-    command = f"curl sftp://{master_ip}{images_path} -o - | ctr -n k8s.io i import -"
+    command, timeout = pull(
+        f"sftp://{master_ip}{images_path}", images_path,
+        "ctr -n k8s.io i import -", extra_seconds=images_budget)
 else:
     command = f"ctr -n k8s.io i import {images_path}"
+    timeout = op_timeout(images_path, extra_seconds=images_budget)
 
-server.shell(name="Load offline Calico images", commands=command)
+server.shell(
+    name="Load offline Calico images",
+    commands=command,
+    _timeout=timeout,
+    _retries=4,
+    _retry_delay=10,
+)
 
 
 # Create manifests directory

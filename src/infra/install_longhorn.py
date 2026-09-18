@@ -5,6 +5,8 @@ from pyinfra.operations import server, python
 from pyinfra.context import host
 from core.misc.ca import k8s_create_tls
 
+from _offline_transfer import YUM_OP_SECONDS, import_seconds, op_timeout, pull
+
 data = host.data
 
 repo_name = "kubengine_repo"
@@ -30,7 +32,10 @@ server.yum.repo(
 server.yum.packages(
     name="Install open-iscsi",
     packages=["open-iscsi"],
-    extra_install_args=f"--disablerepo=* --enablerepo={repo_name}"
+    extra_install_args=f"--disablerepo=* --enablerepo={repo_name}",
+    _timeout=YUM_OP_SECONDS,
+    _retries=1,
+    _retry_delay=10,
 )
 server.yum.repo(
     name="Remove kubengine yum repository",
@@ -68,11 +73,22 @@ server.files.put(
 )
 
 # 加载离线镜像
+images_budget = import_seconds(images_path)
+
 if "master" not in host.groups:
-    command = f"curl sftp://{master_ip}{images_path} -o - | ctr -n k8s.io i import -"
+    command, timeout = pull(
+        f"sftp://{master_ip}{images_path}", images_path,
+        "ctr -n k8s.io i import -", extra_seconds=images_budget)
 else:
     command = f"ctr -n k8s.io i import {images_path}"
-server.shell(name="Load offline longhorn images", commands=command)
+    timeout = op_timeout(images_path, extra_seconds=images_budget)
+server.shell(
+    name="Load offline longhorn images",
+    commands=command,
+    _timeout=timeout,
+    _retries=4,
+    _retry_delay=10,
+)
 
 if "master" in host.groups:
     python.call(name="Create TLS cert for longhorn-system namespace", function=k8s_create_tls,

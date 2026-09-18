@@ -4,6 +4,8 @@ import os
 from pyinfra.operations import server
 from pyinfra.context import host
 
+from _offline_transfer import YUM_OP_SECONDS, import_seconds, op_timeout, pull
+
 data = host.data
 
 repo_name = "kubengine_repo"
@@ -27,7 +29,10 @@ server.yum.repo(
 server.yum.packages(
     name="Install kubelet, kubectl and kubeadm",
     packages=["kubelet", "kubectl", "kubeadm"],
-    extra_install_args=f"--disablerepo=* --enablerepo={repo_name}"
+    extra_install_args=f"--disablerepo=* --enablerepo={repo_name}",
+    _timeout=YUM_OP_SECONDS,
+    _retries=1,
+    _retry_delay=10,
 )
 server.yum.repo(
     name="Remove kubengine yum repository",
@@ -55,11 +60,21 @@ debug: false
 # 加载离线镜像
 images_file = os.path.join(
     deploy_src, "images", "kubenetes.images.v1.34.0.tar.gz")
+images_budget = import_seconds(images_file)
 if "master" not in host.groups:
-    command = f"curl sftp://{master_ip}{images_file} -o - | ctr -n k8s.io i import -"
+    command, timeout = pull(
+        f"sftp://{master_ip}{images_file}", images_file,
+        "ctr -n k8s.io i import -", extra_seconds=images_budget)
 else:
     command = f"ctr -n k8s.io i import {images_file}"
-server.shell(name="Load offline Kubernetes images using ctr", commands=command)
+    timeout = op_timeout(images_file, extra_seconds=images_budget)
+server.shell(
+    name="Load offline Kubernetes images using ctr",
+    commands=command,
+    _timeout=timeout,
+    _retries=4,
+    _retry_delay=10,
+)
 
 # 确保 /etc/resolv.conf 中存在 nameserver
 for i in nameserver:
