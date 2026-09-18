@@ -24,7 +24,7 @@
 
 import asyncio
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import click
 
@@ -286,10 +286,15 @@ async def configure_cluster_workflow(
         )
 
         for result in hostname_results:
-            if result.get('error'):
+            # exit_status 非 0 也算失败：execute_command 只在抛异常时给 error
+            failed = result.get('error') or (
+                None if result.get('exit_status') in (0, None)
+                else f"命令退出码 {result['exit_status']}"
+            )
+            if failed:
                 click.echo(
                     click.style(
-                        f"主机 {result['host']} 主机名设置失败: {result['error']}",
+                        f"主机 {result['host']} 主机名设置失败: {failed}",
                         fg="red"
                     )
                 )
@@ -324,6 +329,52 @@ async def configure_cluster_workflow(
                 )
             )
 
+        # 步骤 3.1: 报告 known_hosts 刷新结果
+        # 这一步失败意味着在那些机器上，不带 -o StrictHostKeyChecking=no 的
+        # ssh 仍然会停在 yes 确认上（非交互场景直接失败），必须显式告知。
+        known_hosts_failures = trust_result.get('known_hosts_failures') or {}
+        ssh_failures = trust_result.get('ssh_failures') or {}
+        scan_missing = trust_result.get('scan_missing') or []
+        if scan_missing:
+            click.echo(
+                click.style(
+                    "\n以下节点没能采集到 host key（任何机器上都没有它们的记录，"
+                    "普通 ssh 一定会卡在 yes 确认上）：",
+                    fg="red"
+                )
+            )
+            click.echo(click.style(f"  {' '.join(scan_missing)}", fg="red"))
+        if known_hosts_failures:
+            click.echo(
+                click.style(
+                    "\n以下节点刷新 known_hosts 失败（普通 ssh 会卡在 yes 确认上）：",
+                    fg="red"
+                )
+            )
+            for node, peers in sorted(known_hosts_failures.items()):
+                click.echo(
+                    click.style(f"  {node} -> {' '.join(peers)}", fg="red")
+                )
+        if ssh_failures:
+            click.echo(
+                click.style(
+                    "\n以下节点之间免密 ssh 仍不通（括号里是 ssh 报的最后一行）：",
+                    fg="red"
+                )
+            )
+            for node, peers in sorted(ssh_failures.items()):
+                click.echo(
+                    click.style(f"  {node} -> {'; '.join(peers)}", fg="red")
+                )
+        if (not scan_missing and not known_hosts_failures and not ssh_failures
+                and not trust_result.get('error')):
+            click.echo(
+                click.style(
+                    "known_hosts 已刷新，普通 ssh（不带 StrictHostKeyChecking 参数）可直接使用",
+                    fg="green"
+                )
+            )
+
         # 步骤 4: 验证 SSH 互信（可选）
         if verify_ssh and not trust_result.get('error'):
             await _verify_ssh_trust(ssh_client, hosts, **ssh_kwargs)
@@ -347,7 +398,7 @@ async def _verify_ssh_trust(
     hosts: List[str],
     **ssh_kwargs: Any
 ) -> None:
-    """验证集群节点间的 SSH 互信
+    """验证集群节点间的 SSH 互信（严格模式，逐台串行 + 一次复验）
 
     Args:
         ssh_client: SSH 客户端实例
@@ -356,43 +407,41 @@ async def _verify_ssh_trust(
     """
     click.echo(click.style("\n=== 验证 SSH 互信 ===", fg="blue"))
 
-    # 构建验证任务
-    verify_tasks: List[Tuple[str, str]] = []
-    for src_host in hosts:
-        for dest_host in hosts:
-            if src_host != dest_host:
-                cmd = (
-                    f'ssh -o StrictHostKeyChecking=no '
-                    f'-o ConnectTimeout=5 {dest_host} "echo success"'
-                )
-                verify_tasks.append((src_host, cmd))
+    # 刻意不加 -o StrictHostKeyChecking=no：加了等于替业务侧的 ssh"代答 yes"，
+    # 会掩盖 known_hosts 没刷新的问题。校验本身在 core.ssh 里逐台串行执行，
+    # 避免 N×(N-1) 并发把各节点 sshd 打爆出一堆假失败。
+    failures = await ssh_client.verify_ssh_trust(hosts, **ssh_kwargs)
 
-    # 执行验证任务
-    verify_results = await ssh_client.execute_multiple_commands(
-        verify_tasks, **ssh_kwargs
+    total_pairs = len(hosts) * (len(hosts) - 1)
+    failed_pairs = sum(len(v) for v in failures.values())
+
+    if not failures:
+        click.echo(
+            click.style(
+                f"全部 {total_pairs} 对节点免密 ssh 正常（不带 StrictHostKeyChecking 参数）",
+                fg="green"
+            )
+        )
+        return
+
+    click.echo(
+        click.style(
+            f"共 {failed_pairs}/{total_pairs} 对节点未通过免确认校验，"
+            f"（括号里是 ssh 报的最后一行）：",
+            fg="red"
+        )
     )
-
-    # 处理验证结果
-    for result in verify_results:
-        command_parts = str(result['command']).split()
-        dest_host = command_parts[3] if len(command_parts) > 3 else 'unknown'
-
-        if (result.get('exit_status') == 0 and 'success' in str(result.get('stdout', ''))):
-            click.echo(
-                click.style(
-                    f"SSH 互信验证成功: {result['host']} → {dest_host}",
-                    fg="green"
-                )
+    for node, peers in sorted(failures.items()):
+        click.echo(click.style(f"  {node} -> {'; '.join(peers)}", fg="red"))
+    if any("Connection closed" in p or "open failed" in p
+           for peers in failures.values() for p in peers):
+        click.echo(
+            click.style(
+                "  出现 open failed / Connection closed 通常是 sshd 并发被限流，"
+                "可在各节点调整 MaxStartups 后重跑",
+                fg="yellow"
             )
-        else:
-            error_info = result.get('error') or result.get(
-                'stderr', '未知错误')
-            click.echo(
-                click.style(
-                    f"SSH 互信验证失败: {result['host']} → {dest_host}: {error_info}",
-                    fg="red"
-                )
-            )
+        )
 
 
 async def _save_cluster_config(
