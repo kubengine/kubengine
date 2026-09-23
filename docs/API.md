@@ -1,745 +1,169 @@
 # API 文档
 
-KubeEngine 提供完整的 RESTful API，支持 Kubernetes 集群管理、应用部署、镜像构建等功能。
+KubeEngine 的 HTTP API 由 FastAPI 提供，默认前缀为 `/api/v1`。本页记录稳定的接入方式和当前路由概览；请求体、查询参数和响应模型应以运行中服务自动生成的 OpenAPI 文档为准。
 
-## 访问方式
+## 访问入口
 
-启动服务后访问：
-
-- **Swagger UI**：`http://localhost:8080/docs`
-- **ReDoc**：`http://localhost:8080/redoc`
-
----
-
-## 认证
-
-大部分 API 端点需要认证。使用 JWT Token 进行身份验证。
-
-### 默认管理员账户
-
-| 项目 | 值 |
-|------|-----|
-| 用户名 | `admin` |
-| 默认密码 | `Admin@123` |
-| AK（访问密钥 ID） | `AK8F60249C` |
-| SK（密钥） | `SK17F1B276797F4957` |
-
-> ⚠️ **安全警告**：生产环境请立即修改默认密码！
-
-### 获取 Token
-
-通过登录接口获取访问令牌：
+启动服务：
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "admin",
-    "password": "Admin@123"
-  }'
+kubengine app run --host 0.0.0.0 --port 8080
 ```
 
-**响应示例**：
+| 地址 | 用途 |
+| --- | --- |
+| `/` | 内置 Web UI |
+| `/docs` | Swagger UI |
+| `/redoc` | ReDoc |
+| `/openapi.json` | OpenAPI 描述文件 |
+| `/api/v1/health` | 无鉴权健康检查 |
 
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer",
-  "expires_in": 1800
-}
-```
+## 登录与鉴权
 
-### 使用 Token
-
-在请求头中添加 Authorization：
+先使用管理员账号登录：
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/k8s/node" \
-  -H "Authorization: Bearer <access_token>"
+curl -X POST 'http://localhost:8080/api/v1/login' \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<管理员密码>"}'
 ```
 
-### 刷新 Token
+当前登录响应包含以下字段：
+
+```json
+{
+  "name": "admin",
+  "access_token": "<JWT>",
+  "token_type": "Bearer",
+  "expires_at": "2026-09-23T10:30:00",
+  "renewed": false
+}
+```
+
+调用受保护接口时携带 Bearer Token：
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/auth/renew" \
-  -H "Authorization: Bearer <refresh_token>"
+curl 'http://localhost:8080/api/v1/k8s/overview' \
+  -H 'Authorization: Bearer <JWT>'
 ```
 
----
-
-## API 端点
-
-### 认证 (`/api/v1/auth`)
-
-#### POST `/api/v1/auth/login`
-
-用户登录，返回 JWT Token。
-
-**请求体**：
-
-```json
-{
-  "username": "admin",
-  "password": "password"
-}
-```
-
-**响应**：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `access_token` | string | 访问令牌 |
-| `refresh_token` | string | 刷新令牌 |
-| `token_type` | string | 令牌类型（bearer） |
-| `expires_in` | integer | 过期时间（秒） |
-
----
-
-#### POST `/api/v1/auth/renew`
-
-刷新访问令牌。
-
-**请求头**：
-
-```
-Authorization: Bearer <refresh_token>
-```
-
-**响应**：与登录响应相同
-
----
-
-### 健康检查 (`/api/v1/health`)
-
-#### GET `/api/v1/health/`
-
-系统健康状态检查。
-
-**响应示例**：
-
-```json
-{
-  "status": "healthy",
-  "version": "0.1.0"
-}
-```
-
----
-
-### SSH 管理 (`/api/v1/ssh`)
-
-#### POST `/api/v1/ssh/execute`
-
-在远程主机执行命令。
-
-**请求体**：
-
-```json
-{
-  "hosts": ["172.31.57.23", "172.31.57.22"],
-  "command": "hostname",
-  "username": "root"
-}
-```
-
-**参数**：
-
-| 字段 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `hosts` | array | 是 | 目标主机 IP 列表 |
-| `command` | string | 是 | 要执行的命令 |
-| `username` | string | 否 | SSH 用户名（默认 root） |
-| `password` | string | 否 | SSH 密码 |
-| `key_file` | string | 否 | SSH 私钥文件路径 |
-
-**响应示例**：
-
-```json
-{
-  "results": [
-    {
-      "host": "172.31.57.23",
-      "output": "kubengine3\n",
-      "error": "",
-      "exit_code": 0
-    },
-    {
-      "host": "172.31.57.22",
-      "output": "kubengine2\n",
-      "error": "",
-      "exit_code": 0
-    }
-  ]
-}
-```
-
----
-
-### Kubernetes 管理 (`/api/v1/k8s`)
-
-#### GET `/api/v1/k8s/node`
-
-获取集群节点信息。
-
-**响应示例**：
-
-```json
-{
-  "items": [
-    {
-      "metadata": {
-        "name": "kubengine1"
-      },
-      "status": {
-        "capacity": {
-          "cpu": "4",
-          "memory": "8Gi"
-        },
-        "conditions": [
-          {
-            "type": "Ready",
-            "status": "True"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
----
-
-#### GET `/api/v1/k8s/overview`
-
-获取集群概览，含 CPU/内存指标。
-
-**响应示例**：
-
-```json
-{
-  "nodes": 3,
-  "pods": 42,
-  "namespaces": 8,
-  "cpu_usage": "45%",
-  "memory_usage": "62%"
-}
-```
-
----
-
-#### GET `/api/v1/k8s/dashboard/resource/{type}`
-
-列出 K8s 资源（Pod、Service 等）。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `type` | string | 资源类型（pod, service, deployment 等） |
-
-**查询参数**：
-
-| 参数 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `namespace` | string | 否 | 命名空间（默认 all） |
-
-**示例**：
+Token 临近过期时，鉴权装饰器会自动续期，并在标准响应中返回更新后的 Token 信息。退出登录使用：
 
 ```bash
-# 列出所有 Pod
-curl "http://localhost:8080/api/v1/k8s/dashboard/resource/pod"
-
-# 列出 default 命名空间的 Service
-curl "http://localhost:8080/api/v1/k8s/dashboard/resource/service?namespace=default"
+curl -X POST 'http://localhost:8080/api/v1/logout' \
+  -H 'Authorization: Bearer <JWT>'
 ```
 
----
+管理员密码和 AK/SK 通过 `kubengine app set-password` 设置或轮换。仓库配置文件只保存密码和 SK 的哈希值，文档不提供可直接使用的默认明文密钥。
 
-#### GET `/api/v1/k8s/dashboard/resourcedetail/{type}/{namespace}/{name}`
+## 标准响应
 
-获取资源详情。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `type` | string | 资源类型 |
-| `namespace` | string | 命名空间 |
-| `name` | string | 资源名称 |
-
----
-
-#### GET `/api/v1/k8s/dashboard/resourcepod/{type}/{namespace}/{name}`
-
-获取资源关联的 Pod。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `type` | string | 资源类型 |
-| `namespace` | string | 命名空间 |
-| `name` | string | 资源名称 |
-
----
-
-#### 节点污点管理
-
-##### GET `/api/v1/k8s/node/{name}/taints`
-
-获取节点污点配置。
-
-##### POST `/api/v1/k8s/node/{name}/taints`
-
-添加节点污点。
-
-**请求体**：
+受 `auth_with_renew` 保护的接口通常返回统一结构：
 
 ```json
 {
-  "key": "key1",
-  "value": "value1",
-  "effect": "NoSchedule"
+  "code": 200,
+  "message": "操作成功",
+  "data": {},
+  "new_access_token": null,
+  "token_type": "Bearer"
 }
 ```
 
-**效应类型（effect）**：
-
-- `NoSchedule`：不允许未匹配的 Pod 调度
-- `PreferNoSchedule`：尽量避免调度
-- `NoExecute`：驱逐已存在的未匹配 Pod
-
-##### DELETE `/api/v1/k8s/node/{name}/taints`
-
-删除节点污点。
-
-**请求体**：
-
-```json
-{
-  "key": "key1",
-  "effect": "NoSchedule"
-}
-```
-
----
-
-### 应用管理 (`/api/v1/app`)
-
-#### GET `/api/v1/app/list`
-
-分页列出应用。
-
-**查询参数**：
-
-| 参数 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `page` | integer | 否 | 页码（默认 1） |
-| `page_size` | integer | 否 | 每页数量（默认 10） |
-
-**响应示例**：
-
-```json
-{
-  "items": [
-    {
-      "id": 1,
-      "name": "redis",
-      "version": "7.0.15",
-      "description": "Redis 缓存服务"
-    }
-  ],
-  "total": 42,
-  "page": 1,
-  "page_size": 10
-}
-```
-
----
-
-#### GET `/api/v1/app/get/{app_id}`
-
-根据 ID 获取应用详情。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `app_id` | integer | 应用 ID |
-
----
-
-#### POST `/api/v1/app/add`
-
-创建新应用。
-
-**请求体**：
-
-```json
-{
-  "name": "redis",
-  "version": "7.0.15",
-  "description": "Redis 缓存服务",
-  "chart_name": "redis",
-  "repo_url": "https://charts.bitnami.com/bitnami"
-}
-```
-
----
-
-#### PUT `/api/v1/app/update`
-
-更新应用。
-
-**请求体**：与添加应用相同
-
----
-
-#### DELETE `/api/v1/app/del/{app_id}`
-
-删除应用。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `app_id` | integer | 应用 ID |
-
----
-
-#### POST `/api/v1/app/deploy`
-
-部署应用到 Kubernetes 集群。
-
-**请求体**：
-
-```json
-{
-  "app_id": 1,
-  "cluster_id": 1,
-  "namespace": "default",
-  "values": {
-    "replicaCount": 3,
-    "image": {
-      "repository": "redis",
-      "tag": "7.0.15"
-    }
-  }
-}
-```
-
----
-
-#### GET `/api/v1/app/cluster`
-
-列出所有集群。
-
-**响应示例**：
-
-```json
-{
-  "items": [
-    {
-      "id": 1,
-      "name": "生产集群",
-      "endpoint": "https://172.31.57.23:6443",
-      "status": "active"
-    }
-  ]
-}
-```
-
----
-
-#### GET `/api/v1/app/cluster/{cluster_id}`
-
-获取集群详情。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `cluster_id` | integer | 集群 ID |
-
----
-
-#### GET `/api/v1/app/clusterInfo/{cluster_id}`
-
-获取集群资源详情（节点、Pod 等统计信息）。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `cluster_id` | integer | 集群 ID |
-
----
-
-#### PUT `/api/v1/app/cluster/{cluster_id}/name`
-
-更新集群名称。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `cluster_id` | integer | 集群 ID |
-
-**请求体**：
-
-```json
-{
-  "name": "新集群名称"
-}
-```
-
----
-
-#### DELETE `/api/v1/app/cluster/{cluster_ip}`
-
-删除集群。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `cluster_ip` | string | 集群 IP 地址 |
-
----
-
-### 制品管理 (`/api/v1/artifacts`)
-
-#### GET `/api/v1/artifacts/list`
-
-列出制品文件。
-
-**查询参数**：
-
-| 参数 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `path` | string | 否 | 子目录路径 |
-
-**响应示例**：
-
-```json
-{
-  "items": [
-    {
-      "name": "app-v1.0.0.tar.gz",
-      "size": 1048576,
-      "modified_at": "2025-01-15T10:30:00Z"
-    }
-  ]
-}
-```
-
----
-
-#### POST `/api/v1/artifacts/upload`
-
-上传制品文件。
-
-**请求类型**：`multipart/form-data`
-
-**表单字段**：
-
-| 字段 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `file` | file | 是 | 制品文件 |
-
-**示例**：
+不同接口的 `data` 结构请在 Swagger UI 中查看。校验失败、鉴权失败和服务异常会使用相应 HTTP 状态码，并返回统一错误响应。
+
+## 当前路由概览
+
+### 基础与认证
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v1/health` | 服务健康检查 |
+| `POST` | `/api/v1/login` | 登录并获取 JWT |
+| `POST` | `/api/v1/logout` | 注销当前 JWT |
+| `GET` | `/api/v1/protected/unified` | 鉴权连通性检查 |
+
+### SSH 与集群资源
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/v1/ssh/execute-command` | 在单台主机执行命令 |
+| `POST` | `/api/v1/ssh/execute-multiple` | 在多台主机执行命令 |
+| `POST` | `/api/v1/ssh/upload-file` | 上传文件到远程主机 |
+| `POST` | `/api/v1/ssh/download-file` | 从远程主机下载文件 |
+| `GET` | `/api/v1/k8s/node` | 获取指定节点信息，要求 `name` 参数 |
+| `GET` | `/api/v1/k8s/overview` | 获取集群资源与存储总览 |
+| `GET` | `/api/v1/k8s/dashboard/resource/{type}` | 查询资源列表 |
+| `GET` | `/api/v1/k8s/dashboard/resourcedetail/{type}/{namespace}/{name}` | 查询资源详情 |
+| `GET` | `/api/v1/k8s/dashboard/resourcepod/{type}/{namespace}/{name}` | 查询资源关联 Pod |
+
+### 应用与集群记录
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v1/app/list` | 获取应用列表 |
+| `GET` | `/api/v1/app/get/{app_id}` | 获取应用详情 |
+| `POST` | `/api/v1/app/add` | 创建应用 |
+| `PUT` | `/api/v1/app/update` | 更新应用 |
+| `DELETE` | `/api/v1/app/del/{app_id}` | 删除应用 |
+| `POST` | `/api/v1/app/deploy` | 提交应用部署 |
+| `GET` | `/api/v1/app/cluster` | 获取集群记录 |
+| `GET` | `/api/v1/app/cluster/{cluster_id}` | 获取指定集群 |
+| `GET` | `/api/v1/app/clusterInfo/{cluster_id}` | 获取集群 Helm 资源信息 |
+| `PUT` | `/api/v1/app/cluster/{cluster_id}/name` | 修改集群名称 |
+| `DELETE` | `/api/v1/app/cluster/{cluster_ip}` | 删除集群记录 |
+
+### Harbor 制品
+
+制品接口根路径为 `/api/v1/artifacts`，覆盖以下操作：
+
+- 查询项目和仓库；
+- 查询、删除制品和读取 Chart Values；
+- 查询、新增和删除制品标签；
+- 通过 `POST /api/v1/artifacts/upload/chart` 上传 Chart。
+
+完整路径较长且包含 Harbor 项目、仓库、digest 等路径参数，建议直接通过 Swagger UI 调试。
+
+### 离线镜像导入任务
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/v1/artifacts/image-import-tasks` | 上传离线镜像文件并创建后台任务 |
+| `POST` | `/api/v1/artifacts/upload/image` | 上一接口的兼容入口 |
+| `GET` | `/api/v1/artifacts/image-import-tasks` | 分页查询任务 |
+| `GET` | `/api/v1/artifacts/image-import-tasks/{task_id}` | 查询任务及镜像明细 |
+| `POST` | `/api/v1/artifacts/image-import-tasks/{task_id}/retry` | 重试失败镜像 |
+
+上传示例：
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/artifacts/upload" \
-  -H "Authorization: Bearer <token>" \
-  -F "file=@app-v1.0.0.tar.gz"
+curl -X POST 'http://localhost:8080/api/v1/artifacts/image-import-tasks' \
+  -H 'Authorization: Bearer <JWT>' \
+  -F 'file=@images.tar'
 ```
 
----
+镜像导入在后台执行。服务重启时会恢复未完成任务；可通过列表/详情接口轮询状态，并对失败项发起重试。
 
-#### GET `/api/v1/artifacts/download/{filename}`
+### 异步任务与 WebSocket
 
-下载制品文件。
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/v1/create-resource` | 创建演示异步资源任务并返回 `task_id` |
+| `WS` | `/api/v1/ws?token=Bearer%20<JWT>` | 心跳和任务状态通信 |
 
-**路径参数**：
+WebSocket 建连后可发送 `{"action":"ping"}` 进行心跳。Token 查询参数需要包含 `Bearer ` 前缀，并进行 URL 编码。
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `filename` | string | 文件名 |
+## 维护说明
 
----
-
-#### DELETE `/api/v1/artifacts/delete/{filename}`
-
-删除制品文件。
-
-**路径参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `filename` | string | 文件名 |
-
----
-
-### WebSocket (`/api/v1/ws`)
-
-#### `/api/v1/ws/logs`
-
-实时任务日志流。
-
-**连接方式**：
-
-```javascript
-const ws = new WebSocket('ws://localhost:8080/api/v1/ws/logs?task_id=123');
-
-ws.onmessage = (event) => {
-  console.log(event.data); // 实时日志输出
-};
-```
-
-**查询参数**：
-
-| 参数 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `task_id` | string | 是 | 任务 ID |
-
----
-
-## 错误响应
-
-API 错误响应遵循标准 HTTP 状态码。
-
-### 错误响应格式
-
-```json
-{
-  "detail": "错误描述信息"
-}
-```
-
-### 常见状态码
-
-| 状态码 | 说明 |
-|--------|------|
-| `200 OK` | 请求成功 |
-| `201 Created` | 资源创建成功 |
-| `400 Bad Request` | 请求参数错误 |
-| `401 Unauthorized` | 未认证或 Token 无效 |
-| `403 Forbidden` | 无权限访问 |
-| `404 Not Found` | 资源不存在 |
-| `422 Unprocessable Entity` | 请求格式正确但语义错误 |
-| `500 Internal Server Error` | 服务器内部错误 |
-
-### 错误示例
-
-**认证失败**：
-
-```json
-{
-  "detail": "Invalid authentication credentials"
-}
-```
-
-**资源不存在**：
-
-```json
-{
-  "detail": "Application not found"
-}
-```
-
----
-
-## 使用示例
-
-### 完整的 API 调用流程
+新增或修改路由后，应同步更新本页概览。可用以下方式从运行时应用核对真实路由：
 
 ```bash
-# 1. 登录获取 Token
-TOKEN=$(curl -s -X POST "http://localhost:8080/api/v1/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "password"}' \
-  | jq -r '.access_token')
+PYTHONPATH=src python - <<'PY'
+from web.main import app
 
-# 2. 获取集群节点列表
-curl -X GET "http://localhost:8080/api/v1/k8s/node" \
-  -H "Authorization: Bearer $TOKEN"
-
-# 3. 部署应用
-curl -X POST "http://localhost:8080/api/v1/app/deploy" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "app_id": 1,
-    "cluster_id": 1,
-    "namespace": "default"
-  }'
-
-# 4. 执行远程命令
-curl -X POST "http://localhost:8080/api/v1/ssh/execute" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "hosts": ["172.31.57.23"],
-    "command": "kubectl get nodes"
-  }'
+for route in app.routes:
+    if route.path.startswith('/api/'):
+        methods = ','.join(sorted(getattr(route, 'methods', []) or [])) or 'WS'
+        print(f'{methods:12} {route.path}')
+PY
 ```
-
----
-
-## Python SDK 示例
-
-```python
-import requests
-
-BASE_URL = "http://localhost:8080/api/v1"
-
-# 登录
-response = requests.post(f"{BASE_URL}/auth/login", json={
-    "username": "admin",
-    "password": "password"
-})
-token = response.json()["access_token"]
-
-# 设置认证头
-headers = {"Authorization": f"Bearer {token}"}
-
-# 获取集群节点
-nodes = requests.get(f"{BASE_URL}/k8s/node", headers=headers).json()
-
-# 部署应用
-requests.post(f"{BASE_URL}/app/deploy", headers=headers, json={
-    "app_id": 1,
-    "cluster_id": 1,
-    "namespace": "default"
-})
-```
-
----
-
-## 速率限制
-
-API 可能实施速率限制以防止滥用。
-
-**默认限制**：
-- 每小时 1000 请求/用户
-- 超出限制返回 `429 Too Many Requests`
-
-**速率限制响应头**：
-
-```
-X-RateLimit-Limit: 1000
-X-RateLimit-Remaining: 950
-X-RateLimit-Reset: 1641234567
-```
-
----
-
-## API 版本
-
-当前 API 版本：`v1`
-
-URL 路径包含版本号：`/api/v1/...`
-
-主要版本变更会在文档中注明。
