@@ -1,7 +1,7 @@
 # KubeEngine
 
 <div align="center">
-<img src="./static/logo.png" alt="KubeEngine Logo" width="150"/>
+<img src="./static/kubeengine-icon.png" alt="KubeEngine Logo" width="150"/>
 
 ### 构建于麒麟之上，为云原生时代打造的坚固基石
 
@@ -233,6 +233,8 @@ kubengine-k8s deploy --deploy-src /path/to/offline-files -vvv
 
 - **[PyPI 发布](docs/PYPI_INSTALL.md)** - PyPI 包发布指南
 
+- **[手动离线部署](docs/手动部署文档.md)** - 不安装、不调用 KubEngine 的 Kubernetes 及配套组件部署指南
+
 ## 👨‍💻 开发指南
 
 ### 开发环境设置
@@ -373,7 +375,10 @@ kubengine/
 │           └── response.py    # 响应工具
 ├── static/                    # 静态资源
 │   ├── badge/                 # 徽章图片
-│   └── logo.png               # Logo 图片
+│   ├── favicon.ico            # 网站图标
+│   ├── kubeengine-icon.jpeg   # Logo白底版
+│   ├── kubeengine-icon.png    # Logo透明版
+│   └── kubeengine-icon.svg    # Logo矢量版
 ├── logs/                      # 日志文件目录
 ├── tests/                     # 测试文件
 ├── pyproject.toml             # 项目配置

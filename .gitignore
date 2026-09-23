@@ -110,9 +110,8 @@ config/*
 static/*.png
 static/*.jpg
 static/*.jpeg
-!static/logo.svg
-!static/logo.png
-!static/logo.jpg
+!static/kubeengine-icon.png
+!static/kubeengine-icon.jpeg
 
 # Temporary files
 tmp/
