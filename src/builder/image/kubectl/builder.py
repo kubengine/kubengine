@@ -18,15 +18,15 @@ from pathlib import Path
 from typing import List, Any, Optional, Union
 
 from builder.image.base_builder import BuilderOptions
-from builder.image.os.kylin_v11 import Builder as KylinV11Builder
+from builder.image.os.kylin import Builder as KylinBuilder
 from core.logger import get_logger
 logger = get_logger(__name__)
 
 
-class Builder(KylinV11Builder):
+class Builder(KylinBuilder):
     """kubectl镜像构建器
 
-    此类扩展了基础的 builder.image.os.kylin_v11.Builder 以提供特定功能，
+    此类扩展了基础的 builder.image.os.kylin.Builder 以提供特定功能，
     支持多版本的kubectl。
     """
 
@@ -41,7 +41,7 @@ class Builder(KylinV11Builder):
         Returns:
             List[str]: 支持的特性列表
         """
-        parent_features = KylinV11Builder.supported_features()
+        parent_features = KylinBuilder.supported_features()
         kubectl_features = [
             "kubectl_cli",
             "multi_version_support",

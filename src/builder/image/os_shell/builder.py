@@ -6,7 +6,7 @@ Kylin V11 OS Shell 镜像构建器
 """
 from __future__ import annotations
 
-from builder.image.os.kylin_v11 import Builder as KylinV11Builder
+from builder.image.os.kylin import Builder as KylinBuilder
 from builder.image.base_builder import BuilderOptions
 from typing import Any, List, Optional, Union
 from pathlib import Path
@@ -14,10 +14,10 @@ from core.logger import get_logger
 logger = get_logger(__name__)
 
 
-class Builder(KylinV11Builder):
+class Builder(KylinBuilder):
     """Kylin V11 OS Shell 镜像构建器
 
-    此类扩展了基础的 builder.image.os.kylin_v11.Builder 以提供特定功能，
+    此类扩展了基础的 builder.image.os.kylin.Builder 以提供特定功能，
     用于构建带有 shell 配置的 Kylin V11 镜像。
     """
 
@@ -29,7 +29,7 @@ class Builder(KylinV11Builder):
             List[str]: 支持的特性列表
         """
         # 获取父类的所有特性
-        parent_features = KylinV11Builder.supported_features()
+        parent_features = KylinBuilder.supported_features()
 
         # 添加shell特定的特性
         shell_features = [

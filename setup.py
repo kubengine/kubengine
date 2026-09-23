@@ -38,7 +38,7 @@ _METADATA: dict[str, Any] = {
             "kubengine-k8s=cli.k8s:cli",
         ],
         "image_builders": [
-            "kylin-v11 = builder.image.os.kylin_v11:Builder",
+            "kylin = builder.image.os.kylin:Builder",
             "kubectl = builder.image.kubectl.builder:Builder",
             "os-shell = builder.image.os_shell.builder:Builder",
             "redis = builder.image.redis.builder:RedisBuilder",

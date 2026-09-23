@@ -29,7 +29,7 @@ dependencies = [
   "websockets>=15.0.1",
   "kubernetes>=34.1.0",
   "rich>=14.3.1",
-  "toml>=0.10.2"
+  "toml>=0.10.2",
 ]
 
 [project.optional-dependencies]
@@ -43,14 +43,12 @@ dev = [
   "isort>=5.12.0",
   "pydocstyle>=6.3.0",
   "pre-commit>=3.0.4",
-  "cython>=3.0.0"
-]
-cython = [
   "cython>=3.0.0",
 ]
+cython = ["cython>=3.0.0"]
 
 [project.entry-points."image_builders"]
-kylin-v11 = "builder.image.os.kylin_v11:Builder"
+kylin = "builder.image.os.kylin:Builder"
 kubectl = "builder.image.kubectl.builder:Builder"
 os-shell = "builder.image.os_shell.builder:Builder"
 redis = "builder.image.redis.builder:RedisBuilder"
@@ -62,7 +60,7 @@ kubengine = "cli.app:cli"
 kubengine-k8s = "cli.k8s:cli"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
 packages = { find = { where = ["src"] } }
 include-package-data = true
 
@@ -86,7 +84,7 @@ python_version = "3.11"
 strict = true
 disallow_untyped_defs = true
 check_untyped_defs = true
-ignore_missing_imports = true  # 忽略缺失的导入类型（比如第三方库无类型注解）
+ignore_missing_imports = true # 忽略缺失的导入类型（比如第三方库无类型注解）
 warn_no_return = false
 warn_unused_ignores = false
 
