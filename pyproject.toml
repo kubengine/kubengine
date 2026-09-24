@@ -19,7 +19,7 @@ classifiers = [
 dependencies = [
   "fastapi>=0.121.3",
   "uvicorn>=0.38.0",
-  "pyinfra>=3.5.1",
+  "pyinfra==3.6.1",
   "asyncssh>=2.21.1",
   "python-multipart>=0.0.20",
   "PyYAML>=6.0.3",

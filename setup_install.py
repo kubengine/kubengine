@@ -62,7 +62,7 @@ setup(
         "click>=8.0.0",
         "kubernetes>=34.1.0",
         "asyncssh>=2.21.1",
-        "pyinfra>=3.5.1",
+        "pyinfra==3.6.1",
         "requests>=2.32.5",
         "websockets>=15.0.1",
         "python-multipart>=0.0.20",

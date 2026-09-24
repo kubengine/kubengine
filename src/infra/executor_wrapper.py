@@ -10,7 +10,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 from pyinfra import logger as pyinfra_logger
 from pyinfra.api.config import Config
@@ -21,6 +21,7 @@ from pyinfra.api.operations import run_ops
 from pyinfra.context import ctx_config, ctx_inventory, ctx_state, ctx_host
 from pyinfra_cli.prints import print_results  # type: ignore
 from core.logger import get_logger
+
 logger = get_logger(__name__)
 pyinfra_logger.setLevel(logger.level)  # 对齐PyInfra日志级别
 
@@ -37,6 +38,7 @@ class InfraExecutionConfig:
         check_for_changes: 是否让 pyinfra 在操作注册阶段预检变更与否
         op_timeout: 未显式指定 _timeout 的操作的默认超时（秒）
     """
+
     parallel: int = 5
     connect_timeout: int = 10
     fail_percent: int = 0
@@ -63,12 +65,15 @@ class HostOperationResult:
         operation_name: Name/identifier of the operation
         success: Whether the operation succeeded
         changed: Whether the operation made changes
+        skipped: 操作是否不适用于当前主机而被跳过
         output: Raw output from the operation
         error: Error message if operation failed
     """
+
     operation_name: str
     success: bool = False
     changed: bool = False
+    skipped: bool = False
     output: List[str] = field(default_factory=list)
     error: Optional[str] = None
 
@@ -78,9 +83,12 @@ class HostOperationResult:
             "operation_name": self.operation_name,
             "success": self.success,
             "changed": self.changed,
+            "skipped": self.skipped,
             "output": self.output,
             "error": self.error,
-            "status": "success" if self.success else "failed"
+            "status": (
+                "skipped" if self.skipped else "success" if self.success else "failed"
+            ),
         }
 
 
@@ -94,12 +102,14 @@ class HostExecutionResult:
         execution_start_time: Timestamp of execution start (Unix seconds)
         execution_end_time: Timestamp of execution end (Unix seconds)
         operations: Dictionary of operation results (key: operation name)
-        total_operations: Total number of operations executed
+        total_operations: 当前主机纳入统计的操作总数
         successful_operations: Number of successful operations
         failed_operations: Number of failed operations
         changed_operations: Number of operations that made changes
+        skipped_operations: 不适用于当前主机的跳过操作数
         error: Top-level error (e.g., connection failure)
     """
+
     hostname: str
     connected: bool = False
     execution_start_time: float = 0.0
@@ -109,6 +119,7 @@ class HostExecutionResult:
     successful_operations: int = 0
     failed_operations: int = 0
     changed_operations: int = 0
+    skipped_operations: int = 0
     error: Optional[str] = None
 
     @property
@@ -123,6 +134,7 @@ class HostExecutionResult:
 
     def dict(self) -> Dict[str, Any]:
         """Convert host result to dictionary for JSON serialization."""
+        executed_operations = self.successful_operations + self.failed_operations
         return {
             "hostname": self.hostname,
             "connected": self.connected,
@@ -133,6 +145,7 @@ class HostExecutionResult:
             "successful_operations": self.successful_operations,
             "failed_operations": self.failed_operations,
             "changed_operations": self.changed_operations,
+            "skipped_operations": self.skipped_operations,
             "success": self.success,
             "error": self.error,
             "operations": {
@@ -141,18 +154,26 @@ class HostExecutionResult:
             },
             "summary": {
                 "success_rate": (
-                    self.successful_operations / self.total_operations * 100
-                    if self.total_operations > 0 else 0.0
+                    self.successful_operations / executed_operations * 100
+                    if executed_operations > 0
+                    else 0.0
                 ),
                 "failure_rate": (
-                    self.failed_operations / self.total_operations * 100
-                    if self.total_operations > 0 else 0.0
+                    self.failed_operations / executed_operations * 100
+                    if executed_operations > 0
+                    else 0.0
                 ),
                 "change_rate": (
-                    self.changed_operations / self.total_operations * 100
-                    if self.total_operations > 0 else 0.0
-                )
-            }
+                    self.changed_operations / executed_operations * 100
+                    if executed_operations > 0
+                    else 0.0
+                ),
+                "skip_rate": (
+                    self.skipped_operations / self.total_operations * 100
+                    if self.total_operations > 0
+                    else 0.0
+                ),
+            },
         }
 
 
@@ -172,6 +193,7 @@ class InfraExecutionResult:
         changed_hosts: Number of hosts with at least one changed operation
         global_error: Top-level execution error (e.g., invalid file path)
     """
+
     success: bool = False
     execution_start_time: float = 0.0
     execution_end_time: float = 0.0
@@ -227,18 +249,21 @@ class InfraExecutionResult:
                 "connection_failures_list": self.get_connection_failures(),
                 "success_rate": (
                     self.successful_hosts / self.total_hosts * 100
-                    if self.total_hosts > 0 else 0.0
+                    if self.total_hosts > 0
+                    else 0.0
                 ),
                 "connection_rate": (
                     self.connected_hosts / self.total_hosts * 100
-                    if self.total_hosts > 0 else 0.0
-                )
-            }
+                    if self.total_hosts > 0
+                    else 0.0
+                ),
+            },
         }
 
     def to_json(self, indent: Optional[int] = 2) -> str:
         """Convert result to JSON string."""
         import json
+
         return json.dumps(self.dict(), indent=indent, ensure_ascii=False)
 
 
@@ -259,8 +284,7 @@ class InfraFileExecutor:
         infra_file_path: Union[str, Path],
         host_ips: List[str],  # 直接接收IP字符串列表
         shared_data: Optional[Dict[str, Any]] = None,  # 共享数据
-        target_groups: Optional[Dict[str,
-                                     Tuple[list[str], Dict[str, Any]]]] = None,
+        target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]] = None,
     ) -> InfraExecutionResult:
         """Execute infrastructure deployment file (enhanced result return).
 
@@ -278,8 +302,7 @@ class InfraFileExecutor:
         result = InfraExecutionResult(
             execution_start_time=time.time(),
             total_hosts=len(host_ips),
-            host_results={ip: HostExecutionResult(
-                hostname=ip) for ip in host_ips}
+            host_results={ip: HostExecutionResult(hostname=ip) for ip in host_ips},
         )
 
         # 初始化shared_data（默认空字典，避免None）
@@ -290,14 +313,15 @@ class InfraFileExecutor:
             file_path = Path(infra_file_path)
             if not file_path.exists():
                 raise FileNotFoundError(
-                    f"Infrastructure file not found: {infra_file_path}")
+                    f"Infrastructure file not found: {infra_file_path}"
+                )
             if not file_path.is_file():
-                raise IsADirectoryError(
-                    f"Path is not a file: {infra_file_path}")
+                raise IsADirectoryError(f"Path is not a file: {infra_file_path}")
 
             # 初始化执行环境（适配IP列表+shared_data）
             self._setup_execution_environment(
-                file_path, host_ips, shared_data, target_groups)
+                file_path, host_ips, shared_data, target_groups
+            )
 
             # 执行部署并收集详细结果
             self._execute_deployment(file_path, result, shared_data)
@@ -321,8 +345,7 @@ class InfraFileExecutor:
         infra_file_path: Union[str, Path],
         host_ips: List[str],
         shared_data: Optional[Dict[str, Dict[str, Any]]] = None,
-        target_groups: Optional[Dict[str,
-                                     Tuple[list[str], Dict[str, Any]]]] = None,
+        target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]] = None,
     ) -> InfraExecutionResult:
         """Execute infrastructure file asynchronously (preserves enhanced results)."""
         try:
@@ -334,7 +357,8 @@ class InfraFileExecutor:
         try:
             return loop.run_until_complete(
                 self._execute_file_async_wrapper(
-                    infra_file_path, host_ips, shared_data, target_groups)
+                    infra_file_path, host_ips, shared_data, target_groups
+                )
             )
         finally:
             loop.close()
@@ -347,30 +371,32 @@ class InfraFileExecutor:
         target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]],
     ) -> InfraExecutionResult:
         """Async wrapper for file execution (preserves sync logic)."""
-        return await asyncio.to_thread(self.execute_file, infra_file_path, host_ips, shared_data, target_groups)
+        return await asyncio.to_thread(
+            self.execute_file, infra_file_path, host_ips, shared_data, target_groups
+        )
 
     def _setup_execution_environment(
         self,
         infra_file_path: Path,
         host_ips: List[str],
         shared_data: Dict[str, Dict[str, Any]],
-        target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]]
+        target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]],
     ) -> None:
         """Setup PyInfra execution environment (适配IP列表+dynamic shared_data)."""
         # 将文件目录加入sys.path
-        if infra_file_path.parent not in sys.path:
-            sys.path.insert(0, str(infra_file_path.parent))
+        infra_directory = str(infra_file_path.parent)
+        if infra_directory not in sys.path:
+            sys.path.insert(0, infra_directory)
 
         # 初始化PyInfra状态
         # 注意：pyinfra 的 check_for_changes 表示"注册操作时先取 fact 预判变更"，
         # 不是 dry-run；默认关闭，见 InfraExecutionConfig.check_for_changes。
-        self._state = State(
-            check_for_changes=bool(self.config.check_for_changes))
+        self._state = State(check_for_changes=bool(self.config.check_for_changes))
         self._state.cwd = str(infra_file_path.parent)
         ctx_state.set(self._state)  # type: ignore
 
         # 配置PyInfra
-        config: "Config" = Config()
+        config: "Config" = Config()  # type: ignore[no-untyped-call]
         config.PARALLEL = self.config.parallel
         config.CONNECT_TIMEOUT = self.config.connect_timeout
         config.FAIL_PERCENT = self.config.fail_percent
@@ -380,22 +406,26 @@ class InfraFileExecutor:
         # shared_data 是发给所有主机的公共数据（master_ip、deploy_src 等），
         # pyinfra 会把其中的键当作 host.data 的属性；_timeout 放在这里就变成
         # 所有操作的默认超时（单条操作显式传 _timeout 仍然优先生效）。
-        inventory_data = dict(shared_data)
+        inventory_data: Dict[str, Any] = dict(shared_data)
         inventory_data.setdefault("_timeout", self.config.op_timeout)
-        inventory = Inventory(
+        inventory = Inventory(  # type: ignore[no-untyped-call]
             (host_ips, inventory_data),  # 直接传入IP列表和动态连接配置
-            **(target_groups or {})
+            **(target_groups or {}),
         )
         ctx_inventory.set(inventory)  # type: ignore
 
         # 初始化state
         self._state.init(inventory, config)  # type: ignore
 
-    def _execute_deployment(self, infra_file_path: Path, result: InfraExecutionResult, shared_data: Dict[str, Dict[str, Any]]) -> None:
+    def _execute_deployment(
+        self,
+        infra_file_path: Path,
+        result: InfraExecutionResult,
+        shared_data: Dict[str, Dict[str, Any]],
+    ) -> None:
         """Execute deployment and populate enhanced result object (适配IP列表)."""
         if not self._state:
-            raise RuntimeError(
-                "Execution environment not properly initialized")
+            raise RuntimeError("Execution environment not properly initialized")
 
         # 1. 连接所有主机
         logger.info("--> Connecting to hosts...")
@@ -405,9 +435,12 @@ class InfraFileExecutor:
         # 标记连接状态到结果
         for ip, host_result in result.host_results.items():
             host_result.connected = ip in [
-                str(host) for host in self._state.activated_hosts]
+                str(host) for host in self._state.activated_hosts
+            ]
             if not host_result.connected:
-                host_result.error = "Failed to connect to host (check SSH config in shared_data)"
+                host_result.error = (
+                    "Failed to connect to host (check SSH config in shared_data)"
+                )
                 logger.warning(f"Host {ip} failed to connect")
 
         # 检查是否有可用主机
@@ -419,18 +452,15 @@ class InfraFileExecutor:
         self._state.set_stage(StateStage.Prepare)
         module_name = infra_file_path.stem
 
-        spec = importlib.util.spec_from_file_location(
-            module_name, str(infra_file_path))
+        spec = importlib.util.spec_from_file_location(module_name, str(infra_file_path))
         if not spec or not spec.loader:
-            raise RuntimeError(
-                f"Failed to load module spec for {infra_file_path}")
+            raise RuntimeError(f"Failed to load module spec for {infra_file_path}")
         module = importlib.util.module_from_spec(spec)
 
         # 3. 遍历激活的主机执行部署
-        logger.info(
-            f"--> Found {len(self._state.activated_hosts)} activated hosts")
-        for host_ip in self._state.activated_hosts:
-            host_ip = str(host_ip)
+        logger.info(f"--> Found {len(self._state.activated_hosts)} activated hosts")
+        for activated_host in self._state.activated_hosts:
+            host_ip = str(activated_host)
             host = self._state.inventory.hosts.get(host_ip)
             if not host:
                 logger.warning(f"Host '{host_ip}' not found in inventory")
@@ -480,100 +510,115 @@ class InfraFileExecutor:
         logger.info("--> Deployment completed")
 
     def _collect_operation_results(self, result: InfraExecutionResult) -> None:
-        """Collect detailed operation results for each host."""
+        """通过 PyInfra 3.6 公共状态接口采集操作结果。
+
+        PyInfra 将主机级计数存放在 ``state.results``，实际操作结果位于
+        ``state.get_op_data_for_host(...).operation_meta``。旧实现把
+        ``state.results[host]`` 当作映射读取，导致 PyInfra 3.6 下操作数始终为零。
+        这里采用严格采集策略：接口不兼容或操作结果不完整时明确判定为失败，
+        避免将结果未知的部署误报为空操作成功。
+        """
         if not self._state:
             return
 
-        # PyInfra stores results as: state.results[Host] = HostResults
-        # Each HostResults contains operations with their status
-        state_results = getattr(self._state, 'results', {})
-        if not state_results:
-            logger.warning("No results found in PyInfra state")
-            return
+        raw_get_op_order = getattr(self._state, "get_op_order", None)
+        raw_get_op_meta = getattr(self._state, "get_op_meta", None)
+        raw_get_op_data = getattr(self._state, "get_op_data_for_host", None)
+        if not all(
+            callable(method)
+            for method in (raw_get_op_order, raw_get_op_meta, raw_get_op_data)
+        ):
+            raise RuntimeError(
+                "Unsupported PyInfra state API: operation results cannot be collected"
+            )
 
-        # 遍历所有激活的主机（这些是Host对象）
+        get_op_order = cast(Callable[[], Any], raw_get_op_order)
+        get_op_meta = cast(Callable[[str], Any], raw_get_op_meta)
+        get_op_data = cast(Callable[[Any, str], Any], raw_get_op_data)
+
+        try:
+            op_order = list(get_op_order())
+        except Exception as exc:
+            raise RuntimeError(
+                f"Unable to read PyInfra operation order: {exc}"
+            ) from exc
+
+        def operation_name(op_hash: str) -> str:
+            state_op_meta = get_op_meta(op_hash)
+            names = sorted(str(name) for name in getattr(state_op_meta, "names", set()))
+            return ", ".join(names) or f"operation_{str(op_hash)[:8]}"
+
+        def unique_name(base_name: str, counters: Dict[str, int]) -> str:
+            occurrence = counters.get(base_name, 0)
+            counters[base_name] = occurrence + 1
+            return base_name if occurrence == 0 else f"{base_name}_{occurrence}"
+
         for host in self._state.activated_hosts:
-            host_ip = str(host)  # Host对象的字符串表示通常是IP/hostname
-
-            # 获取对应的主机结果对象
+            host_ip = str(host)
             host_result = result.host_results.get(host_ip)
             if not host_result:
                 logger.warning(f"Host {host_ip} not found in result tracking")
                 continue
-
             if not host_result.connected:
                 continue
 
-            # 获取该主机的执行结果
-            host_execution_results = state_results.get(host)
-            if not host_execution_results:
-                logger.debug(f"No execution results for host {host_ip}")
-                continue
-
-            # PyInfra操作结果存储在op_order和results_dict中
+            op_name_counter: Dict[str, int] = {}
+            previous_operation_failed = False
             try:
-                # 获取操作执行顺序和结果
-                op_order = getattr(self._state, 'op_order', [])
-                op_results = getattr(host_execution_results, 'results', {})
-
-                # 如果op_order为空，尝试从主机结果中获取操作
-                if not op_order:
-                    op_order = list(op_results.keys())
-
-                op_name_counter = {}
-
-                # 遍历所有操作
                 for op_hash in op_order:
-                    if op_hash not in op_results:
-                        logger.debug(
-                            f"Operation {op_hash} not found in results")
+                    base_name = operation_name(op_hash)
+                    op_name = unique_name(base_name, op_name_counter)
+
+                    try:
+                        op_data = get_op_data(host, op_hash)
+                    except KeyError:
+                        host_result.operations[op_name] = HostOperationResult(
+                            operation_name=op_name,
+                            success=True,
+                            skipped=True,
+                        )
+                        host_result.total_operations += 1
+                        host_result.skipped_operations += 1
                         continue
 
-                    op_result = op_results[op_hash]
+                    op_meta = getattr(op_data, "operation_meta", None)
+                    if op_meta is None:
+                        raise RuntimeError(
+                            f"Operation {base_name} on {host_ip} has no result metadata"
+                        )
 
-                    # 获取操作的基本信息
-                    op_meta = getattr(op_result, 'operation', op_result)
-                    op_name = getattr(
-                        op_meta, 'name', f"operation_{op_hash[:8]}")
+                    is_complete = getattr(op_meta, "is_complete", None)
+                    if not callable(is_complete) or not is_complete():
+                        if previous_operation_failed:
+                            host_result.operations[op_name] = HostOperationResult(
+                                operation_name=op_name,
+                                success=True,
+                                skipped=True,
+                            )
+                            host_result.total_operations += 1
+                            host_result.skipped_operations += 1
+                            continue
+                        raise RuntimeError(
+                            f"Operation {base_name} on {host_ip} has no completed result"
+                        )
 
-                    # 处理重复操作名
-                    base_name = op_name
-                    if base_name in op_name_counter:
-                        op_name_counter[base_name] += 1
-                        op_name = f"{base_name}_{op_name_counter[base_name]}"
-                    else:
-                        op_name_counter[base_name] = 0
+                    op_success = bool(op_meta.did_succeed())
+                    op_changed = bool(op_meta.did_change())
+                    stdout_lines = [str(line) for line in op_meta.stdout_lines]
+                    stderr_lines = [str(line) for line in op_meta.stderr_lines]
+                    op_output = stdout_lines + stderr_lines
+                    op_error = None
+                    if not op_success:
+                        op_error = "\n".join(stderr_lines) or "PyInfra operation failed"
 
-                    # 获取操作状态
-                    op_success = getattr(op_result, 'success', True)  # 默认成功
-                    op_changed = getattr(op_result, 'changed', False)
-                    op_error = getattr(op_result, 'error', None)
-
-                    # 获取操作输出（可能是字符串、列表或None）
-                    op_output = getattr(op_result, 'output', [])
-                    if op_output is None:
-                        op_output = []
-                    elif isinstance(op_output, str):
-                        op_output = [op_output]
-                    elif isinstance(op_output, list):
-                        op_output = [
-                            str(item) for item in op_output]  # type: ignore
-                    else:
-                        op_output = [str(op_output)]
-
-                    # 创建操作结果对象
                     host_op_result = HostOperationResult(
                         operation_name=op_name,
                         success=op_success,
                         changed=op_changed,
                         output=op_output,
-                        error=op_error if not op_success and op_error else None
+                        error=op_error,
                     )
-
-                    # 添加到主机结果
                     host_result.operations[op_name] = host_op_result
-
-                    # 更新统计
                     host_result.total_operations += 1
                     if op_success:
                         host_result.successful_operations += 1
@@ -581,21 +626,20 @@ class InfraFileExecutor:
                         host_result.failed_operations += 1
                     if op_changed:
                         host_result.changed_operations += 1
-
-                # 检查主机是否有全局错误
-                if getattr(host_execution_results, 'error', None):
-                    host_result.error = str(host_execution_results.error)
+                    previous_operation_failed = not op_success
 
             except Exception as e:
                 logger.error(
-                    f"Error collecting results for host {host_ip}: {str(e)}", exc_info=True)
+                    f"Error collecting results for host {host_ip}: {str(e)}",
+                    exc_info=True,
+                )
                 host_result.error = f"Failed to collect operation results: {str(e)}"
 
         # 记录总体统计信息
-        total_ops = sum(len(host.operations)
-                        for host in result.host_results.values())
+        total_ops = sum(len(host.operations) for host in result.host_results.values())
         logger.info(
-            f"Collected {total_ops} total operations across {len(result.host_results)} hosts")
+            f"Collected {total_ops} total operations across {len(result.host_results)} hosts"
+        )
 
     def _calculate_summary_metrics(self, result: InfraExecutionResult) -> None:
         """Calculate cross-host summary metrics for the global result."""
@@ -622,7 +666,10 @@ class InfraFileExecutor:
         result.failed_hosts = failed
         result.changed_hosts = changed
         result.success = (
-            result.global_error is None and result.failed_hosts == 0 and result.total_hosts > 0)
+            result.global_error is None
+            and result.failed_hosts == 0
+            and result.total_hosts > 0
+        )
 
     def _cleanup_execution(self) -> None:
         """Clean up execution environment (enhanced context reset)."""
@@ -632,7 +679,7 @@ class InfraFileExecutor:
             # 断开主机连接
             try:
                 # 简化版本：不使用progress_spinner，直接断开连接
-                activated_hosts = getattr(self._state, 'activated_hosts', [])
+                activated_hosts = getattr(self._state, "activated_hosts", [])
                 greenlets: list[Any] = []
 
                 for host in activated_hosts:
@@ -661,10 +708,9 @@ class InfraFileExecutor:
         infra_file_paths: Union[List[Union[str, Path]], Dict[str, Union[str, Path]]],
         host_ips: List[str],
         shared_data: Optional[Dict[str, Any]] = None,
-        target_groups: Optional[Dict[str,
-                                     Tuple[list[str], Dict[str, Any]]]] = None,
+        target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]] = None,
         execution_mode: str = "sequential",
-        fail_fast: Optional[bool] = None
+        fail_fast: Optional[bool] = None,
     ) -> InfraExecutionResult:
         """Execute multiple infrastructure deployment files.
 
@@ -692,8 +738,7 @@ class InfraFileExecutor:
         result = InfraExecutionResult(
             execution_start_time=time.time(),
             total_hosts=len(host_ips),
-            host_results={ip: HostExecutionResult(
-                hostname=ip) for ip in host_ips}
+            host_results={ip: HostExecutionResult(hostname=ip) for ip in host_ips},
         )
 
         shared_data = shared_data or {}
@@ -704,10 +749,12 @@ class InfraFileExecutor:
                 path = Path(file_path)
                 if not path.exists():
                     raise FileNotFoundError(
-                        f"Infrastructure file not found: {file_path} (name: {name})")
+                        f"Infrastructure file not found: {file_path} (name: {name})"
+                    )
                 if not path.is_file():
                     raise IsADirectoryError(
-                        f"Path is not a file: {file_path} (name: {name})")
+                        f"Path is not a file: {file_path} (name: {name})"
+                    )
 
             if execution_mode == "parallel":
                 result = self._execute_files_parallel(
@@ -715,7 +762,12 @@ class InfraFileExecutor:
                 )
             else:
                 result = self._execute_files_sequential_with_strategy(
-                    file_mapping, host_ips, shared_data, target_groups, result, should_fail_fast
+                    file_mapping,
+                    host_ips,
+                    shared_data,
+                    target_groups,
+                    result,
+                    should_fail_fast,
                 )
 
         except Exception as e:
@@ -737,7 +789,7 @@ class InfraFileExecutor:
         shared_data: Dict[str, Any],
         target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]],
         result: InfraExecutionResult,
-        fail_fast: bool
+        fail_fast: bool,
     ) -> InfraExecutionResult:
         """Execute multiple files sequentially with configurable fail strategy."""
         if fail_fast:
@@ -755,15 +807,14 @@ class InfraFileExecutor:
         host_ips: List[str],
         shared_data: Dict[str, Any],
         target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]],
-        result: InfraExecutionResult
+        result: InfraExecutionResult,
     ) -> InfraExecutionResult:
         """Execute multiple files sequentially with fail-fast behavior."""
         file_results: dict[str, Any] = {}
         total_operations = 0
 
         for file_name, file_path in file_mapping.items():
-            logger.info(
-                f"--> Executing infrastructure file: {file_name} ({file_path})")
+            logger.info(f"--> Executing infrastructure file: {file_name} ({file_path})")
 
             try:
                 # 为每个文件创建新的执行器实例
@@ -774,14 +825,14 @@ class InfraFileExecutor:
                     infra_file_path=file_path,
                     host_ips=host_ips,
                     shared_data=shared_data,
-                    target_groups=target_groups
+                    target_groups=target_groups,
                 )
 
                 # 记录当前文件执行结果
                 file_results[file_name] = {
                     "success": file_result.success,
                     "duration": file_result.execution_duration,
-                    "error": file_result.global_error
+                    "error": file_result.global_error,
                 }
 
                 # 检查文件执行是否失败
@@ -804,30 +855,32 @@ class InfraFileExecutor:
                             failed_op = HostOperationResult(
                                 operation_name=f"execution_stopped_at_{file_name}",
                                 success=False,
-                                error=f"Execution stopped due to failure in file: {file_name}"
+                                error=f"Execution stopped due to failure in file: {file_name}",
                             )
-                            host_result.operations[f"execution_stopped_at_{file_name}"] = failed_op
+                            host_result.operations[
+                                f"execution_stopped_at_{file_name}"
+                            ] = failed_op
                             host_result.total_operations += 1
                             host_result.failed_operations += 1
 
                     logger.info(
-                        f"--> Stopping further file execution due to failure in: {file_name}")
+                        f"--> Stopping further file execution due to failure in: {file_name}"
+                    )
                     return result
 
                 # 文件执行成功，合并结果
-                result = self._merge_execution_results(
-                    result, file_result, file_name
-                )
+                result = self._merge_execution_results(result, file_result, file_name)
 
                 total_operations += sum(
-                    host.total_operations
-                    for host in file_result.host_results.values()
+                    host.total_operations for host in file_result.host_results.values()
                 )
 
                 logger.info(f"--> File {file_name} completed successfully")
 
             except Exception as e:
-                error_msg = f"Exception occurred while executing file {file_name}: {str(e)}"
+                error_msg = (
+                    f"Exception occurred while executing file {file_name}: {str(e)}"
+                )
                 logger.error(error_msg, exc_info=True)
 
                 # 设置全局错误并立即返回
@@ -840,20 +893,20 @@ class InfraFileExecutor:
                         failed_op = HostOperationResult(
                             operation_name=f"execution_exception_at_{file_name}",
                             success=False,
-                            error=error_msg
+                            error=error_msg,
                         )
-                        host_result.operations[f"execution_exception_at_{file_name}"] = failed_op
+                        host_result.operations[
+                            f"execution_exception_at_{file_name}"
+                        ] = failed_op
                         host_result.total_operations += 1
                         host_result.failed_operations += 1
 
                 # 记录失败文件信息
-                file_results[file_name] = {
-                    "success": False,
-                    "error": error_msg
-                }
+                file_results[file_name] = {"success": False, "error": error_msg}
 
                 logger.info(
-                    f"--> Stopping further file execution due to exception in: {file_name}")
+                    f"--> Stopping further file execution due to exception in: {file_name}"
+                )
                 return result
 
         # 所有文件都成功执行
@@ -868,8 +921,8 @@ class InfraFileExecutor:
                 output=[
                     f"Successfully executed {len(file_mapping)} files",
                     f"Files executed: {list(file_results.keys())}",
-                    f"Total operations: {total_operations}"
-                ]
+                    f"Total operations: {total_operations}",
+                ],
             )
 
         logger.info(f"--> All {len(file_mapping)} files executed successfully")
@@ -881,15 +934,14 @@ class InfraFileExecutor:
         host_ips: List[str],
         shared_data: Dict[str, Any],
         target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]],
-        result: InfraExecutionResult
+        result: InfraExecutionResult,
     ) -> InfraExecutionResult:
         """Execute multiple files sequentially."""
         file_results: dict[str, Any] = {}
         total_operations = 0
 
         for file_name, file_path in file_mapping.items():
-            logger.info(
-                f"--> Executing infrastructure file: {file_name} ({file_path})")
+            logger.info(f"--> Executing infrastructure file: {file_name} ({file_path})")
 
             try:
                 # 为每个文件创建新的执行器实例
@@ -900,23 +952,20 @@ class InfraFileExecutor:
                     infra_file_path=file_path,
                     host_ips=host_ips,
                     shared_data=shared_data,
-                    target_groups=target_groups
+                    target_groups=target_groups,
                 )
 
                 # 合并结果到主结果对象
-                result = self._merge_execution_results(
-                    result, file_result, file_name
-                )
+                result = self._merge_execution_results(result, file_result, file_name)
 
                 file_results[file_name] = {
                     "success": file_result.success,
                     "duration": file_result.execution_duration,
-                    "error": file_result.global_error
+                    "error": file_result.global_error,
                 }
 
                 total_operations += sum(
-                    host.total_operations
-                    for host in file_result.host_results.values()
+                    host.total_operations for host in file_result.host_results.values()
                 )
 
                 logger.info(f"--> File {file_name} completed successfully")
@@ -931,22 +980,22 @@ class InfraFileExecutor:
                         failed_op = HostOperationResult(
                             operation_name=f"file_execution_{file_name}",
                             success=False,
-                            error=error_msg
+                            error=error_msg,
                         )
-                        host_result.operations[f"file_execution_{file_name}"] = failed_op
+                        host_result.operations[f"file_execution_{file_name}"] = (
+                            failed_op
+                        )
                         host_result.total_operations += 1
                         host_result.failed_operations += 1
 
-                file_results[file_name] = {
-                    "success": False,
-                    "error": error_msg
-                }
+                file_results[file_name] = {"success": False, "error": error_msg}
 
         # 添加文件执行汇总信息
         result.global_error = None
         if not all(fr["success"] for fr in file_results.values()):
-            failed_files = [name for name,
-                            fr in file_results.items() if not fr["success"]]
+            failed_files = [
+                name for name, fr in file_results.items() if not fr["success"]
+            ]
             result.global_error = f"Failed files: {', '.join(failed_files)}"
 
         # 记录文件执行结果
@@ -954,8 +1003,10 @@ class InfraFileExecutor:
             host_result.operations["_file_execution_summary"] = HostOperationResult(
                 operation_name="file_execution_summary",
                 success=result.success,
-                output=[f"Executed {len(file_mapping)} files",
-                        f"Files summary: {file_results}"]
+                output=[
+                    f"Executed {len(file_mapping)} files",
+                    f"Files summary: {file_results}",
+                ],
             )
 
         return result
@@ -966,14 +1017,16 @@ class InfraFileExecutor:
         host_ips: List[str],
         shared_data: Dict[str, Any],
         target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]],
-        result: InfraExecutionResult
+        result: InfraExecutionResult,
     ) -> InfraExecutionResult:
         """Execute multiple files in parallel."""
         import concurrent.futures
 
         file_results = {}
 
-        def execute_single_file(file_name: str, file_path: Union[str, Path]) -> tuple[str, InfraExecutionResult]:
+        def execute_single_file(
+            file_name: str, file_path: Union[str, Path]
+        ) -> tuple[str, InfraExecutionResult]:
             """Execute single file in thread."""
             # 为每个线程创建独立的执行器实例
             single_executor = InfraFileExecutor(self.config)
@@ -983,7 +1036,7 @@ class InfraFileExecutor:
                     infra_file_path=file_path,
                     host_ips=host_ips,
                     shared_data=shared_data,
-                    target_groups=target_groups
+                    target_groups=target_groups,
                 )
                 return file_name, file_result
             except Exception as e:
@@ -994,15 +1047,18 @@ class InfraFileExecutor:
                     execution_start_time=time.time(),
                     execution_end_time=time.time(),
                     total_hosts=len(host_ips),
-                    host_results={ip: HostExecutionResult(
-                        hostname=ip) for ip in host_ips}
+                    host_results={
+                        ip: HostExecutionResult(hostname=ip) for ip in host_ips
+                    },
                 )
                 return file_name, error_result
 
         # 并行执行所有文件
         logger.info(f"--> Executing {len(file_mapping)} files in parallel")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.config.parallel) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=self.config.parallel
+        ) as executor:
             # 提交所有任务
             future_to_name = {
                 executor.submit(execute_single_file, name, path): name
@@ -1020,24 +1076,23 @@ class InfraFileExecutor:
                     file_results[file_name] = {
                         "success": file_result.success,
                         "duration": file_result.execution_duration,
-                        "error": file_result.global_error
+                        "error": file_result.global_error,
                     }
                     logger.info(f"--> Parallel file {file_name} completed")
                 except Exception as e:
                     error_msg = f"Parallel execution error for {file_name}: {str(e)}"
                     logger.error(error_msg)
-                    file_results[file_name] = {
-                        "success": False,
-                        "error": error_msg
-                    }
+                    file_results[file_name] = {"success": False, "error": error_msg}
 
         # 记录并行执行汇总
         for host_result in result.host_results.values():
             host_result.operations["_parallel_execution_summary"] = HostOperationResult(
                 operation_name="parallel_execution_summary",
                 success=result.success,
-                output=[f"Parallel execution of {len(file_mapping)} files completed",
-                        f"Files summary: {file_results}"]
+                output=[
+                    f"Parallel execution of {len(file_mapping)} files completed",
+                    f"Files summary: {file_results}",
+                ],
             )
 
         return result
@@ -1046,7 +1101,7 @@ class InfraFileExecutor:
         self,
         main_result: InfraExecutionResult,
         file_result: InfraExecutionResult,
-        file_name: str
+        file_name: str,
     ) -> InfraExecutionResult:
         """Merge single file execution result into main result."""
 
@@ -1056,7 +1111,9 @@ class InfraFileExecutor:
                 host_file_result = file_result.host_results[host_ip]
 
                 # 更新连接状态（只要有一个文件连接成功就认为是已连接）
-                host_main_result.connected = host_main_result.connected or host_file_result.connected
+                host_main_result.connected = (
+                    host_main_result.connected or host_file_result.connected
+                )
 
                 # 合并操作结果，添加文件名前缀避免重复
                 for op_name, op_result in host_file_result.operations.items():
@@ -1065,7 +1122,9 @@ class InfraFileExecutor:
 
                     # 更新统计
                     host_main_result.total_operations += 1
-                    if op_result.success:
+                    if op_result.skipped:
+                        host_main_result.skipped_operations += 1
+                    elif op_result.success:
                         host_main_result.successful_operations += 1
                     else:
                         host_main_result.failed_operations += 1
@@ -1083,9 +1142,8 @@ class InfraFileExecutor:
         infra_file_paths: Union[List[Union[str, Path]], Dict[str, Union[str, Path]]],
         host_ips: List[str],
         shared_data: Optional[Dict[str, Dict[str, Any]]] = None,
-        target_groups: Optional[Dict[str,
-                                     Tuple[list[str], Dict[str, Any]]]] = None,
-        execution_mode: str = "sequential"
+        target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]] = None,
+        execution_mode: str = "sequential",
     ) -> InfraExecutionResult:
         """Execute multiple infrastructure files asynchronously."""
         try:
@@ -1097,7 +1155,11 @@ class InfraFileExecutor:
         try:
             return loop.run_until_complete(
                 self._execute_files_async_wrapper(
-                    infra_file_paths, host_ips, shared_data, target_groups, execution_mode
+                    infra_file_paths,
+                    host_ips,
+                    shared_data,
+                    target_groups,
+                    execution_mode,
                 )
             )
         finally:
@@ -1109,7 +1171,7 @@ class InfraFileExecutor:
         host_ips: List[str],
         shared_data: Optional[Dict[str, Dict[str, Any]]],
         target_groups: Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]],
-        execution_mode: str
+        execution_mode: str,
     ) -> InfraExecutionResult:
         """Async wrapper for multiple files execution."""
         return await asyncio.to_thread(
@@ -1118,7 +1180,7 @@ class InfraFileExecutor:
             host_ips,
             shared_data,
             target_groups,
-            execution_mode
+            execution_mode,
         )
 
 
@@ -1133,8 +1195,8 @@ if __name__ == "__main__":
     shared_data: dict[str, Any] = {
         "172.31.57.21": {
             "ssh_key": "~/.ssh/id_rsa",  # SSH私钥
-            "ssh_user": "root",          # 登录用户
-            "ssh_port": 22               # 端口（可选，默认22）
+            "ssh_user": "root",  # 登录用户
+            "ssh_port": 22,  # 端口（可选，默认22）
             # 可添加其他参数：ssh_password、timeout等
         }
     }
@@ -1146,7 +1208,7 @@ if __name__ == "__main__":
     result = executor.execute_file(
         infra_file_path="/opt/kubengine/src/infra/test_infra.py",
         host_ips=host_ips,
-        shared_data=shared_data
+        shared_data=shared_data,
     )
 
     # 5. 查看精细化返回结果
