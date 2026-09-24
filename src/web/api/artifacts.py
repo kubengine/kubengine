@@ -35,6 +35,7 @@ from fastapi import (
     UploadFile,
 )
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from core.command import execute_command
 from core.config.application import Application
@@ -930,12 +931,18 @@ async def _create_image_import(
     task_dir.mkdir(parents=True, exist_ok=True)
     file_path = task_dir / filename
     try:
-        with file_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        def _copy_file() -> None:
+            with file_path.open("wb") as buffer:
+                shutil.copyfileobj(file.file, buffer, length=1024 * 1024)
+
+        # UploadFile is already spooled by Starlette. Copying a multi-GB image
+        # archive must not run on the single asyncio event-loop thread.
+        await run_in_threadpool(_copy_file)
         update_image_import_task(
             task_id,
             file_path=str(file_path),
             file_size=file_path.stat().st_size,
+            status="pending",
         )
     except Exception as exc:
         update_image_import_task(
