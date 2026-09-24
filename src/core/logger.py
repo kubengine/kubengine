@@ -1,5 +1,6 @@
 import logging
 import inspect
+import fcntl
 import os
 import re
 from pathlib import Path
@@ -8,13 +9,13 @@ import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Callable, Iterator, Mapping, Optional, TypeVar, cast
+import time
+from typing import Any, Callable, Iterator, Mapping, Optional, TextIO, TypeVar, cast
 from uuid import uuid4
 
 from core.config.application import Application
 # 新增：导入Rich日志处理器和控制台类型（适配rich）
 from rich.console import Console
-
 
 LOG_CONTEXT_FIELDS = (
     "request_id",
@@ -178,6 +179,130 @@ class ReadableFormatter(logging.Formatter):
         return formatted
 
 
+class _InterProcessFileLock:
+    """为日志处理器提供 fork 安全的进程锁。"""
+
+    def __init__(self, log_file: str) -> None:
+        self.path = f"{log_file}.lock"
+        self.stream: Optional[TextIO] = None
+        self.pid: Optional[int] = None
+
+    def _get_stream(self) -> TextIO:
+        """为当前进程打开独立锁文件，避免 fork 后共享描述符。"""
+        current_pid = os.getpid()
+        if self.stream is not None and self.pid != current_pid:
+            self.stream.close()
+            self.stream = None
+
+        if self.stream is None:
+            self.stream = open(self.path, "a", encoding="utf-8")
+            self.pid = current_pid
+        return self.stream
+
+    @contextmanager
+    def acquire(self) -> Iterator[None]:
+        lock_stream = self._get_stream()
+        fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_UN)
+
+    def close(self) -> None:
+        if self.stream is not None:
+            self.stream.close()
+            self.stream = None
+            self.pid = None
+
+
+def _reopen_file_handler_if_replaced(handler: logging.FileHandler) -> bool:
+    """日志文件被其他进程轮转后重开，并返回是否发生替换。"""
+    if handler.stream is None:
+        return False
+
+    try:
+        stream_stat = os.fstat(handler.stream.fileno())
+        path_stat = os.stat(handler.baseFilename)
+        replaced = (stream_stat.st_dev, stream_stat.st_ino) != (
+            path_stat.st_dev,
+            path_stat.st_ino,
+        )
+    except FileNotFoundError:
+        replaced = True
+
+    if not replaced:
+        return False
+
+    handler.stream.flush()
+    handler.stream.close()
+    handler.stream = handler._open()
+    return True
+
+
+class MultiProcessFileHandler(logging.FileHandler):
+    """使用进程锁保证单条日志完整写入的文件处理器。"""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._coordinator = _InterProcessFileLock(self.baseFilename)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            with self._coordinator.acquire():
+                _reopen_file_handler_if_replaced(self)
+                logging.FileHandler.emit(self, record)
+        except Exception:
+            self.handleError(record)
+
+    def close(self) -> None:
+        try:
+            self._coordinator.close()
+        finally:
+            super().close()
+
+
+class MultiProcessTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """通过进程锁协调写入和按时间轮转的文件处理器。
+
+    标准 ``TimedRotatingFileHandler`` 只提供线程锁。多个 Uvicorn
+    worker 共用日志路径时，可能重复轮转，或继续写入已改名文件。
+    本处理器使用独立 ``.lock`` 文件串行化关键区，并在每次写入前
+    比对文件 inode，发现其他进程已轮转时自动重开当前日志。
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._coordinator = _InterProcessFileLock(self.baseFilename)
+
+    def _refresh_rollover_after_external_rotation(self, current_time: int) -> None:
+        """其他进程已轮转时，将下次轮转时间推进到未来。"""
+        next_rollover = self.computeRollover(current_time)
+        while next_rollover <= current_time:
+            next_rollover += self.interval
+        self.rolloverAt = next_rollover
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """在进程锁内完成文件检测、轮转和单条日志写入。"""
+        try:
+            with self._coordinator.acquire():
+                replaced = _reopen_file_handler_if_replaced(self)
+                current_time = int(time.time())
+                if replaced and current_time >= self.rolloverAt:
+                    self._refresh_rollover_after_external_rotation(current_time)
+                if self.shouldRollover(record):
+                    self.doRollover()
+                logging.FileHandler.emit(self, record)
+        except Exception:
+            self.handleError(record)
+
+    def close(self) -> None:
+        """关闭日志和当前进程的锁文件描述符。"""
+        try:
+            self._coordinator.close()
+        finally:
+            super().close()
+
+
 class GlobalLoggerManager:
     _instance: Optional["GlobalLoggerManager"] = None
     _configured: bool = False
@@ -265,7 +390,7 @@ class GlobalLoggerManager:
 
         file_handler: logging.FileHandler
         if Application.LOGGER_CONFIG.ROTATE_ENABLE:
-            file_handler = TimedRotatingFileHandler(
+            file_handler = MultiProcessTimedRotatingFileHandler(
                 filename=log_path,
                 when=Application.LOGGER_CONFIG.ROTATE_WHEN,
                 backupCount=Application.LOGGER_CONFIG.ROTATE_BACKUP_COUNT,
@@ -273,7 +398,7 @@ class GlobalLoggerManager:
             )
             file_handler.suffix = "%Y-%m-%d.log"
         else:
-            file_handler = logging.FileHandler(
+            file_handler = MultiProcessFileHandler(
                 log_path, mode="a", encoding="utf-8")
 
         file_handler.setFormatter(formatter)
