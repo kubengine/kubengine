@@ -1,6 +1,7 @@
 import logging
 import inspect
 import os
+import re
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
 import sys
@@ -28,6 +29,8 @@ LOG_CONTEXT_FIELDS = (
     "transfer_id",
 )
 _LOG_CONTEXT_ENV_PREFIX = "KUBENGINE_LOG_"
+_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+_MAX_LIFECYCLE_FIELD_LENGTH = 500
 
 
 def _context_from_environment() -> dict[str, str]:
@@ -166,6 +169,13 @@ class LogContextFilter(logging.Filter):
         return True
 
 
+class ReadableFormatter(logging.Formatter):
+    """移除第三方组件写入的 ANSI 控制符，避免污染文件日志。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return _ANSI_ESCAPE_PATTERN.sub("", super().format(record))
+
+
 class GlobalLoggerManager:
     _instance: Optional["GlobalLoggerManager"] = None
     _configured: bool = False
@@ -198,7 +208,7 @@ class GlobalLoggerManager:
         root_logger.handlers.clear()
 
         # 2. 创建格式化器（保留原有配置，RichHandler兼容原生格式）
-        formatter = logging.Formatter(
+        formatter = ReadableFormatter(
             fmt=Application.LOGGER_CONFIG.FORMAT, datefmt=Application.LOGGER_CONFIG.DATE_FORMAT)
 
         # 3. 配置控制台输出【核心修改：替换为RichHandler，适配rich生态，移除stream参数】
@@ -266,11 +276,14 @@ class GlobalLoggerManager:
         root_logger.addHandler(file_handler)
 
     def _setup_third_party_loggers(self) -> None:
-        """设置第三方库日志级别【完全保留原有代码】"""
+        """统一第三方日志级别和输出通道，避免重复记录。"""
         for logger_name, level in Application.LOGGER_CONFIG.THIRD_PARTY_LOG_LEVELS.items():
             third_logger = logging.getLogger(logger_name)
             third_logger.setLevel(getattr(logging, level.upper()))
-            third_logger.propagate = False
+            # 由根 Logger 统一格式化和落盘，避免库自带 Handler
+            # 与应用 Handler 同时输出同一条日志。
+            third_logger.handlers.clear()
+            third_logger.propagate = True
 
 
 def setup_fastapi_logging(
@@ -318,14 +331,27 @@ def log_lifecycle_event(
     explicit_fields = {key: value for key, value in fields.items() if value is not None}
     message_parts = [f"event={event}"]
     for key, value in explicit_fields.items():
-        rendered = (
+        rendered_value = (
             repr(value)
             if isinstance(value, str) and any(char.isspace() for char in value)
-            else value
+            else str(value)
         )
+        if len(rendered_value) > _MAX_LIFECYCLE_FIELD_LENGTH:
+            omitted = len(rendered_value) - _MAX_LIFECYCLE_FIELD_LENGTH
+            rendered = (
+                f"{rendered_value[:_MAX_LIFECYCLE_FIELD_LENGTH]}"
+                f"…<truncated_chars={omitted}>"
+            )
+        else:
+            rendered = rendered_value
         message_parts.append(f"{key}={rendered}")
 
     extra = {"event": event}
     extra.update(get_log_context())
     extra.update(explicit_fields)
-    target_logger.log(level, " ".join(str(part) for part in message_parts), extra=extra)
+    target_logger.log(
+        level,
+        " ".join(str(part) for part in message_parts),
+        extra=extra,
+        stacklevel=2,
+    )

@@ -1,8 +1,12 @@
 import asyncio
+import io
 import logging
 
+from core.config.application import Application
 from core.logger import (
+    GlobalLoggerManager,
     LogContextFilter,
+    ReadableFormatter,
     bind_log_context,
     get_log_context,
     log_lifecycle_event,
@@ -121,6 +125,53 @@ def test_lifecycle_event_exposes_event_fields_and_context(caplog) -> None:
     assert record.component == "containerd"  # type: ignore[attr-defined]
     assert record.status == "success"  # type: ignore[attr-defined]
     assert record.duration_ms == 12  # type: ignore[attr-defined]
+    assert record.funcName == "test_lifecycle_event_exposes_event_fields_and_context"
     assert record.getMessage() == (
         "event=component_end status=success duration_ms=12"
     )
+
+
+def test_lifecycle_event_truncates_only_rendered_long_field(caplog) -> None:
+    logger = logging.getLogger("test.lifecycle.long")
+    command = "x" * 620
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        log_lifecycle_event(logger, "command_end", command=command)
+
+    record = caplog.records[-1]
+    assert record.command == command  # type: ignore[attr-defined]
+    assert "x" * 500 in record.getMessage()
+    assert "…<truncated_chars=120>" in record.getMessage()
+    assert len(record.getMessage()) < len(command)
+
+
+def test_readable_formatter_removes_ansi_control_codes() -> None:
+    formatter = ReadableFormatter("%(message)s")
+    record = make_record("\x1b[31mfailed\x1b[0m: package install")
+
+    assert formatter.format(record) == "failed: package install"
+
+
+def test_third_party_loggers_use_central_output_channel(monkeypatch) -> None:
+    logger_name = "test.noisy.third.party"
+    third_party_logger = logging.getLogger(logger_name)
+    handler = logging.StreamHandler(io.StringIO())
+    third_party_logger.addHandler(handler)
+    third_party_logger.setLevel(logging.DEBUG)
+    third_party_logger.propagate = False
+    monkeypatch.setattr(
+        Application.LOGGER_CONFIG,
+        "THIRD_PARTY_LOG_LEVELS",
+        {logger_name: "WARNING"},
+    )
+
+    try:
+        GlobalLoggerManager()._setup_third_party_loggers()
+
+        assert third_party_logger.level == logging.WARNING
+        assert third_party_logger.handlers == []
+        assert third_party_logger.propagate is True
+    finally:
+        third_party_logger.handlers.clear()
+        third_party_logger.setLevel(logging.NOTSET)
+        third_party_logger.propagate = True

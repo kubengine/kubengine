@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
-from pyinfra import logger as pyinfra_logger
 from pyinfra.api.config import Config
 from pyinfra.api.state import BaseStateCallback, State, StateStage
 from pyinfra.api.connect import connect_all
@@ -25,7 +24,6 @@ from pyinfra_cli.prints import print_results  # type: ignore
 from core.logger import bind_log_context, get_logger, log_lifecycle_event
 
 logger = get_logger(__name__)
-pyinfra_logger.setLevel(logger.level)  # 对齐PyInfra日志级别
 
 
 class InfraLifecycleCallback(BaseStateCallback):

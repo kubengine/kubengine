@@ -83,7 +83,15 @@ class LoggerConfig:
         "uvicorn.access": "WARNING",
         "click": "INFO",
         "fastapi": "INFO",
-        "asyncssh": "WARNING"
+        "asyncssh": "WARNING",
+        "asyncio": "WARNING",
+        # PyInfra/Paramiko 的逐主机成功、握手和认证日志数量巨大，
+        # 业务层已有部署、主机和操作生命周期事件，这里仅保留警告及错误。
+        "pyinfra": "WARNING",
+        "paramiko": "WARNING",
+        "paramiko.transport": "WARNING",
+        "paramiko.transport.sftp": "WARNING",
+        "urllib3": "WARNING",
     }
 
 
