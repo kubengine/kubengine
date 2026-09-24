@@ -5,10 +5,12 @@ real-time output logging, and error handling capabilities.
 """
 
 from core.logger import get_logger
-from typing import Optional, Literal
-from threading import Thread
+from typing import BinaryIO, Optional, Literal
+import os
+import signal
 import subprocess
 import sys
+import tempfile
 
 
 log = get_logger(__name__)
@@ -107,7 +109,9 @@ class CommandResult:
             raise Exception(msg)
         return self
 
-    def exit_if_failed(self, exit_code: int = 1, error_message: Optional[str] = None) -> 'CommandResult':
+    def exit_if_failed(
+        self, exit_code: int = 1, error_message: Optional[str] = None
+    ) -> 'CommandResult':
         """Exit process if command failed.
 
         Args:
@@ -157,7 +161,7 @@ class CommandError(Exception):
 
 def execute_command(
     cmd: str,
-    timeout: int = 6000,
+    timeout: float = 6000,
     log_output: bool = True,
     *,
     # 新增的错误处理参数
@@ -207,125 +211,101 @@ def execute_command(
 
 def _execute_command_core(
     cmd: str,
-    timeout: int,
+    timeout: float,
     log_output: bool
 ) -> CommandResult:
-    """Core command execution logic."""
+    """Execute a command and guarantee that a timeout kills all descendants.
 
-    def _execute_subprocess(command: str, log_enabled: bool) -> CommandResult:
-        """Execute subprocess and capture output in real-time."""
-        process = subprocess.Popen(
-            command,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            bufsize=1
-        )
+    Output is spooled to temporary files instead of unbounded in-memory pipe
+    readers.  ``start_new_session`` gives every command its own process group,
+    allowing a timeout to terminate the shell and all of its children.
+    """
+    max_output_bytes = 10 * 1024 * 1024
 
-        stdout_lines: list[str] = []
-        stderr_lines: list[str] = []
+    def _read_output(stream: BinaryIO) -> str:
+        stream.seek(0)
+        data = stream.read(max_output_bytes + 1)
+        truncated = len(data) > max_output_bytes
+        text = data[:max_output_bytes].decode("utf-8", errors="replace")
+        if truncated:
+            text += "\n[output truncated by kubengine]"
+        return text.rstrip()
 
-        def _read_stdout() -> None:
-            """Read stdout in real-time."""
+    def _signal_group(process: subprocess.Popen[bytes], sig: int) -> None:
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            return
+        except OSError as exc:
+            log.warning(
+                "Failed to signal command process group %s: %s", process.pid, exc
+            )
+
+    def _group_exists(process: subprocess.Popen[bytes]) -> bool:
+        try:
+            os.killpg(process.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
+    try:
+        with (
+            tempfile.TemporaryFile() as stdout_file,
+            tempfile.TemporaryFile() as stderr_file,
+        ):
+            process = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                start_new_session=True,
+            )
+            log.debug("Executing command in process group %s: %s", process.pid, cmd)
+            timed_out = False
             try:
-                for line in iter(process.stdout.readline, ''):  # type: ignore
-                    line = line.rstrip()
-                    if line:
-                        stdout_lines.append(line)
-                        if log_enabled:
-                            log.debug(f"[STDOUT] {line}")
-            except Exception as e:
-                log.error(f"Error reading stdout: {e}")
-
-        def _read_stderr() -> None:
-            """Read stderr in real-time."""
-            try:
-                for line in iter(process.stderr.readline, ''):  # type: ignore
-                    line = line.rstrip()
-                    if line:
-                        stderr_lines.append(line)
-                        if log_enabled:
-                            log.debug(f"[STDERR] {line}")
-            except Exception as e:
-                log.error(f"Error reading stderr: {e}")
-
-        stdout_thread = Thread(target=_read_stdout, daemon=True)
-        stderr_thread = Thread(target=_read_stderr, daemon=True)
-        stdout_thread.start()
-        stderr_thread.start()
-
-        return_code = process.wait()
-
-        stdout_thread.join(timeout=0.1)
-        stderr_thread.join(timeout=0.1)
-
-        output = '\n'.join(stdout_lines)
-        error_output = '\n'.join(stderr_lines)
-
-        return CommandResult(return_code, output, error_output)
-
-    class CommandThread(Thread):
-        """Custom thread class for command execution with timeout handling."""
-
-        def __init__(self, command: str, log_enabled: bool) -> None:
-            """Initialize command thread."""
-            super().__init__()
-            self.command = command
-            self.log_enabled = log_enabled
-            self.result: Optional[CommandResult] = None
-            self.error: Optional[Exception] = None
-
-        def run(self) -> None:
-            """Execute command in thread."""
-            try:
-                self.result = _execute_subprocess(
-                    self.command, self.log_enabled)
-            except Exception as e:
-                self.error = e
-
-        def stop_thread(self) -> None:
-            """Stop thread execution."""
-            if hasattr(self, '_Thread__stop'):
-                self._Thread__stop()  # type: ignore
-
-            if self.is_alive():
-                import ctypes
-                res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                    ctypes.c_long(self.ident or 0), ctypes.py_object(
-                        SystemExit)
+                return_code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                log.error(
+                    "Execute command [%s] timeout [%s]s; terminating pgid=%s",
+                    cmd,
+                    timeout,
+                    process.pid,
                 )
-                if res > 1:
-                    ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                        self.ident, None)
+                _signal_group(process, signal.SIGTERM)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                # The shell may exit while a descendant ignores SIGTERM. Check
+                # the process group itself, not only the group leader.
+                if _group_exists(process):
+                    log.warning(
+                        "Command process group %s survived SIGTERM; sending SIGKILL",
+                        process.pid,
+                    )
+                    _signal_group(process, signal.SIGKILL)
+                if process.poll() is None:
+                    process.wait()
+                return_code = 124
 
-    command_thread = CommandThread(cmd, log_output)
-    command_thread.start()
+            stdout = _read_output(stdout_file)
+            stderr = _read_output(stderr_file)
+            if timed_out:
+                timeout_message = f"execute command timeout after {timeout}s"
+                stderr = f"{stderr}\n{timeout_message}".strip()
 
-    log.debug(f"Executing command: {cmd}")
-
-    command_thread.join(timeout)
-
-    if command_thread.error is not None:
-        error = command_thread.error
-        result = CommandResult(1, '', 'execute command error!')
-        log.error(f'Execute command [{cmd}] got exception [{error}]!')
-    elif command_thread.result is None:
-        result = CommandResult(1, '', 'execute command timeout!')
-        log.error(f'Execute command [{cmd}] timeout [{timeout}]s!')
-    else:
-        result = command_thread.result
-        log.debug(
-            f'Command [{cmd}] finished with return code: {result.return_code}')
-
-    if command_thread.is_alive():
-        log.warning("Command thread still alive after timeout, stopping...")
-        command_thread.stop_thread()
-        command_thread.join(timeout=1)
-        if command_thread.is_alive():
-            log.error("Failed to stop command thread!")
-
-    return result
+            if log_output:
+                for line in stdout.splitlines():
+                    log.debug("[STDOUT] %s", line)
+                for line in stderr.splitlines():
+                    log.debug("[STDERR] %s", line)
+            return CommandResult(return_code, stdout, stderr)
+    except Exception as exc:
+        log.exception("Execute command [%s] got exception", cmd)
+        return CommandResult(1, "", f"execute command error: {exc}")
 
 
 def _handle_command_failure(
