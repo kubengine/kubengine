@@ -844,7 +844,9 @@ def process_image_import_task(task_id: int, retry_failed: bool = False) -> None:
             if proxy_registries:
                 proxy_command = (
                     f"{shlex.quote(sys.executable)} -m cli.app "
-                    "image ctr add-proxy -y "
+                    # 镜像导入只配置本机。集群同步属于独立的运维变更，
+                    # 必须由管理员显式执行 add-proxy（不带 --no-sync）。
+                    "image ctr add-proxy -y --no-sync "
                     + " ".join(
                         shlex.quote(registry) for registry in sorted(proxy_registries)
                     )

@@ -132,7 +132,10 @@ def cli(ctx: click.Context) -> None:
 
 
 @cli.command()
-@click.option('-i', '--image', required=True, help='待拉取的镜像完整名称（含仓库/标签），例：harbor.example.com/myapp:1.0.0')
+@click.option(
+    '-i', '--image', required=True,
+    help='待拉取的镜像完整名称（含仓库/标签），例：harbor.example.com/myapp:1.0.0'
+)
 @click.option('-u', '--username', help='私有仓库用户名，公共仓库无需填写')
 @click.option('-p', '--password', help='私有仓库密码/令牌，公共仓库无需填写')
 @click.option('--timeout', type=int, default=300, help='拉取超时时间（秒），默认300秒')
@@ -169,7 +172,7 @@ def pull(
             cmd += f" -u {username}@{password}"
         cmd += f" {image}"
 
-        execute_command(cmd).raise_if_failed()
+        execute_command(cmd, timeout=timeout).raise_if_failed()
 
         console.print(f"[green]🎉 镜像拉取成功: {image}[/green]")
         logger.info(f"镜像拉取成功 | 镜像: {image}")
@@ -180,7 +183,10 @@ def pull(
 
 
 @cli.command()
-@click.option('-i', '--image', required=True, help='待推送的镜像完整名称（含仓库/标签），例：harbor.example.com/myapp:1.0.0')
+@click.option(
+    '-i', '--image', required=True,
+    help='待推送的镜像完整名称（含仓库/标签），例：harbor.example.com/myapp:1.0.0'
+)
 @click.option('-u', '--username', help='私有仓库用户名，公共仓库无需填写')
 @click.option('-p', '--password', help='私有仓库密码/令牌，公共仓库无需填写')
 @click.option('--timeout', type=int, default=300, help='推送超时时间（秒），默认300秒')
@@ -219,7 +225,7 @@ def push(
             cmd += f" -u {username}:{password}"
         cmd += f" {image}"
 
-        execute_command(cmd).raise_if_failed()
+        execute_command(cmd, timeout=timeout).raise_if_failed()
 
         console.print(f"[green]🎉 镜像推送成功: {image}[/green]")
         logger.info(f"镜像推送成功 | 镜像: {image}")
@@ -279,7 +285,6 @@ def add_proxy(
         # 仅本机，不同步集群
         kubengine image ctr add-proxy docker.io --no-sync
     """
-    from pathlib import Path
     from rich.table import Table
 
     certs_d_path = Path("/etc/containerd/certs.d")
@@ -322,7 +327,7 @@ def add_proxy(
         if Path(ca_crt).exists():
             content += f'  ca = "{ca_crt}"\n'
         else:
-            content += f'  skip_verify = true\n'
+            content += '  skip_verify = true\n'
 
         hosts_toml_path.write_text(content, encoding="utf-8")
         written.append(registry)
@@ -352,18 +357,18 @@ def add_proxy(
     if not no_restart:
         console.print("[blue]🔄 重启本机 containerd 使配置生效...[/blue]")
         try:
-            result = execute_command("systemctl restart containerd")
+            result = execute_command("systemctl restart containerd", timeout=120)
             if result.is_success():
                 console.print("[green]✅ 本机 containerd 重启成功[/green]")
             else:
-                console.print(
-                    f"[yellow]⚠ 本机 containerd 重启失败，请手动执行: systemctl restart containerd[/yellow]"
+                raise click.ClickException(
+                    "本机 containerd 重启失败: "
+                    + "; ".join(result.get_error_lines())
                 )
-                logger.warning(f"containerd 重启失败: {result.get_error_lines()}")
+        except click.ClickException:
+            raise
         except Exception as e:
-            console.print(
-                f"[yellow]⚠ 本机 containerd 重启异常，请手动执行: systemctl restart containerd ({e})[/yellow]"
-            )
+            raise click.ClickException(f"本机 containerd 重启异常: {e}") from e
     else:
         console.print("[yellow]⚠ 已跳过本机 containerd 重启[/yellow]")
 
@@ -398,69 +403,118 @@ def add_proxy(
     from core.ssh import AsyncSSHClient
 
     async def _sync_to_nodes() -> None:
-        ssh_client = AsyncSSHClient()
+        ssh_client = AsyncSSHClient(
+            connect_timeout=10,
+            operation_timeout=120,
+            transfer_timeout=120,
+            max_concurrency=5,
+        )
+        failures: dict[str, list[str]] = {}
 
-        # 1. 上传 hosts.toml 和 CA 证书到每个节点
-        upload_tasks = []
-        ca_exists = Path(ca_crt).exists()
-        for node in remote_nodes:
+        def failed(result: dict) -> str | None:
+            if result.get("error"):
+                return str(result["error"])
+            status = result.get("exit_status")
+            if status not in (None, 0):
+                return str(result.get("stderr") or f"exit_status={status}")
+            return None
+
+        async def sync_node(node: str) -> bool:
+            node_errors: list[str] = []
             for registry in written:
+                mkdir_result = await ssh_client.execute_command(
+                    node,
+                    f"mkdir -p /etc/containerd/certs.d/{registry}",
+                    **ssh_kwargs,
+                )
+                reason = failed(mkdir_result)
+                if reason:
+                    node_errors.append(f"创建 {registry} 目录失败: {reason}")
+                    continue
                 local_hosts = str(certs_d_path / registry / "hosts.toml")
                 remote_hosts = f"/etc/containerd/certs.d/{registry}/hosts.toml"
-                # mkdir -p + 上传一条龙命令前缀
-                upload_tasks.append((node, registry, local_hosts, remote_hosts))
+                upload_result = await ssh_client.upload_file(
+                    node, local_hosts, remote_hosts, **ssh_kwargs
+                )
+                if upload_result.get("error"):
+                    node_errors.append(
+                        f"上传 {registry}/hosts.toml 失败: {upload_result['error']}"
+                    )
 
-        for node, registry, local_hosts, remote_hosts in upload_tasks:
-            # 先确保远程目录存在
-            mkdir_cmd = f"mkdir -p /etc/containerd/certs.d/{registry}"
-            await ssh_client.execute_command(node, mkdir_cmd, **ssh_kwargs)
-            # 上传 hosts.toml
-            res = await ssh_client.upload_file(node, local_hosts, remote_hosts, **ssh_kwargs)
-            if res.get("error"):
-                console.print(
-                    f"[yellow]  ⚠ {node} 上传 {registry}/hosts.toml 失败: {res['error']}[/yellow]")
-            else:
-                console.print(
-                    f"[green]  ✅ {node} <- {registry}/hosts.toml[/green]")
-
-        # 同步 CA 证书（hosts.toml 引用了 ca 路径）
-        if ca_exists:
-            for node in remote_nodes:
-                # 确保远程 ca 目录存在
+            if Path(ca_crt).exists():
                 remote_ca_dir = str(Path(ca_crt).parent)
-                await ssh_client.execute_command(
-                    node, f"mkdir -p {remote_ca_dir}", **ssh_kwargs)
-                res = await ssh_client.upload_file(
-                    node, ca_crt, ca_crt, **ssh_kwargs)
-                if res.get("error"):
-                    console.print(
-                        f"[yellow]  ⚠ {node} 上传 CA 证书失败: {res['error']}[/yellow]")
+                mkdir_result = await ssh_client.execute_command(
+                    node, f"mkdir -p {remote_ca_dir}", **ssh_kwargs
+                )
+                reason = failed(mkdir_result)
+                if reason:
+                    node_errors.append(f"创建 CA 目录失败: {reason}")
+                else:
+                    upload_result = await ssh_client.upload_file(
+                        node, ca_crt, ca_crt, **ssh_kwargs
+                    )
+                    if upload_result.get("error"):
+                        node_errors.append(f"上传 CA 证书失败: {upload_result['error']}")
 
-        # 2. 远程重启 containerd（除非 --no-restart）
-        if no_restart:
-            console.print("[yellow]⚠ 已跳过远程节点 containerd 重启[/yellow]")
-            return
+            if node_errors:
+                failures[node] = node_errors
+                return False
+            console.print(f"[green]  ✅ {node} 配置同步完成[/green]")
+            return True
 
-        console.print(f"[blue]🔄 重启 {len(remote_nodes)} 个节点的 containerd...[/blue]")
-        restart_cmds = [
-            (node, "systemctl restart containerd")
-            for node in remote_nodes
-        ]
-        results = await ssh_client.execute_multiple_commands(restart_cmds, **ssh_kwargs)
-        for r in results:
-            node = r.get("host", "?")
-            if r.get("error"):
+        try:
+            # SSH 预检将不可达节点快速隔离，避免它拖住整个批次。
+            reachable, unreachable = await ssh_client.is_reachable(
+                remote_nodes, **ssh_kwargs
+            )
+            for node in unreachable:
+                failures[node] = ["SSH 预检失败"]
+            if unreachable:
                 console.print(
-                    f"[yellow]  ⚠ {node} containerd 重启失败: {r['error']}[/yellow]")
-            else:
-                console.print(f"[green]  ✅ {node} containerd 重启成功[/green]")
+                    f"[yellow]⚠ 跳过 SSH 不可达节点: {', '.join(unreachable)}[/yellow]"
+                )
+
+            sync_results = await asyncio.gather(
+                *(sync_node(node) for node in reachable)
+            )
+            ready_nodes = [
+                node for node, success in zip(reachable, sync_results) if success
+            ]
+
+            # 配置可以有限并发上传，运行时重启必须逐节点滚动执行。
+            if not no_restart:
+                for node in ready_nodes:
+                    restart_result = await ssh_client.execute_command(
+                        node,
+                        "systemctl restart containerd",
+                        operation_timeout=120,
+                        **ssh_kwargs,
+                    )
+                    reason = failed(restart_result)
+                    if reason:
+                        failures.setdefault(node, []).append(
+                            f"containerd 重启失败: {reason}"
+                        )
+                    else:
+                        console.print(
+                            f"[green]  ✅ {node} containerd 滚动重启成功[/green]"
+                        )
+
+            if failures:
+                details = "; ".join(
+                    f"{node}: {', '.join(errors)}"
+                    for node, errors in sorted(failures.items())
+                )
+                raise RuntimeError(f"部分集群节点同步失败: {details}")
+        finally:
+            await ssh_client.close_all_connections()
 
     try:
         asyncio.run(_sync_to_nodes())
         console.print("[green bold]✅ 集群同步完成[/green bold]")
     except Exception as e:
-        console.print(f"[yellow]⚠ 集群同步异常: {e}[/yellow]")
         logger.warning(f"集群同步异常: {e}", exc_info=True)
+        raise click.ClickException(f"集群同步失败: {e}") from e
 
 
 @cli.command()
