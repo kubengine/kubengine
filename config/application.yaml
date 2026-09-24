@@ -11,6 +11,30 @@ tls:
   ca_password: kubengine
   ca_valid_days: 3650
   ca_key_length: 4096
+logger:
+  level: INFO
+  console: true
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(process)d - %(filename)s:%(lineno)d - %(message)s%(context_suffix)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  rotate:
+    enable: true
+    when: D
+    backup_count: 7
+  readability:
+    strip_ansi: true
+    max_event_field_length: 500
+  third_party_levels:
+    uvicorn: WARNING
+    uvicorn.access: WARNING
+    click: INFO
+    fastapi: INFO
+    asyncssh: WARNING
+    asyncio: WARNING
+    pyinfra: WARNING
+    paramiko: WARNING
+    paramiko.transport: WARNING
+    paramiko.transport.sftp: WARNING
+    urllib3: WARNING
 auth:
   jwt:
     algorithm: HS256

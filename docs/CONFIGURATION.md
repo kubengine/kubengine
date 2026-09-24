@@ -53,6 +53,32 @@ tls:
   ca_valid_days: 3650
   ca_key_length: 4096
 
+# 日志配置
+logger:
+  level: INFO
+  console: true
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(process)d - %(filename)s:%(lineno)d - %(message)s%(context_suffix)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  rotate:
+    enable: true
+    when: D
+    backup_count: 7
+  readability:
+    strip_ansi: true
+    max_event_field_length: 500
+  third_party_levels:
+    uvicorn: WARNING
+    uvicorn.access: WARNING
+    click: INFO
+    fastapi: INFO
+    asyncssh: WARNING
+    asyncio: WARNING
+    pyinfra: WARNING
+    paramiko: WARNING
+    paramiko.transport: WARNING
+    paramiko.transport.sftp: WARNING
+    urllib3: WARNING
+
 # 认证配置
 auth:
   jwt:
@@ -210,6 +236,44 @@ CA 私钥长度（位）。
 - **类型**：整数
 - **默认值**：`4096`
 - **说明**：仅在下一次证书重新生成时生效（见下方「证书重新生成」说明）
+
+---
+
+### 日志配置
+
+#### `logger.level`
+
+应用日志级别，支持 `DEBUG`、`INFO`、`WARNING`、`ERROR` 和 `CRITICAL`。
+默认为 `INFO`。CLI 显式传入的 `--debug`/`--quiet` 级别优先于该配置。
+
+#### `logger.console`
+
+是否同时将日志输出到控制台，默认为 `true`。文件日志不受此开关影响。
+
+#### `logger.format` 与 `logger.date_format`
+
+分别控制日志行格式和时间格式。默认格式中的 `%(context_suffix)s`
+用于输出 `request_id`、`deployment_id`、`host`、`command_id` 等链路字段，
+建议保留。
+
+#### `logger.rotate`
+
+- `enable`：是否启用日志轮转。
+- `when`：轮转周期，支持 `S`、`M`、`H`、`D` 和 `W0` 至 `W6`；默认按天轮转。
+- `backup_count`：保留的历史文件数，默认为 `7`。
+
+#### `logger.readability`
+
+- `strip_ansi`：移除 PyInfra 等组件输出的 ANSI 颜色控制符，默认为 `true`。
+- `max_event_field_length`：生命周期事件中单个字段的最大展示长度，
+  默认为 `500`，最小生效值为 `50`。该限制只影响文本展示，不修改命令返回值。
+
+#### `logger.third_party_levels`
+
+按 Logger 名称配置第三方库日志级别。默认将 PyInfra、Paramiko 和
+urllib3 调整为 `WARNING`，避免逐主机成功、SSH 握手等高频日志淹没
+业务生命周期事件。排查第三方库问题时，可临时将对应项调整为
+`INFO` 或 `DEBUG`。修改日志配置后需重启对应进程。
 
 ---
 

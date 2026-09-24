@@ -30,7 +30,6 @@ LOG_CONTEXT_FIELDS = (
 )
 _LOG_CONTEXT_ENV_PREFIX = "KUBENGINE_LOG_"
 _ANSI_ESCAPE_PATTERN = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
-_MAX_LIFECYCLE_FIELD_LENGTH = 500
 
 
 def _context_from_environment() -> dict[str, str]:
@@ -173,7 +172,10 @@ class ReadableFormatter(logging.Formatter):
     """移除第三方组件写入的 ANSI 控制符，避免污染文件日志。"""
 
     def format(self, record: logging.LogRecord) -> str:
-        return _ANSI_ESCAPE_PATTERN.sub("", super().format(record))
+        formatted = super().format(record)
+        if Application.LOGGER_CONFIG.STRIP_ANSI:
+            return _ANSI_ESCAPE_PATTERN.sub("", formatted)
+        return formatted
 
 
 class GlobalLoggerManager:
@@ -200,6 +202,9 @@ class GlobalLoggerManager:
         if self._configured:
             logging.getLogger(__name__).debug("全局日志已配置，跳过重复初始化")
             return
+
+        if console_output is None:
+            console_output = Application.LOGGER_CONFIG.CONSOLE_OUTPUT
 
         # 1. 重置根Logger
         root_logger = logging.getLogger()
@@ -279,7 +284,7 @@ class GlobalLoggerManager:
         """统一第三方日志级别和输出通道，避免重复记录。"""
         for logger_name, level in Application.LOGGER_CONFIG.THIRD_PARTY_LOG_LEVELS.items():
             third_logger = logging.getLogger(logger_name)
-            third_logger.setLevel(getattr(logging, level.upper()))
+            third_logger.setLevel(getattr(logging, str(level).upper()))
             # 由根 Logger 统一格式化和落盘，避免库自带 Handler
             # 与应用 Handler 同时输出同一条日志。
             third_logger.handlers.clear()
@@ -287,9 +292,9 @@ class GlobalLoggerManager:
 
 
 def setup_fastapi_logging(
-    level: str = "INFO",
+    level: Optional[str] = None,
     log_file: Optional[str] = None,
-    console_output: bool = True
+    console_output: Optional[bool] = None
 ) -> None:
     """FastAPI场景快捷配置【完全保留原有代码】"""
     GlobalLoggerManager().setup(
@@ -297,9 +302,9 @@ def setup_fastapi_logging(
 
 
 def setup_cli_logging(
-    level: str = "DEBUG",
+    level: Optional[str] = None,
     log_file: Optional[str] = None,
-    console_output: Optional[bool] = True,
+    console_output: Optional[bool] = None,
     rich_console: Optional[Console] = None  # 新增：透传Rich Console实例到setup方法
 ) -> None:
     """CLI场景快捷配置（调试级别、轮转）【新增rich_console参数】"""
@@ -329,6 +334,9 @@ def log_lifecycle_event(
     ``LogRecord``。后续切换 JSON formatter 时可直接复用这些字段。
     """
     explicit_fields = {key: value for key, value in fields.items() if value is not None}
+    max_field_length = max(
+        50, int(Application.LOGGER_CONFIG.MAX_EVENT_FIELD_LENGTH)
+    )
     message_parts = [f"event={event}"]
     for key, value in explicit_fields.items():
         rendered_value = (
@@ -336,10 +344,10 @@ def log_lifecycle_event(
             if isinstance(value, str) and any(char.isspace() for char in value)
             else str(value)
         )
-        if len(rendered_value) > _MAX_LIFECYCLE_FIELD_LENGTH:
-            omitted = len(rendered_value) - _MAX_LIFECYCLE_FIELD_LENGTH
+        if len(rendered_value) > max_field_length:
+            omitted = len(rendered_value) - max_field_length
             rendered = (
-                f"{rendered_value[:_MAX_LIFECYCLE_FIELD_LENGTH]}"
+                f"{rendered_value[:max_field_length]}"
                 f"…<truncated_chars={omitted}>"
             )
         else:

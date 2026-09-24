@@ -62,23 +62,30 @@ class TLSConfig:
 @config_class(
     LEVEL="logger.level",
     CONSOLE_OUTPUT="logger.console",
-    LOG_FORMAT="logger.format",
+    FORMAT="logger.format",
     DATE_FORMAT="logger.date_format",
     ROTATE_ENABLE="logger.rotate.enable",
     ROTATE_WHEN="logger.rotate.when",
     ROTATE_BACKUP_COUNT="logger.rotate.backup_count",
+    STRIP_ANSI="logger.readability.strip_ansi",
+    MAX_EVENT_FIELD_LENGTH="logger.readability.max_event_field_length",
+    THIRD_PARTY_LOG_LEVELS="logger.third_party_levels",
 )
 class LoggerConfig:
     """日志配置数据类，默认值适配大多数场景"""
     LEVEL: ClassVar[str] = "INFO"
+    CONSOLE_OUTPUT: ClassVar[bool] = True
     FORMAT: ClassVar[str] = "%(asctime)s - %(name)s - %(levelname)s - %(process)d - %(filename)s:%(lineno)d - %(message)s%(context_suffix)s"
     DATE_FORMAT: ClassVar[str] = "%Y-%m-%d %H:%M:%S"
     # 日志轮转配置
     ROTATE_ENABLE: ClassVar[bool] = True  # 是否开启日志轮转
     ROTATE_WHEN: ClassVar[str] = "D"  # 按天轮转（可选：S/Min/H/D/W0-W6）
     ROTATE_BACKUP_COUNT: ClassVar[int] = 7  # 保留7天日志
+    # 日志可读性配置
+    STRIP_ANSI: ClassVar[bool] = True
+    MAX_EVENT_FIELD_LENGTH: ClassVar[int] = 500
     # 第三方库日志级别管控（降噪）
-    THIRD_PARTY_LOG_LEVELS: dict[str, str] = {
+    THIRD_PARTY_LOG_LEVELS: ClassVar[dict[str, str]] = {
         "uvicorn": "WARNING",
         "uvicorn.access": "WARNING",
         "click": "INFO",

@@ -41,9 +41,7 @@ from cli.image import cli as image_cli
 
 # 初始化日志
 setup_cli_logging(
-    level="INFO",
     log_file=f"{Application.ROOT_DIR}/logs/app_cli.log",
-    console_output=True  # 禁用控制台输出
 )
 logger = get_logger(__name__)
 

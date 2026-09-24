@@ -152,6 +152,38 @@ def test_readable_formatter_removes_ansi_control_codes() -> None:
     assert formatter.format(record) == "failed: package install"
 
 
+def test_readable_formatter_honors_ansi_switch(monkeypatch) -> None:
+    monkeypatch.setattr(Application.LOGGER_CONFIG, "STRIP_ANSI", False)
+    formatter = ReadableFormatter("%(message)s")
+    record = make_record("\x1b[31mfailed\x1b[0m")
+
+    assert formatter.format(record) == "\x1b[31mfailed\x1b[0m"
+
+
+def test_lifecycle_event_honors_configured_field_length(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(Application.LOGGER_CONFIG, "MAX_EVENT_FIELD_LENGTH", 60)
+    logger = logging.getLogger("test.lifecycle.configured_length")
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        log_lifecycle_event(logger, "command_end", command="x" * 75)
+
+    assert "x" * 60 in caplog.records[-1].getMessage()
+    assert "…<truncated_chars=15>" in caplog.records[-1].getMessage()
+
+
+def test_application_exposes_logging_controls() -> None:
+    config = Application.LOGGER_CONFIG
+
+    assert config.LEVEL == "INFO"
+    assert config.CONSOLE_OUTPUT is True
+    assert config.ROTATE_ENABLE is True
+    assert config.ROTATE_WHEN == "D"
+    assert config.ROTATE_BACKUP_COUNT == 7
+    assert config.STRIP_ANSI is True
+    assert config.MAX_EVENT_FIELD_LENGTH == 500
+    assert config.THIRD_PARTY_LOG_LEVELS["pyinfra"] == "WARNING"
+
+
 def test_third_party_loggers_use_central_output_channel(monkeypatch) -> None:
     logger_name = "test.noisy.third.party"
     third_party_logger = logging.getLogger(logger_name)
