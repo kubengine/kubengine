@@ -5,6 +5,7 @@ from core.logger import (
     LogContextFilter,
     bind_log_context,
     get_log_context,
+    log_lifecycle_event,
     log_context_environment,
     with_log_context,
     with_new_log_context,
@@ -100,3 +101,26 @@ def test_async_new_context_id_is_scoped() -> None:
 
     assert request_id.startswith("async-")
     assert get_log_context() == {}
+
+
+def test_lifecycle_event_exposes_event_fields_and_context(caplog) -> None:
+    logger = logging.getLogger("test.lifecycle")
+
+    with caplog.at_level(logging.INFO, logger="test.lifecycle"):
+        with bind_log_context(deployment_id="dep-1", component="containerd"):
+            log_lifecycle_event(
+                logger,
+                "component_end",
+                status="success",
+                duration_ms=12,
+            )
+
+    record = caplog.records[-1]
+    assert record.event == "component_end"  # type: ignore[attr-defined]
+    assert record.deployment_id == "dep-1"  # type: ignore[attr-defined]
+    assert record.component == "containerd"  # type: ignore[attr-defined]
+    assert record.status == "success"  # type: ignore[attr-defined]
+    assert record.duration_ms == 12  # type: ignore[attr-defined]
+    assert record.getMessage() == (
+        "event=component_end status=success duration_ms=12"
+    )

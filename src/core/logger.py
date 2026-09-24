@@ -299,3 +299,31 @@ def setup_cli_logging(
 def get_logger(name: Optional[str] = None) -> logging.Logger:
     """快捷获取Logger实例【完全保留原有代码】"""
     return logging.getLogger(name)
+
+
+def log_lifecycle_event(
+    target_logger: logging.Logger,
+    event: str,
+    *,
+    level: int = logging.INFO,
+    **fields: Any,
+) -> None:
+    """记录字段稳定的生命周期事件。
+
+    当前文件日志仍是人类可读格式，因此同时将字段写入消息和
+    ``LogRecord``。后续切换 JSON formatter 时可直接复用这些字段。
+    """
+    explicit_fields = {key: value for key, value in fields.items() if value is not None}
+    message_parts = [f"event={event}"]
+    for key, value in explicit_fields.items():
+        rendered = (
+            repr(value)
+            if isinstance(value, str) and any(char.isspace() for char in value)
+            else value
+        )
+        message_parts.append(f"{key}={rendered}")
+
+    extra = {"event": event}
+    extra.update(get_log_context())
+    extra.update(explicit_fields)
+    target_logger.log(level, " ".join(str(part) for part in message_parts), extra=extra)

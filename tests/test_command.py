@@ -1,4 +1,5 @@
 import time
+import logging
 from pathlib import Path
 
 from core.command import execute_command
@@ -37,3 +38,33 @@ def test_command_passes_log_context_to_child_process() -> None:
 
     assert result.is_success()
     assert result.stdout == "req-child:12"
+
+
+def test_command_lifecycle_records_success(caplog) -> None:
+    with caplog.at_level(logging.DEBUG, logger="core.command"):
+        result = execute_command("true", log_output=False)
+
+    records = [record for record in caplog.records if hasattr(record, "event")]
+    assert result.is_success()
+    assert [record.event for record in records] == [  # type: ignore[attr-defined]
+        "command_start",
+        "command_end",
+    ]
+    assert records[-1].status == "success"  # type: ignore[attr-defined]
+    assert records[-1].exit_code == 0  # type: ignore[attr-defined]
+    assert records[-1].duration_ms >= 0  # type: ignore[attr-defined]
+
+
+def test_command_lifecycle_records_failure_at_error_level(caplog) -> None:
+    with caplog.at_level(logging.DEBUG, logger="core.command"):
+        result = execute_command("exit 7", log_output=False)
+
+    end_record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "command_end"
+    )
+    assert result.return_code == 7
+    assert end_record.levelno == logging.ERROR
+    assert end_record.status == "failed"  # type: ignore[attr-defined]
+    assert end_record.exit_code == 7  # type: ignore[attr-defined]

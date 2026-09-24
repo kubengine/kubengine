@@ -8,6 +8,7 @@ Kubernetes 集群部署CLI工具
 """
 
 import warnings  # noqa
+from functools import wraps  # noqa
 # 必须在任何其他导入之前执行 gevent monkey patching
 # 以避免 MonkeyPatchWarning
 try:  # noqa
@@ -24,7 +25,13 @@ from infra.executor_wrapper import (  # noqa
     InfraFileExecutor,
     InfraExecutionConfig
 )
-from core.logger import get_logger, setup_cli_logging, with_new_log_context  # noqa
+from core.logger import (  # noqa
+    bind_log_context,
+    get_logger,
+    log_lifecycle_event,
+    setup_cli_logging,
+    with_new_log_context,
+)
 from core.misc.network import local_ips  # noqa
 from core.misc.ca import create_cert  # noqa
 from core.config import Application  # noqa
@@ -32,15 +39,18 @@ from core.command import execute_command  # noqa
 from core.http_api_client.harbor_client import HarborClient  # noqa
 import ipaddress  # noqa
 import click  # noqa
+import logging  # noqa
 from typing import Any, Dict, List, Optional, Set, Tuple  # noqa
 from pathlib import Path  # noqa
 import os  # noqa
 import json  # noqa
 import asyncio  # noqa
 import re  # noqa
+import signal  # noqa
 import shlex  # noqa
 import shutil  # noqa
 import sys  # noqa
+import time  # noqa
 import yaml  # noqa
 
 
@@ -53,9 +63,90 @@ setup_cli_logging(
 logger = get_logger(__name__)
 
 
+def with_deployment_lifecycle(operation_type: str) -> Any:
+    """为部署类 CLI 命令记录唯一的开始和结束事件。"""
+
+    def decorator(func: Any) -> Any:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            started_at = time.monotonic()
+            status = "failed"
+            reason: Optional[str] = None
+            previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+            signal_handler_installed = False
+
+            def interrupt_operation(signum: int, _frame: Any) -> None:
+                raise DeploymentInterrupted(signum)
+
+            try:
+                signal.signal(signal.SIGTERM, interrupt_operation)
+                signal_handler_installed = True
+            except ValueError:
+                pass
+
+            log_lifecycle_event(
+                logger,
+                "deployment_start",
+                operation_type=operation_type,
+            )
+            try:
+                result = func(*args, **kwargs)
+                if result in {"cancelled", "skipped"}:
+                    status = result
+                    reason = f"{operation_type}_{result}"
+                    return None
+                status = "success"
+                return result
+            except SystemExit as exc:
+                exit_code = exc.code if isinstance(exc.code, int) else 1
+                status = "success" if exit_code == 0 else "failed"
+                reason = f"exit_code_{exit_code}"
+                raise
+            except KeyboardInterrupt as exc:
+                status = "interrupted"
+                reason = (
+                    f"signal_{exc.signum}"
+                    if isinstance(exc, DeploymentInterrupted)
+                    else "keyboard_interrupt"
+                )
+                raise
+            except Exception as exc:
+                status = "failed"
+                reason = str(exc)
+                raise
+            finally:
+                if signal_handler_installed:
+                    signal.signal(signal.SIGTERM, previous_sigterm_handler)
+                log_lifecycle_event(
+                    logger,
+                    "deployment_end",
+                    level=(
+                        logging.INFO
+                        if status in {"success", "skipped", "cancelled"}
+                        else logging.ERROR
+                    ),
+                    operation_type=operation_type,
+                    status=status,
+                    duration_ms=round((time.monotonic() - started_at) * 1000),
+                    reason=reason,
+                )
+
+        return wrapper
+
+    return decorator
+
+
 class K8sDeploymentError(Exception):
     """K8s部署异常"""
     pass
+
+
+class DeploymentInterrupted(KeyboardInterrupt):
+    """部署进程收到终止信号。"""
+
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        super().__init__(f"deployment interrupted by signal {signum}")
 
 
 class DeploymentState:
@@ -584,36 +675,42 @@ class K8sDeployer:
     def execute_deployment(self) -> bool:
         """执行K8s集群部署"""
         click.echo("开始执行K8s集群部署...")
+        logger.info("开始执行K8s集群部署")
         # 过滤待执行的文件
         pending_files = self._filter_pending_files()
 
         if not pending_files:
             click.echo("所有组件均已部署完成！")
+            logger.info("所有组件均已部署完成，无待执行组件")
             self._show_deployment_results()
             return True
 
         click.echo(f"开始部署剩余 {len(pending_files)} 个组件...")
+        logger.info("开始部署剩余 %s 个组件", len(pending_files))
 
         # 执行待部署的文件
         for file_path, description in pending_files:
             click.echo(f"\n部署组件: {description} ({file_path.name})")
 
             try:
-                result = self.infra_executor.execute_file(
-                    infra_file_path=file_path,
-                    host_ips=self.config.all_hosts,
-                    shared_data=self.config.deploy_data(),
-                    target_groups=self.config.host_groups
-                )
+                with bind_log_context(component=file_path.stem):
+                    result = self.infra_executor.execute_file(
+                        infra_file_path=file_path,
+                        host_ips=self.config.all_hosts,
+                        shared_data=self.config.deploy_data(),
+                        target_groups=self.config.host_groups
+                    )
 
                 if result.success:
                     click.echo(f"{description} 部署成功")
+                    logger.info("%s 部署成功", description)
                     # 标记为已完成并保存当前文件哈希
                     self.deployment_state.mark_file_completed(file_path.name)
                     self.deployment_state.set_file_hash(
                         file_path.name, self.file_hashes.get(file_path.name, ""))
                 else:
                     click.echo(f"{description} 部署失败")
+                    logger.error("%s 部署失败", description)
                     # 标记为失败
                     self.deployment_state.mark_file_failed(file_path.name)
                     self._show_failure_details(result)
@@ -621,11 +718,13 @@ class K8sDeployer:
 
             except Exception as e:
                 click.echo(f"{description} 部署异常: {str(e)}")
+                logger.error("%s 部署异常: %s", description, e, exc_info=True)
                 self.deployment_state.mark_file_failed(file_path.name)
                 return False
 
         # 所有组件部署完成
         click.echo("所有组件部署完成！")
+        logger.info("所有组件部署完成")
         self._show_deployment_results()
         return True
 
@@ -728,10 +827,12 @@ class K8sDeployer:
     def _success(self, message: str) -> None:
         """输出成功消息"""
         click.echo(click.style(f"{message}", fg="green", bold=True))
+        logger.info(message)
 
     def _error(self, message: str) -> None:
         """输出错误消息"""
         click.echo(click.style(f"{message}", fg="red", bold=True), err=True)
+        logger.error(message)
 
     async def deploy(self) -> bool:
         """执行完整的部署流程"""
@@ -795,7 +896,27 @@ def deploy(deploy_src: str, verbose: int, show_config: bool) -> None:
     $ python k8s.py deploy --show-config
     $ python k8s.py deploy -vvv
     """
-    logger.info("=============== 开始部署Kubernetes集群 ===============")
+    started_at = time.monotonic()
+    status = "failed"
+    reason: Optional[str] = None
+    previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+    signal_handler_installed = False
+
+    def interrupt_deployment(signum: int, _frame: Any) -> None:
+        raise DeploymentInterrupted(signum)
+
+    try:
+        signal.signal(signal.SIGTERM, interrupt_deployment)
+        signal_handler_installed = True
+    except ValueError:
+        # Click 命令正常运行在主线程；测试或嵌入调用可能不是。
+        pass
+    log_lifecycle_event(
+        logger,
+        "deployment_start",
+        deploy_src=deploy_src,
+        show_config=show_config,
+    )
 
     try:
         # 创建部署配置（从Application配置加载）
@@ -804,6 +925,8 @@ def deploy(deploy_src: str, verbose: int, show_config: bool) -> None:
         # 显示配置
         if show_config:
             config.show_config()
+            status = "skipped"
+            reason = "show_config_only"
             return
 
         # 显示将要使用的配置
@@ -813,6 +936,8 @@ def deploy(deploy_src: str, verbose: int, show_config: bool) -> None:
         # 确认部署
         if not click.confirm("\n是否继续部署？"):
             click.echo("部署已取消")
+            status = "cancelled"
+            reason = "user_cancelled"
             return
 
         # 创建部署器并执行部署
@@ -820,17 +945,48 @@ def deploy(deploy_src: str, verbose: int, show_config: bool) -> None:
 
         # 启动异步部署
         success = asyncio.run(deployer.deploy())
+        status = "success" if success else "failed"
+        if not success:
+            reason = "deployment_step_failed"
 
         # 根据结果设置退出码
         exit(0 if success else 1)
 
     except K8sDeploymentError as e:
+        status = "failed"
+        reason = str(e)
         click.echo(click.style(f"配置错误: {e}", fg="red"), err=True)
         exit(1)
+    except KeyboardInterrupt as exc:
+        status = "interrupted"
+        reason = (
+            f"signal_{exc.signum}"
+            if isinstance(exc, DeploymentInterrupted)
+            else "keyboard_interrupt"
+        )
+        click.echo(click.style("部署已中断", fg="yellow"), err=True)
+        raise
     except Exception as e:
+        status = "failed"
+        reason = str(e)
         logger.error(f"部署过程中发生异常: {str(e)}", exc_info=True)
         click.echo(click.style(f"部署失败: {e}", fg="red"), err=True)
         exit(1)
+    finally:
+        if signal_handler_installed:
+            signal.signal(signal.SIGTERM, previous_sigterm_handler)
+        log_lifecycle_event(
+            logger,
+            "deployment_end",
+            level=(
+                logging.INFO
+                if status in {"success", "skipped", "cancelled"}
+                else logging.ERROR
+            ),
+            status=status,
+            duration_ms=round((time.monotonic() - started_at) * 1000),
+            reason=reason,
+        )
 
 
 @cli.command(name="config")
@@ -913,12 +1069,13 @@ def reset_state(force: bool) -> None:
     help="日志详细级别：-v/-vv/-vvv"
 )
 @with_new_log_context("deployment_id", prefix="scale-")
+@with_deployment_lifecycle("scale")
 def scale(
     worker_ips: Tuple[str, ...],
     deploy_src: str,
     dry_run: bool,
     verbose: int
-) -> None:
+) -> Optional[str]:
     """
     集群扩容：向已有 K8s 集群添加 Worker 节点
 
@@ -996,7 +1153,7 @@ def scale(
         if not truly_new:
             click.echo(click.style(
                 "没有需要扩容的新节点", fg="yellow"))
-            return
+            return "skipped"
 
         # ---- 3. 展示扩容计划 ----
         click.echo(click.style(f"\n{'=' * 60}", fg="cyan", bold=True))
@@ -1020,12 +1177,12 @@ def scale(
 
         if dry_run:
             click.echo(click.style("--dry-run 模式，不执行部署", fg="yellow"))
-            return
+            return "skipped"
 
         # 确认扩容
         if not click.confirm("确认执行扩容？"):
             click.echo("扩容已取消")
-            return
+            return "cancelled"
 
         # ---- 4. 执行扩容 ----
         infra_path = os.path.join(Path(__file__).parent.parent, "infra")

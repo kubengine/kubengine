@@ -9,6 +9,7 @@ from pyinfra.connectors.util import CommandOutput, OutputLine
 from infra.executor_wrapper import (
     HostExecutionResult,
     HostOperationResult,
+    InfraLifecycleCallback,
     InfraExecutionResult,
     InfraFileExecutor,
 )
@@ -258,3 +259,46 @@ def test_pyinfra_greenlet_inherits_log_context() -> None:
         "deployment_id": "dep-greenlet",
         "component": "containerd",
     }
+
+
+def test_pyinfra_callback_records_operation_lifecycle(caplog) -> None:
+    host = FakeHost("node-1")
+    state = FakeState(hosts=[host], operations=[("one", "Restart service")])
+    callback = InfraLifecycleCallback()
+
+    with caplog.at_level("INFO", logger="infra.executor_wrapper"):
+        with bind_log_context(deployment_id="dep-1", component="containerd"):
+            callback.operation_host_start(state, host, "one")  # type: ignore[arg-type]
+            callback.operation_host_success(state, host, "one")  # type: ignore[arg-type]
+
+    records = [record for record in caplog.records if hasattr(record, "event")]
+    assert [record.event for record in records] == [  # type: ignore[attr-defined]
+        "operation_start",
+        "operation_end",
+    ]
+    assert records[-1].status == "success"  # type: ignore[attr-defined]
+    assert records[-1].deployment_id == "dep-1"  # type: ignore[attr-defined]
+    assert records[-1].component == "containerd"  # type: ignore[attr-defined]
+    assert records[-1].host == "node-1"  # type: ignore[attr-defined]
+    assert records[-1].operation == "Restart service"  # type: ignore[attr-defined]
+
+
+def test_execute_file_records_component_and_host_terminal_events(
+    tmp_path, caplog
+) -> None:
+    executor = InfraFileExecutor()
+
+    with caplog.at_level("INFO", logger="infra.executor_wrapper"):
+        result = executor.execute_file(tmp_path / "missing.py", ["node-1"])
+
+    records = [record for record in caplog.records if hasattr(record, "event")]
+    assert result.success is False
+    assert [record.event for record in records] == [  # type: ignore[attr-defined]
+        "component_start",
+        "host_start",
+        "host_end",
+        "component_end",
+    ]
+    assert records[-2].status == "failed"  # type: ignore[attr-defined]
+    assert records[-1].status == "failed"  # type: ignore[attr-defined]
+    assert records[-1].hosts_failed == 1  # type: ignore[attr-defined]

@@ -7,6 +7,7 @@ deployment files using PyInfra with proper error handling and logging.
 import asyncio
 from contextvars import copy_context
 import importlib.util
+import logging
 import sys
 import time
 from dataclasses import dataclass, field
@@ -15,16 +16,113 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 from pyinfra import logger as pyinfra_logger
 from pyinfra.api.config import Config
-from pyinfra.api.state import State, StateStage
+from pyinfra.api.state import BaseStateCallback, State, StateStage
 from pyinfra.api.connect import connect_all
 from pyinfra.api.inventory import Inventory
 from pyinfra.api.operations import run_ops
 from pyinfra.context import ctx_config, ctx_inventory, ctx_state, ctx_host
 from pyinfra_cli.prints import print_results  # type: ignore
-from core.logger import bind_log_context, get_logger
+from core.logger import bind_log_context, get_logger, log_lifecycle_event
 
 logger = get_logger(__name__)
 pyinfra_logger.setLevel(logger.level)  # 对齐PyInfra日志级别
+
+
+class InfraLifecycleCallback(BaseStateCallback):
+    """将 PyInfra 的主机操作回调转换为统一生命周期事件。"""
+
+    def __init__(self) -> None:
+        self._operation_started_at: Dict[Tuple[str, str], float] = {}
+
+    @staticmethod
+    def _operation_name(state: State, op_hash: str) -> str:
+        op_meta = state.get_op_meta(op_hash)
+        names = sorted(str(name) for name in getattr(op_meta, "names", set()))
+        return ", ".join(names) or f"operation_{str(op_hash)[:8]}"
+
+    def operation_host_start(self, state: State, host: Any, op_hash: str) -> None:
+        host_name = str(host)
+        operation = self._operation_name(state, op_hash)
+        self._operation_started_at[(host_name, op_hash)] = time.monotonic()
+        with bind_log_context(stage="execute", host=host_name, operation=operation):
+            log_lifecycle_event(logger, "operation_start")
+
+    def _operation_end(
+        self,
+        state: State,
+        host: Any,
+        op_hash: str,
+        *,
+        status: str,
+        retry_count: int,
+    ) -> None:
+        host_name = str(host)
+        operation = self._operation_name(state, op_hash)
+        started_at = self._operation_started_at.pop((host_name, op_hash), None)
+        duration_ms = (
+            round((time.monotonic() - started_at) * 1000)
+            if started_at is not None
+            else None
+        )
+        level = {
+            "success": logging.INFO,
+            "ignored_error": logging.WARNING,
+        }.get(status, logging.ERROR)
+        with bind_log_context(stage="execute", host=host_name, operation=operation):
+            log_lifecycle_event(
+                logger,
+                "operation_end",
+                level=level,
+                status=status,
+                duration_ms=duration_ms,
+                retry_count=retry_count,
+            )
+
+    def operation_host_success(
+        self, state: State, host: Any, op_hash: str, retry_count: int = 0
+    ) -> None:
+        self._operation_end(
+            state, host, op_hash, status="success", retry_count=retry_count
+        )
+
+    def operation_host_error(
+        self,
+        state: State,
+        host: Any,
+        op_hash: str,
+        retry_count: int = 0,
+        max_retries: int = 0,
+    ) -> None:
+        op_data = state.get_op_data_for_host(host, op_hash)
+        ignore_errors = bool(
+            getattr(op_data, "global_arguments", {}).get("_ignore_errors", False)
+        )
+        self._operation_end(
+            state,
+            host,
+            op_hash,
+            status="ignored_error" if ignore_errors else "failed",
+            retry_count=retry_count,
+        )
+
+    def operation_host_retry(
+        self,
+        state: State,
+        host: Any,
+        op_hash: str,
+        retry_num: int,
+        max_retries: int,
+    ) -> None:
+        host_name = str(host)
+        operation = self._operation_name(state, op_hash)
+        with bind_log_context(stage="execute", host=host_name, operation=operation):
+            log_lifecycle_event(
+                logger,
+                "operation_retry",
+                level=logging.WARNING,
+                retry_num=retry_num,
+                max_retries=max_retries,
+            )
 
 
 @dataclass
@@ -311,40 +409,110 @@ class InfraFileExecutor:
         # 初始化shared_data（默认空字典，避免None）
         shared_data = shared_data or {}
 
-        try:
-            # 验证文件存在
-            file_path = Path(infra_file_path)
-            if not file_path.exists():
-                raise FileNotFoundError(
-                    f"Infrastructure file not found: {infra_file_path}"
-                )
-            if not file_path.is_file():
-                raise IsADirectoryError(f"Path is not a file: {infra_file_path}")
-
-            # 初始化执行环境（适配IP列表+shared_data）
-            self._setup_execution_environment(
-                file_path, host_ips, shared_data, target_groups
+        with bind_log_context(component=component_name):
+            log_lifecycle_event(
+                logger,
+                "component_start",
+                component_file=str(infra_file_path),
+                hosts_total=len(host_ips),
             )
+            for host_ip, host_result in result.host_results.items():
+                host_result.execution_start_time = result.execution_start_time
+                with bind_log_context(host=host_ip):
+                    log_lifecycle_event(logger, "host_start")
 
-            # 执行部署并收集详细结果
-            with bind_log_context(component=component_name):
+            try:
+                # 验证文件存在
+                file_path = Path(infra_file_path)
+                if not file_path.exists():
+                    raise FileNotFoundError(
+                        f"Infrastructure file not found: {infra_file_path}"
+                    )
+                if not file_path.is_file():
+                    raise IsADirectoryError(f"Path is not a file: {infra_file_path}")
+
+                # 初始化执行环境（适配IP列表+shared_data）
+                self._setup_execution_environment(
+                    file_path, host_ips, shared_data, target_groups
+                )
+
+                # 执行部署并收集详细结果
                 self._execute_deployment(file_path, result, shared_data)
 
-        except Exception as e:
-            error_msg = f"Infrastructure execution failed: {str(e)}"
-            with bind_log_context(component=component_name):
+            except KeyboardInterrupt:
+                result.global_error = "Infrastructure execution interrupted"
+                result.success = False
+                raise
+            except Exception as e:
+                error_msg = f"Infrastructure execution failed: {str(e)}"
                 logger.error(error_msg, exc_info=True)
-            result.global_error = error_msg
-            result.success = False
+                result.global_error = error_msg
+                result.success = False
 
-        finally:
-            # 收尾工作：计算汇总指标、清理环境
-            result.execution_end_time = time.time()
-            self._calculate_summary_metrics(result)
-            with bind_log_context(component=component_name):
+            finally:
+                # 收尾工作：计算汇总指标、清理环境
+                result.execution_end_time = time.time()
+                for host_result in result.host_results.values():
+                    if host_result.execution_end_time <= 0:
+                        host_result.execution_end_time = result.execution_end_time
+                self._calculate_summary_metrics(result)
                 self._cleanup_execution()
+                self._log_host_end_events(result)
+                component_status = (
+                    "interrupted"
+                    if result.global_error == "Infrastructure execution interrupted"
+                    else "success" if result.success else "failed"
+                )
+                log_lifecycle_event(
+                    logger,
+                    "component_end",
+                    level=logging.INFO if result.success else logging.ERROR,
+                    status=component_status,
+                    duration_ms=round(result.execution_duration * 1000),
+                    hosts_total=result.total_hosts,
+                    hosts_successful=result.successful_hosts,
+                    hosts_failed=result.failed_hosts,
+                    operations_total=sum(
+                        host.total_operations for host in result.host_results.values()
+                    ),
+                    operations_failed=sum(
+                        host.failed_operations for host in result.host_results.values()
+                    ),
+                    error=result.global_error,
+                )
 
         return result
+
+    def _log_host_end_events(self, result: InfraExecutionResult) -> None:
+        """记录每台目标主机的最终状态与操作汇总。"""
+        for host_ip, host_result in result.host_results.items():
+            if (
+                host_result.connected
+                and host_result.total_operations > 0
+                and host_result.skipped_operations == host_result.total_operations
+            ):
+                status = "skipped"
+            else:
+                status = "success" if host_result.success else "failed"
+            with bind_log_context(host=host_ip):
+                log_lifecycle_event(
+                    logger,
+                    "host_end",
+                    level=(
+                        logging.INFO
+                        if status in {"success", "skipped"}
+                        else logging.ERROR
+                    ),
+                    status=status,
+                    duration_ms=round(host_result.execution_duration * 1000),
+                    connected=host_result.connected,
+                    operations_total=host_result.total_operations,
+                    operations_successful=host_result.successful_operations,
+                    operations_failed=host_result.failed_operations,
+                    operations_changed=host_result.changed_operations,
+                    operations_skipped=host_result.skipped_operations,
+                    error=host_result.error,
+                )
 
     def execute_file_async(
         self,
@@ -422,6 +590,7 @@ class InfraFileExecutor:
 
         # 初始化state
         self._state.init(inventory, config)  # type: ignore
+        self._state.add_callback_handler(InfraLifecycleCallback())
         self._enable_greenlet_context_propagation()
 
     def _enable_greenlet_context_propagation(self) -> None:
@@ -464,7 +633,8 @@ class InfraFileExecutor:
                 host_result.error = (
                     "Failed to connect to host (check SSH config in shared_data)"
                 )
-                logger.warning(f"Host {ip} failed to connect")
+                with bind_log_context(stage="connect", host=ip):
+                    logger.warning(f"Host {ip} failed to connect")
 
         # 检查是否有可用主机
         if not self._state.activated_hosts:
@@ -489,9 +659,8 @@ class InfraFileExecutor:
                 logger.warning(f"Host '{host_ip}' not found in inventory")
                 continue
 
-            # 获取当前主机的结果对象并初始化时间
+            # 获取当前主机的结果对象
             host_result = result.host_results[host_ip]
-            host_result.execution_start_time = time.time()
             host_result.connected = True
 
             try:
@@ -517,7 +686,6 @@ class InfraFileExecutor:
                 host_result.error = error_msg
                 continue
             finally:
-                host_result.execution_end_time = time.time()
                 ctx_host.reset()  # 重置上下文
 
         # 4. 执行PyInfra操作
@@ -606,6 +774,10 @@ class InfraFileExecutor:
                         )
                         host_result.total_operations += 1
                         host_result.skipped_operations += 1
+                        with bind_log_context(host=host_ip, operation=op_name):
+                            log_lifecycle_event(
+                                logger, "operation_skipped", status="skipped"
+                            )
                         continue
 
                     op_meta = getattr(op_data, "operation_meta", None)
@@ -624,6 +796,13 @@ class InfraFileExecutor:
                             )
                             host_result.total_operations += 1
                             host_result.skipped_operations += 1
+                            with bind_log_context(host=host_ip, operation=op_name):
+                                log_lifecycle_event(
+                                    logger,
+                                    "operation_skipped",
+                                    status="skipped",
+                                    reason="previous_operation_failed",
+                                )
                             continue
                         raise RuntimeError(
                             f"Operation {base_name} on {host_ip} has no completed result"

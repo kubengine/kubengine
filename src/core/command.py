@@ -4,13 +4,15 @@ This module provides utilities for executing shell commands with timeout control
 real-time output logging, and error handling capabilities.
 """
 
-from core.logger import get_logger, log_context_environment
+from core.logger import get_logger, log_context_environment, log_lifecycle_event
 from typing import BinaryIO, Optional, Literal
+import logging
 import os
 import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 
 log = get_logger(__name__)
@@ -250,6 +252,15 @@ def _execute_command_core(
         except PermissionError:
             return True
 
+    started_at = time.monotonic()
+    log_lifecycle_event(
+        log,
+        "command_start",
+        level=logging.DEBUG,
+        command=cmd,
+        timeout_seconds=timeout,
+    )
+
     try:
         with (
             tempfile.TemporaryFile() as stdout_file,
@@ -303,9 +314,31 @@ def _execute_command_core(
                     log.debug("[STDOUT] %s", line)
                 for line in stderr.splitlines():
                     log.debug("[STDERR] %s", line)
-            return CommandResult(return_code, stdout, stderr)
+            result = CommandResult(return_code, stdout, stderr)
+            log_lifecycle_event(
+                log,
+                "command_end",
+                level=logging.DEBUG if result.is_success() else logging.ERROR,
+                command=cmd,
+                status="success" if result.is_success() else "failed",
+                duration_ms=round((time.monotonic() - started_at) * 1000),
+                exit_code=return_code,
+                timed_out=timed_out,
+            )
+            return result
     except Exception as exc:
         log.exception("Execute command [%s] got exception", cmd)
+        log_lifecycle_event(
+            log,
+            "command_end",
+            level=logging.ERROR,
+            command=cmd,
+            status="failed",
+            duration_ms=round((time.monotonic() - started_at) * 1000),
+            exit_code=1,
+            timed_out=False,
+            error=str(exc),
+        )
         return CommandResult(1, "", f"execute command error: {exc}")
 
 
