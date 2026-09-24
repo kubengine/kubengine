@@ -4,7 +4,12 @@ This module provides utilities for executing shell commands with timeout control
 real-time output logging, and error handling capabilities.
 """
 
-from core.logger import get_logger, log_context_environment, log_lifecycle_event
+from core.logger import (
+    bind_log_context,
+    get_logger,
+    log_context_environment,
+    log_lifecycle_event,
+)
 from typing import BinaryIO, Optional, Literal
 import logging
 import os
@@ -13,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from uuid import uuid4
 
 
 log = get_logger(__name__)
@@ -200,15 +206,15 @@ def execute_command(
     elif fail_action is None:
         fail_action = 'none'
 
-    # 核心执行逻辑
-    result = _execute_command_core(cmd, timeout, log_output)
-
-    # 统一的错误处理
-    if result.is_failure() and fail_action != 'none':
-        _handle_command_failure(cmd, result, fail_action,
-                                exit_code, error_message)
-
-    return result
+    # 为并发命令分配独立标识，便于关联开始、结束及超时日志。
+    command_id = f"local-{uuid4().hex[:12]}"
+    with bind_log_context(command_id=command_id):
+        result = _execute_command_core(cmd, timeout, log_output)
+        # 统一的错误处理也保留命令上下文。
+        if result.is_failure() and fail_action != 'none':
+            _handle_command_failure(
+                cmd, result, fail_action, exit_code, error_message)
+        return result
 
 
 def _execute_command_core(
@@ -252,11 +258,17 @@ def _execute_command_core(
         except PermissionError:
             return True
 
+    def _error_summary(stderr: str) -> Optional[str]:
+        """提取最后一行错误摘要，避免在生命周期日志中重复输出整段内容。"""
+        lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+        return lines[-1][:500] if lines else None
+
     started_at = time.monotonic()
     log_lifecycle_event(
         log,
         "command_start",
         level=logging.DEBUG,
+        executor="local",
         command=cmd,
         timeout_seconds=timeout,
     )
@@ -318,12 +330,21 @@ def _execute_command_core(
             log_lifecycle_event(
                 log,
                 "command_end",
-                level=logging.DEBUG if result.is_success() else logging.ERROR,
+                level=logging.INFO if result.is_success() else logging.ERROR,
+                executor="local",
                 command=cmd,
-                status="success" if result.is_success() else "failed",
+                status=(
+                    "success"
+                    if result.is_success()
+                    else "timeout" if timed_out else "failed"
+                ),
                 duration_ms=round((time.monotonic() - started_at) * 1000),
                 exit_code=return_code,
                 timed_out=timed_out,
+                process_id=process.pid,
+                stdout_bytes=len(stdout.encode("utf-8")),
+                stderr_bytes=len(stderr.encode("utf-8")),
+                error=_error_summary(stderr) if result.is_failure() else None,
             )
             return result
     except Exception as exc:
@@ -332,6 +353,7 @@ def _execute_command_core(
             log,
             "command_end",
             level=logging.ERROR,
+            executor="local",
             command=cmd,
             status="failed",
             duration_ms=round((time.monotonic() - started_at) * 1000),

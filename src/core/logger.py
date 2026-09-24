@@ -24,6 +24,8 @@ LOG_CONTEXT_FIELDS = (
     "stage",
     "host",
     "operation",
+    "command_id",
+    "transfer_id",
 )
 _LOG_CONTEXT_ENV_PREFIX = "KUBENGINE_LOG_"
 
