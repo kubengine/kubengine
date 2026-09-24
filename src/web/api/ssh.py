@@ -89,8 +89,8 @@ async def execute_command(
     Raises:
         HTTPException: 当命令执行失败时抛出 500 错误
     """
+    client = AsyncSSHClient()
     try:
-        client = AsyncSSHClient()
 
         # 构建连接参数
         kwargs: dict[str, Any] = {"username": command_req.username}
@@ -110,6 +110,8 @@ async def execute_command(
     except Exception as e:
         logger.error(f"执行命令失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await client.close_all_connections()
 
 
 @router.post(
@@ -139,8 +141,8 @@ async def execute_multiple_commands(
     Raises:
         HTTPException: 当命令执行失败时抛出 500 错误
     """
+    client = AsyncSSHClient()
     try:
-        client = AsyncSSHClient()
 
         # 解析主机和命令列表
         hosts_commands = [
@@ -165,6 +167,8 @@ async def execute_multiple_commands(
     except Exception as e:
         logger.error(f"执行多主机命令失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await client.close_all_connections()
 
 
 # ============================ 文件传输 ============================
@@ -197,8 +201,8 @@ async def upload_file(
     Raises:
         HTTPException: 当文件上传失败时抛出 500 错误
     """
+    client = AsyncSSHClient()
     try:
-        client = AsyncSSHClient()
 
         # 构建连接参数
         kwargs: dict[str, Any] = {"username": file_req.username}
@@ -219,6 +223,8 @@ async def upload_file(
     except Exception as e:
         logger.error(f"上传文件失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await client.close_all_connections()
 
 
 @router.post(
@@ -248,8 +254,8 @@ async def download_file(
     Raises:
         HTTPException: 当文件下载失败时抛出 500 错误
     """
+    client = AsyncSSHClient()
     try:
-        client = AsyncSSHClient()
 
         # 构建连接参数
         kwargs: dict[str, Any] = {"username": file_req.username}
@@ -270,3 +276,5 @@ async def download_file(
     except Exception as e:
         logger.error(f"下载文件失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await client.close_all_connections()

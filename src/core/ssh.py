@@ -39,11 +39,26 @@ class AsyncSSHClient:
     cluster management capabilities.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        connect_timeout: float = 10,
+        operation_timeout: float = 300,
+        transfer_timeout: float = 600,
+        max_concurrency: int = 10,
+    ) -> None:
         """Initialize SSH client with connection pool."""
         # Connection pool: host -> connection mapping
         self._connections: Dict[str, asyncssh.SSHClientConnection] = {}
-        self._lock = asyncio.Lock()  # Ensure thread-safe connection pool operations
+        self._connection_locks: Dict[str, asyncio.Lock] = {}
+        self._pool_lock = asyncio.Lock()
+        self._semaphore = asyncio.Semaphore(max(1, max_concurrency))
+        self.connect_timeout = connect_timeout
+        self.operation_timeout = operation_timeout
+        self.transfer_timeout = transfer_timeout
+
+    async def _host_lock(self, host: str) -> asyncio.Lock:
+        async with self._pool_lock:
+            return self._connection_locks.setdefault(host, asyncio.Lock())
 
     async def _get_connection(
         self,
@@ -59,19 +74,34 @@ class AsyncSSHClient:
         Returns:
             SSH client connection object
         """
-        async with self._lock:
-            if host in self._connections:
-                # Check if connection is still active
-                # Note: asyncssh doesn't have is_active() method,
-                # we'll let it fail if connection is broken
-                return self._connections[host]
-                # If connection is closed, remove and create new connection
-                # del self._connections[host]
+        host_lock = await self._host_lock(host)
+        async with host_lock:
+            conn = self._connections.get(host)
+            if conn is not None and not conn.is_closed():
+                return conn
+            if conn is not None:
+                self._connections.pop(host, None)
 
-            # Create new connection and add to pool
-            conn = await asyncssh.connect(host, known_hosts=None, **kwargs)
+            connect_timeout = float(kwargs.pop("connect_timeout", self.connect_timeout))
+            # Existing installations bootstrap trust from application credentials.
+            # Callers can supply a known_hosts path to enable strict host validation.
+            kwargs.setdefault("known_hosts", None)
+            conn = await asyncio.wait_for(
+                asyncssh.connect(host, connect_timeout=connect_timeout, **kwargs),
+                timeout=connect_timeout + 1,
+            )
             self._connections[host] = conn
             return conn
+
+    async def _discard_connection(self, host: str) -> None:
+        conn = self._connections.pop(host, None)
+        if conn is None:
+            return
+        conn.close()
+        try:
+            await asyncio.wait_for(conn.wait_closed(), timeout=2)
+        except (Exception, asyncio.CancelledError):
+            pass
 
     async def close_connection(self, host: str) -> None:
         """Close connection for specified host.
@@ -79,28 +109,24 @@ class AsyncSSHClient:
         Args:
             host: Target host address
         """
-        async with self._lock:
-            if host in self._connections:
-                try:
-                    self._connections[host].close()
-                except Exception:
-                    pass
-                del self._connections[host]
+        host_lock = await self._host_lock(host)
+        async with host_lock:
+            await self._discard_connection(host)
 
     async def close_all_connections(self) -> None:
         """Close all connections in the pool."""
-        async with self._lock:
-            for _, conn in self._connections.items():
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-            self._connections.clear()
+        async with self._pool_lock:
+            hosts = list(self._connections)
+        await asyncio.gather(
+            *(self.close_connection(host) for host in hosts),
+            return_exceptions=True,
+        )
 
     async def execute_command(
         self,
         host: str,
         command: str,
+        operation_timeout: Optional[float] = None,
         **kwargs: Any
     ) -> Dict[str, Union[str, int, None]]:
         """Execute command on single host (using connection pool).
@@ -124,14 +150,22 @@ class AsyncSSHClient:
             'error': None
         }
 
+        timeout = operation_timeout or self.operation_timeout
         try:
-            conn = await self._get_connection(host, **kwargs)
-            process = await conn.run(command, check=False)
-            result['stdout'] = str(process.stdout) or ''
-            result['stderr'] = str(process.stderr) or ''
-            result['exit_status'] = process.exit_status
+            async with self._semaphore:
+                conn = await self._get_connection(host, **kwargs)
+                process = await asyncio.wait_for(
+                    conn.run(command, check=False), timeout=timeout
+                )
+                result['stdout'] = str(process.stdout) or ''
+                result['stderr'] = str(process.stderr) or ''
+                result['exit_status'] = process.exit_status
+        except asyncio.TimeoutError:
+            result['error'] = f"SSH command timed out after {timeout}s"
+            await self._discard_connection(host)
         except Exception as e:
             result['error'] = str(e)
+            await self._discard_connection(host)
 
         return result
 
@@ -170,10 +204,12 @@ class AsyncSSHClient:
         Returns:
             Tuple of (reachable_hosts, not_reachable_hosts)
         """
+        reachability_options = dict(kwargs)
+        reachability_options.setdefault("connect_timeout", min(self.connect_timeout, 3))
+        reachability_options.setdefault("operation_timeout", 5)
         result = await self.execute_multiple_commands(
             [(host, 'echo "ping"') for host in hosts],
-            connect_timeout=1,
-            **kwargs
+            **reachability_options,
         )
 
         reachable_hosts: List[str] = []
@@ -213,12 +249,20 @@ class AsyncSSHClient:
             'error': None
         }
 
+        timeout = float(kwargs.pop("operation_timeout", self.transfer_timeout))
         try:
-            conn = await self._get_connection(host, **kwargs)
-            async with conn.start_sftp_client() as sftp:
-                await sftp.put(local_path, remote_path)
+            async with self._semaphore:
+                conn = await self._get_connection(host, **kwargs)
+                async with conn.start_sftp_client() as sftp:
+                    await asyncio.wait_for(
+                        sftp.put(local_path, remote_path), timeout=timeout
+                    )
+        except asyncio.TimeoutError:
+            result['error'] = f"SFTP upload timed out after {timeout}s"
+            await self._discard_connection(host)
         except Exception as e:
             result['error'] = str(e)
+            await self._discard_connection(host)
 
         return result
 
@@ -247,12 +291,20 @@ class AsyncSSHClient:
             'error': None
         }
 
+        timeout = float(kwargs.pop("operation_timeout", self.transfer_timeout))
         try:
-            conn = await self._get_connection(host, **kwargs)
-            async with conn.start_sftp_client() as sftp:
-                await sftp.get(remote_path, local_path)
+            async with self._semaphore:
+                conn = await self._get_connection(host, **kwargs)
+                async with conn.start_sftp_client() as sftp:
+                    await asyncio.wait_for(
+                        sftp.get(remote_path, local_path), timeout=timeout
+                    )
+        except asyncio.TimeoutError:
+            result['error'] = f"SFTP download timed out after {timeout}s"
+            await self._discard_connection(host)
         except Exception as e:
             result['error'] = str(e)
+            await self._discard_connection(host)
 
         return result
 
@@ -281,12 +333,20 @@ class AsyncSSHClient:
             'error': None
         }
 
+        timeout = float(kwargs.pop("operation_timeout", self.transfer_timeout))
         try:
-            conn = await self._get_connection(host, **kwargs)
-            # type: ignore
-            await asyncssh.scp(local_dir, (conn, remote_dir), recurse=True)
+            async with self._semaphore:
+                conn = await self._get_connection(host, **kwargs)
+                await asyncio.wait_for(
+                    asyncssh.scp(local_dir, (conn, remote_dir), recurse=True),
+                    timeout=timeout,
+                )
+        except asyncio.TimeoutError:
+            result['error'] = f"SCP upload timed out after {timeout}s"
+            await self._discard_connection(host)
         except Exception as e:
             result['error'] = str(e)
+            await self._discard_connection(host)
 
         return result
 
@@ -315,12 +375,20 @@ class AsyncSSHClient:
             'error': None
         }
 
+        timeout = float(kwargs.pop("operation_timeout", self.transfer_timeout))
         try:
-            conn = await self._get_connection(host, **kwargs)
-            # type: ignore
-            await asyncssh.scp((conn, remote_dir), local_dir, recurse=True)
+            async with self._semaphore:
+                conn = await self._get_connection(host, **kwargs)
+                await asyncio.wait_for(
+                    asyncssh.scp((conn, remote_dir), local_dir, recurse=True),
+                    timeout=timeout,
+                )
+        except asyncio.TimeoutError:
+            result['error'] = f"SCP download timed out after {timeout}s"
+            await self._discard_connection(host)
         except Exception as e:
             result['error'] = str(e)
+            await self._discard_connection(host)
 
         return result
 
