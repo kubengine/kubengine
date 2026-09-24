@@ -71,7 +71,7 @@ class TLSConfig:
 class LoggerConfig:
     """日志配置数据类，默认值适配大多数场景"""
     LEVEL: ClassVar[str] = "INFO"
-    FORMAT: ClassVar[str] = "%(asctime)s - %(name)s - %(levelname)s - %(process)d - %(filename)s:%(lineno)d - %(message)s"
+    FORMAT: ClassVar[str] = "%(asctime)s - %(name)s - %(levelname)s - %(process)d - %(filename)s:%(lineno)d - %(message)s%(context_suffix)s"
     DATE_FORMAT: ClassVar[str] = "%Y-%m-%d %H:%M:%S"
     # 日志轮转配置
     ROTATE_ENABLE: ClassVar[bool] = True  # 是否开启日志轮转

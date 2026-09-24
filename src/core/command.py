@@ -4,7 +4,7 @@ This module provides utilities for executing shell commands with timeout control
 real-time output logging, and error handling capabilities.
 """
 
-from core.logger import get_logger
+from core.logger import get_logger, log_context_environment
 from typing import BinaryIO, Optional, Literal
 import os
 import signal
@@ -261,6 +261,7 @@ def _execute_command_core(
                 stdout=stdout_file,
                 stderr=stderr_file,
                 start_new_session=True,
+                env=log_context_environment(os.environ),
             )
             log.debug("Executing command in process group %s: %s", process.pid, cmd)
             timed_out = False

@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from core.logger import get_logger
+from core.logger import get_logger, with_log_context, with_new_log_context
 from core.misc.websocket import connection_manager
 from core.orm.task import TaskStatus
 from web.utils.auth import get_current_user
@@ -82,6 +82,7 @@ async def get_task_status(task_id: str) -> dict[str, Any] | None:
 # ============================ 后台任务 ============================
 
 
+@with_log_context(task_id="task_id")
 async def create_resource_task(
     task_id: str,
     resource_name: str,
@@ -210,6 +211,7 @@ async def trigger_resource_create(
     "/ws",
     name="websocket_endpoint",
 )
+@with_new_log_context("request_id", prefix="ws-")
 async def websocket_endpoint(
     websocket: WebSocket,
     token: str | None = Query(None, description="认证令牌"),

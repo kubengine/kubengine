@@ -24,7 +24,7 @@ from infra.executor_wrapper import (  # noqa
     InfraFileExecutor,
     InfraExecutionConfig
 )
-from core.logger import get_logger, setup_cli_logging  # noqa
+from core.logger import get_logger, setup_cli_logging, with_new_log_context  # noqa
 from core.misc.network import local_ips  # noqa
 from core.misc.ca import create_cert  # noqa
 from core.config import Application  # noqa
@@ -777,6 +777,7 @@ def cli():
     is_flag=True,
     help="显示当前配置（不执行部署）"
 )
+@with_new_log_context("deployment_id", prefix="dep-")
 def deploy(deploy_src: str, verbose: int, show_config: bool) -> None:
     """
     K8s集群部署命令
@@ -911,6 +912,7 @@ def reset_state(force: bool) -> None:
     count=True,
     help="日志详细级别：-v/-vv/-vvv"
 )
+@with_new_log_context("deployment_id", prefix="scale-")
 def scale(
     worker_ips: Tuple[str, ...],
     deploy_src: str,

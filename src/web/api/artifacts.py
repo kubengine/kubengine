@@ -39,7 +39,7 @@ from starlette.concurrency import run_in_threadpool
 from core.command import execute_command
 from core.config.application import Application
 from core.http_api_client.harbor_client import HarborClient
-from core.logger import get_logger
+from core.logger import get_logger, with_log_context
 from core.orm.image_import import (
     create_image_import_task,
     find_image_import_task,
@@ -743,6 +743,7 @@ def _finish_image_import_task(task_id: int) -> None:
     )
 
 
+@with_log_context(task_id="task_id")
 def process_image_import_task(task_id: int, retry_failed: bool = False) -> None:
     """Import an archive and persist the result of every contained image."""
     task = find_image_import_task(task_id, include_file_path=True)

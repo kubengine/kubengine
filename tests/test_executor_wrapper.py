@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+from gevent.pool import Pool
 import pytest
 from pyinfra.api.operation import OperationMeta
 from pyinfra.connectors.util import CommandOutput, OutputLine
@@ -11,6 +12,7 @@ from infra.executor_wrapper import (
     InfraExecutionResult,
     InfraFileExecutor,
 )
+from core.logger import bind_log_context, get_log_context
 
 
 class FakeOperationMeta:
@@ -241,3 +243,18 @@ def test_collects_real_pyinfra_36_operation_metadata() -> None:
     assert operation.success is True
     assert operation.changed is True
     assert operation.output == ["completed"]
+
+
+def test_pyinfra_greenlet_inherits_log_context() -> None:
+    executor = InfraFileExecutor()
+    pool = Pool(1)
+    executor._state = SimpleNamespace(pool=pool)  # type: ignore[assignment]
+    executor._enable_greenlet_context_propagation()
+
+    with bind_log_context(deployment_id="dep-greenlet", component="containerd"):
+        context = pool.spawn(get_log_context).get()
+
+    assert context == {
+        "deployment_id": "dep-greenlet",
+        "component": "containerd",
+    }

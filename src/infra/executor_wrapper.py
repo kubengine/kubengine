@@ -5,6 +5,7 @@ deployment files using PyInfra with proper error handling and logging.
 """
 
 import asyncio
+from contextvars import copy_context
 import importlib.util
 import sys
 import time
@@ -20,7 +21,7 @@ from pyinfra.api.inventory import Inventory
 from pyinfra.api.operations import run_ops
 from pyinfra.context import ctx_config, ctx_inventory, ctx_state, ctx_host
 from pyinfra_cli.prints import print_results  # type: ignore
-from core.logger import get_logger
+from core.logger import bind_log_context, get_logger
 
 logger = get_logger(__name__)
 pyinfra_logger.setLevel(logger.level)  # 对齐PyInfra日志级别
@@ -298,6 +299,8 @@ class InfraFileExecutor:
         Returns:
             InfraExecutionResult with detailed cross-host and per-host metrics
         """
+        component_name = Path(infra_file_path).stem
+
         # 初始化全局结果
         result = InfraExecutionResult(
             execution_start_time=time.time(),
@@ -324,11 +327,13 @@ class InfraFileExecutor:
             )
 
             # 执行部署并收集详细结果
-            self._execute_deployment(file_path, result, shared_data)
+            with bind_log_context(component=component_name):
+                self._execute_deployment(file_path, result, shared_data)
 
         except Exception as e:
             error_msg = f"Infrastructure execution failed: {str(e)}"
-            logger.error(error_msg, exc_info=True)
+            with bind_log_context(component=component_name):
+                logger.error(error_msg, exc_info=True)
             result.global_error = error_msg
             result.success = False
 
@@ -336,7 +341,8 @@ class InfraFileExecutor:
             # 收尾工作：计算汇总指标、清理环境
             result.execution_end_time = time.time()
             self._calculate_summary_metrics(result)
-            self._cleanup_execution()
+            with bind_log_context(component=component_name):
+                self._cleanup_execution()
 
         return result
 
@@ -416,6 +422,22 @@ class InfraFileExecutor:
 
         # 初始化state
         self._state.init(inventory, config)  # type: ignore
+        self._enable_greenlet_context_propagation()
+
+    def _enable_greenlet_context_propagation(self) -> None:
+        """让 PyInfra 创建的 gevent greenlet 继承提交时的日志上下文。"""
+        if not self._state or self._state.pool is None:
+            return
+
+        original_spawn = self._state.pool.spawn
+
+        def spawn_with_context(
+            function: Callable[..., Any], *args: Any, **kwargs: Any
+        ) -> Any:
+            context = copy_context()
+            return original_spawn(context.run, function, *args, **kwargs)
+
+        self._state.pool.spawn = spawn_with_context  # type: ignore[method-assign]
 
     def _execute_deployment(
         self,
@@ -428,9 +450,10 @@ class InfraFileExecutor:
             raise RuntimeError("Execution environment not properly initialized")
 
         # 1. 连接所有主机
-        logger.info("--> Connecting to hosts...")
-        self._state.set_stage(StateStage.Connect)
-        connect_all(self._state)
+        with bind_log_context(stage="connect"):
+            logger.info("--> Connecting to hosts...")
+            self._state.set_stage(StateStage.Connect)
+            connect_all(self._state)
 
         # 标记连接状态到结果
         for ip, host_result in result.host_results.items():
@@ -472,10 +495,11 @@ class InfraFileExecutor:
             host_result.connected = True
 
             try:
-                logger.info(f"--> Executing operations for host: {host_ip}")
-                # 绑定主机上下文并执行部署文件
-                ctx_host.set(host)  # type: ignore
-                spec.loader.exec_module(module)
+                with bind_log_context(stage="prepare", host=host_ip):
+                    logger.info(f"--> Executing operations for host: {host_ip}")
+                    # 绑定主机上下文并执行部署文件
+                    ctx_host.set(host)  # type: ignore
+                    spec.loader.exec_module(module)
 
             except SystemExit as e:
                 # 部署文件通过 exit(0) 表示该主机跳过当前部署（如 worker 跳过 keepalived）
@@ -497,17 +521,18 @@ class InfraFileExecutor:
                 ctx_host.reset()  # 重置上下文
 
         # 4. 执行PyInfra操作
-        logger.info("--> Beginning deployment operations...")
-        self._state.set_stage(StateStage.Execute)
-        run_ops(self._state)
+        with bind_log_context(stage="execute"):
+            logger.info("--> Beginning deployment operations...")
+            self._state.set_stage(StateStage.Execute)
+            run_ops(self._state)
 
-        # 5. 收集每个主机的操作结果
-        self._collect_operation_results(result)
+            # 5. 收集每个主机的操作结果
+            self._collect_operation_results(result)
 
-        # 6. 打印汇总结果
-        self._state.set_stage(StateStage.Disconnect)
-        print_results(self._state)
-        logger.info("--> Deployment completed")
+            # 6. 打印汇总结果
+            self._state.set_stage(StateStage.Disconnect)
+            print_results(self._state)
+            logger.info("--> Deployment completed")
 
     def _collect_operation_results(self, result: InfraExecutionResult) -> None:
         """通过 PyInfra 3.6 公共状态接口采集操作结果。
@@ -564,9 +589,11 @@ class InfraFileExecutor:
 
             op_name_counter: Dict[str, int] = {}
             previous_operation_failed = False
+            current_operation: Optional[str] = None
             try:
                 for op_hash in op_order:
                     base_name = operation_name(op_hash)
+                    current_operation = base_name
                     op_name = unique_name(base_name, op_name_counter)
 
                     try:
@@ -629,10 +656,11 @@ class InfraFileExecutor:
                     previous_operation_failed = not op_success
 
             except Exception as e:
-                logger.error(
-                    f"Error collecting results for host {host_ip}: {str(e)}",
-                    exc_info=True,
-                )
+                with bind_log_context(host=host_ip, operation=current_operation):
+                    logger.error(
+                        f"Error collecting results for host {host_ip}: {str(e)}",
+                        exc_info=True,
+                    )
                 host_result.error = f"Failed to collect operation results: {str(e)}"
 
         # 记录总体统计信息
@@ -1061,7 +1089,12 @@ class InfraFileExecutor:
         ) as executor:
             # 提交所有任务
             future_to_name = {
-                executor.submit(execute_single_file, name, path): name
+                executor.submit(
+                    copy_context().run,
+                    execute_single_file,
+                    name,
+                    path,
+                ): name
                 for name, path in file_mapping.items()
             }
 

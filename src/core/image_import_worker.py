@@ -14,7 +14,7 @@ import time
 from typing import Dict
 from uuid import uuid4
 
-from core.logger import get_logger
+from core.logger import get_logger, with_log_context
 from core.orm.engine import Base, engine
 from core.orm.image_import import (
     claim_next_image_import_task,
@@ -51,6 +51,7 @@ class ImageImportWorker:
         """Ask the worker to stop claiming jobs and finish active work."""
         self._stop.set()
 
+    @with_log_context(task_id="task_id")
     def _heartbeat(self, task_id: int, done: threading.Event) -> None:
         interval = max(10.0, self.lease_seconds / 3)
         while not done.wait(interval):
@@ -63,6 +64,7 @@ class ImageImportWorker:
             except Exception:
                 logger.exception("Failed to renew lease for image-import task %s", task_id)
 
+    @with_log_context(task_id="task_id")
     def _run_task(self, task_id: int, retry_failed: bool) -> None:
         # Import lazily so the worker process, rather than every web worker,
         # loads the image-processing service and its CLI dependencies.

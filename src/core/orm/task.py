@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import JSON, Column, DateTime, Enum, Integer, String, Text
 from sqlalchemy.orm import Query
 
-from core.logger import get_logger
+from core.logger import get_logger, with_log_context
 from core.orm.engine import Base, get_db
 
 logger = get_logger(__name__)
@@ -229,6 +229,7 @@ def recover_unfinished_tasks_async() -> None:
         raise
 
 
+@with_log_context(task_id="task_id")
 def _execute_and_log_task(
     task_id: int,
     task_func_path: str,
@@ -248,6 +249,7 @@ def _execute_and_log_task(
         logger.error(f"Task {task_id} recovery failed: {str(e)}")
 
 
+@with_log_context(task_id="task_id")
 def execute_task_function(
     task_id: int,
     task_func_path: str,

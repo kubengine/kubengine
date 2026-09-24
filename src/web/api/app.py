@@ -17,7 +17,7 @@ from web.utils.auth import auth_with_renew
 from core.orm.cluster import ClusterSchema, ClusterStatus, find_cluster_by_id, remove_cluster_by_id, update_cluster_name, update_cluster_status, create_cluster, find_clusters_paginated
 from web.utils.page import PageParams, pagination_params
 from core.misc.websocket import connection_manager
-from core.logger import get_logger
+from core.logger import get_logger, with_log_context
 from web.utils.response import error_response
 router = APIRouter()
 logger = get_logger(__name__)
@@ -62,6 +62,7 @@ async def update_app(request: Request, app_in: AppSchema):
     return update_application(app_in)
 
 
+@with_log_context(task_id="task_id", cluster_id="cluster_id")
 def deploy_app(task_id: int, cluster_id: int):
     logger.info(f"部署集群:{cluster_id}")
     update_task_record_status(task_id, TaskStatus.running)
@@ -132,6 +133,7 @@ def deploy_app(task_id: int, cluster_id: int):
         update_task_record_status(task_id, TaskStatus.success)
 
 
+@with_log_context(task_id="task_id", cluster_id="cluster_id")
 def clean_up_cluster(task_id: int, cluster_id: int):
     logger.info(f"清理集群资源:{cluster_id}")
     update_task_record_status(task_id, TaskStatus.running)

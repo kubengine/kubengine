@@ -11,17 +11,19 @@ KubEngine FastAPI 应用主入口模块
 
 import os
 import platform
+import re
 import sys
-from typing import AsyncIterator
+from typing import AsyncIterator, Awaitable, Callable
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from core.logger import get_logger
+from core.logger import bind_log_context, get_logger
 from core.orm.engine import Base, engine
 from core.orm.image_import import ensure_image_import_schema
 from web.api.artifacts import router as artifacts_router
@@ -99,6 +101,27 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,  # type: ignore
 )
+
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+@app.middleware("http")
+async def request_log_context(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """为每个 HTTP 请求绑定并回传唯一关联标识。"""
+    supplied_request_id = request.headers.get("X-Request-ID", "")
+    request_id = (
+        supplied_request_id
+        if _REQUEST_ID_PATTERN.fullmatch(supplied_request_id)
+        else uuid4().hex
+    )
+    request.state.request_id = request_id
+    with bind_log_context(request_id=request_id):
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
 
 # 挂载 API 路由
 app.include_router(auth_router, prefix="/api/v1")

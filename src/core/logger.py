@@ -1,19 +1,174 @@
 import logging
+import inspect
+import os
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
 import sys
-from typing import Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
+from typing import Any, Callable, Iterator, Mapping, Optional, TypeVar, cast
+from uuid import uuid4
 
 from core.config.application import Application
 # 新增：导入Rich日志处理器和控制台类型（适配rich）
 from rich.console import Console
 
 
+LOG_CONTEXT_FIELDS = (
+    "request_id",
+    "task_id",
+    "deployment_id",
+    "cluster_id",
+    "component",
+    "stage",
+    "host",
+    "operation",
+)
+_LOG_CONTEXT_ENV_PREFIX = "KUBENGINE_LOG_"
+
+
+def _context_from_environment() -> dict[str, str]:
+    """读取由父进程传递的日志上下文。"""
+    return {
+        field: value
+        for field in LOG_CONTEXT_FIELDS
+        if (value := os.environ.get(f"{_LOG_CONTEXT_ENV_PREFIX}{field.upper()}"))
+    }
+
+
+_log_context: ContextVar[dict[str, str]] = ContextVar(
+    "kubengine_log_context",
+    default=_context_from_environment(),
+)
+
+
+def get_log_context() -> dict[str, str]:
+    """返回当前执行上下文的副本。"""
+    return dict(_log_context.get())
+
+
+@contextmanager
+def bind_log_context(**fields: Any) -> Iterator[dict[str, str]]:
+    """在当前执行范围绑定日志字段，并在退出时恢复原上下文。"""
+    unknown_fields = set(fields) - set(LOG_CONTEXT_FIELDS)
+    if unknown_fields:
+        raise ValueError(f"不支持的日志上下文字段: {sorted(unknown_fields)}")
+
+    context = get_log_context()
+    context.update(
+        {
+            field: str(value)
+            for field, value in fields.items()
+            if value is not None and str(value)
+        }
+    )
+    token = _log_context.set(context)
+    try:
+        yield context
+    finally:
+        _log_context.reset(token)
+
+
+def log_context_environment(
+    base_environment: Optional[Mapping[str, str]] = None,
+) -> dict[str, str]:
+    """生成供子进程继承的环境变量，并清除父环境中的过期上下文。"""
+    environment = dict(base_environment or {})
+    for field in LOG_CONTEXT_FIELDS:
+        environment.pop(f"{_LOG_CONTEXT_ENV_PREFIX}{field.upper()}", None)
+    environment.update(
+        {
+            f"{_LOG_CONTEXT_ENV_PREFIX}{field.upper()}": value
+            for field, value in get_log_context().items()
+        }
+    )
+    return environment
+
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def with_log_context(**field_sources: str) -> Callable[[F], F]:
+    """从函数参数提取字段，并在函数执行期间绑定日志上下文。"""
+    unknown_fields = set(field_sources) - set(LOG_CONTEXT_FIELDS)
+    if unknown_fields:
+        raise ValueError(f"不支持的日志上下文字段: {sorted(unknown_fields)}")
+
+    def decorator(func: F) -> F:
+        signature = inspect.signature(func)
+
+        def resolve(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+            arguments = signature.bind_partial(*args, **kwargs).arguments
+            return {
+                field: arguments.get(parameter)
+                for field, parameter in field_sources.items()
+            }
+
+        if inspect.iscoroutinefunction(func):
+            @wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                with bind_log_context(**resolve(args, kwargs)):
+                    return await func(*args, **kwargs)
+
+            return cast(F, async_wrapper)
+
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            with bind_log_context(**resolve(args, kwargs)):
+                return func(*args, **kwargs)
+
+        return cast(F, wrapper)
+
+    return decorator
+
+
+def with_new_log_context(field: str, prefix: str = "") -> Callable[[F], F]:
+    """为一次函数调用生成新的日志关联标识。"""
+    if field not in LOG_CONTEXT_FIELDS:
+        raise ValueError(f"不支持的日志上下文字段: {field}")
+
+    def decorator(func: F) -> F:
+        if inspect.iscoroutinefunction(func):
+            @wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                value = f"{prefix}{uuid4().hex}"
+                with bind_log_context(**{field: value}):
+                    return await func(*args, **kwargs)
+
+            return cast(F, async_wrapper)
+
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            value = f"{prefix}{uuid4().hex}"
+            with bind_log_context(**{field: value}):
+                return func(*args, **kwargs)
+
+        return cast(F, wrapper)
+
+    return decorator
+
+
+class LogContextFilter(logging.Filter):
+    """向每条日志记录注入固定字段和紧凑的可读后缀。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        context = get_log_context()
+        for field in LOG_CONTEXT_FIELDS:
+            setattr(record, field, context.get(field, "-"))
+        record.context_suffix = "".join(
+            f" | {field}={context[field]}"
+            for field in LOG_CONTEXT_FIELDS
+            if field in context
+        )
+        return True
+
+
 class GlobalLoggerManager:
     _instance: Optional["GlobalLoggerManager"] = None
     _configured: bool = False
 
-    def __new__(cls):
+    def __new__(cls) -> "GlobalLoggerManager":
         """单例模式：确保全局只有一个管理器实例"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -63,6 +218,7 @@ class GlobalLoggerManager:
         # 3. 配置控制台输出
         if console_output:
             console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.addFilter(LogContextFilter())
             console_handler.setFormatter(formatter)
             root_logger.addHandler(console_handler)
 
@@ -80,11 +236,17 @@ class GlobalLoggerManager:
             f"日志文件: {log_file or '无'} | 轮转: {Application.LOGGER_CONFIG.ROTATE_ENABLE}"
         )
 
-    def _setup_file_handler(self, root_logger: logging.Logger, formatter: logging.Formatter, log_file: str):
+    def _setup_file_handler(
+        self,
+        root_logger: logging.Logger,
+        formatter: logging.Formatter,
+        log_file: str,
+    ) -> None:
         """配置文件处理器（支持轮转）【完全保留原有代码】"""
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
+        file_handler: logging.FileHandler
         if Application.LOGGER_CONFIG.ROTATE_ENABLE:
             file_handler = TimedRotatingFileHandler(
                 filename=log_path,
@@ -98,9 +260,10 @@ class GlobalLoggerManager:
                 log_path, mode="a", encoding="utf-8")
 
         file_handler.setFormatter(formatter)
+        file_handler.addFilter(LogContextFilter())
         root_logger.addHandler(file_handler)
 
-    def _setup_third_party_loggers(self):
+    def _setup_third_party_loggers(self) -> None:
         """设置第三方库日志级别【完全保留原有代码】"""
         for logger_name, level in Application.LOGGER_CONFIG.THIRD_PARTY_LOG_LEVELS.items():
             third_logger = logging.getLogger(logger_name)
