@@ -127,15 +127,36 @@ After=network.target
 Type=simple
 User=root
 Environment="PATH=/usr/bin:/usr/local/bin"
-ExecStart=kubengine app run
+ExecStart=kubengine app run --workers 2
 ExecReload=/bin/kill -HUP $MAINPID
-KillMode=process-group
+KillMode=control-group
 TimeoutStopSec=10
 KillSignal=SIGTERM
 FinalKillSignal=SIGKILL
 RemainAfterExit=no
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > %{buildroot}%{_unitdir}/kubengine-image-worker.service << 'EOF'
+[Unit]
+Description=KubeEngine Durable Image Import Worker
+After=network.target kubengine-api.service
+
+[Service]
+Type=simple
+User=root
+Environment="PATH=/usr/bin:/usr/local/bin"
+ExecStart=kubengine app image-worker --concurrency 1
+KillMode=control-group
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
@@ -163,6 +184,7 @@ chmod 644 %{buildroot}%{kubengine_dir}/config/application.yaml
 %config(noreplace) /opt/kubengine/config/application.yaml
 /opt/kubengine/static/*
 %{_unitdir}/kubengine-api.service
+%{_unitdir}/kubengine-image-worker.service
 %dir %attr(0755,root,root) %{_localstatedir}/lib/%{project_name}
 %dir %attr(0755,root,root) %{_localstatedir}/log/%{project_name}
 
@@ -204,6 +226,7 @@ systemctl daemon-reload &>/dev/null || true
 if [ $1 -eq 1 ]; then
     # 卸载后重启服务
     systemctl try-restart kubengine-api.service &>/dev/null || true
+    systemctl try-restart kubengine-image-worker.service &>/dev/null || true
 fi
 
 %changelog

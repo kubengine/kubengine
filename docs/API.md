@@ -17,6 +17,7 @@ kubengine app run --host 0.0.0.0 --port 8080
 | `/redoc` | ReDoc |
 | `/openapi.json` | OpenAPI 描述文件 |
 | `/api/v1/health` | 无鉴权健康检查 |
+| `/api/v1/ready` | 数据库、任务存储和镜像 worker 就绪检查 |
 
 ## 登录与鉴权
 
@@ -79,6 +80,7 @@ curl -X POST 'http://localhost:8080/api/v1/logout' \
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/api/v1/health` | 服务健康检查 |
+| `GET` | `/api/v1/ready` | 服务依赖就绪检查；异常时返回 HTTP 503 |
 | `POST` | `/api/v1/login` | 登录并获取 JWT |
 | `POST` | `/api/v1/logout` | 注销当前 JWT |
 | `GET` | `/api/v1/protected/unified` | 鉴权连通性检查 |

@@ -28,7 +28,6 @@ import os
 import uuid
 import click
 
-from typing import Any
 from sqlalchemy import text
 from core.config import Application, ConfigDict
 from core.logger import get_logger, setup_cli_logging
@@ -104,7 +103,7 @@ cli.add_command(app, "app")
 )
 @click.option(
     "--workers",
-    default=1,
+    default=2,
     show_default=True,
     type=int,
     help="工作进程数（reload=True时强制为1）",
@@ -129,9 +128,7 @@ def run(host: str, port: int, workers: int, reload: bool) -> None:
         reload: 是否启用热重载（仅开发环境）
     """
     import uvicorn
-    import signal
     import sys
-    import asyncio
 
     # 热重载模式下强制workers=1（Uvicorn不支持reload+多workers）
     if reload:
@@ -139,18 +136,6 @@ def run(host: str, port: int, workers: int, reload: bool) -> None:
         logger.warning("热重载模式已启用，强制设置workers=1")
 
     logger.info(f"启动应用服务器: {host}:{port}，工作进程数: {workers}")
-
-    # 定义优雅退出的处理函数
-    def handle_shutdown(signum: Any, frame: Any):
-        logger.info("接收到停止信号，正在优雅关闭服务器...")
-        # 停止Uvicorn的事件循环
-        loop = asyncio.get_event_loop()
-        loop.stop()
-        sys.exit(0)
-
-    # 注册信号处理（处理Ctrl+C和kill命令）
-    signal.signal(signal.SIGINT, handle_shutdown)
-    signal.signal(signal.SIGTERM, handle_shutdown)
 
     try:
         uvicorn.run(

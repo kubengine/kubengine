@@ -28,7 +28,7 @@ kubengine app run [OPTIONS]
 |------|------|--------|
 | `--host TEXT` | 监听的主机地址 | `0.0.0.0` |
 | `--port INTEGER` | 监听的端口号 | `8080` |
-| `--workers INTEGER` | 工作进程数 | `1` |
+| `--workers INTEGER` | 工作进程数 | `2` |
 
 **示例：**
 ```bash
