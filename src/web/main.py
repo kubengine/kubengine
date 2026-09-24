@@ -12,7 +12,6 @@ KubEngine FastAPI 应用主入口模块
 import os
 import platform
 import sys
-import threading
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request, status
@@ -24,7 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.logger import get_logger
 from core.orm.engine import Base, engine
-from core.orm.task import recover_unfinished_tasks_async
+from core.orm.image_import import ensure_image_import_schema
 from web.api.artifacts import router as artifacts_router
 from web.api.app import router as apps_router
 from web.api.auth_routes import router as auth_router
@@ -82,16 +81,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 创建数据库表
     Base.metadata.create_all(bind=engine)
+    ensure_image_import_schema()
     logger.info("数据库表已创建")
-
-    # 恢复未完成的任务
-    # 启动独立线程执行任务恢复，daemon=True 表示线程随主线程退出而退出
-    recover_thread = threading.Thread(
-        target=recover_unfinished_tasks_async,
-        daemon=True,
-    )
-    recover_thread.start()
-    logger.info("任务恢复线程已启动")
 
     yield  # 分割线：启动完成，服务开始接收请求
 

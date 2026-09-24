@@ -24,7 +24,6 @@ from typing import Any, Optional, Set
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Body,
     Depends,
     File,
@@ -45,6 +44,7 @@ from core.orm.image_import import (
     create_image_import_task,
     find_image_import_task,
     find_image_import_tasks,
+    requeue_image_import_task,
     replace_image_import_items,
     update_image_import_item,
     update_image_import_task,
@@ -736,6 +736,10 @@ def _finish_image_import_task(task_id: int) -> None:
         success_count=success_count,
         failed_count=failed_count,
         completed_at=datetime.now(),
+        lease_owner=None,
+        lease_expires_at=None,
+        heartbeat_at=None,
+        retry_failed=False,
     )
 
 
@@ -902,6 +906,10 @@ def process_image_import_task(task_id: int, retry_failed: bool = False) -> None:
             status="failed",
             error_message=str(exc),
             completed_at=datetime.now(),
+            lease_owner=None,
+            lease_expires_at=None,
+            heartbeat_at=None,
+            retry_failed=False,
         )
         _finish_image_import_task(task_id)
     finally:
@@ -914,9 +922,7 @@ def process_image_import_task(task_id: int, retry_failed: bool = False) -> None:
                 logger.warning(cleanup_error)
 
 
-async def _create_image_import(
-    file: UploadFile, background_tasks: BackgroundTasks
-) -> dict[str, Any]:
+async def _create_image_import(file: UploadFile) -> dict[str, Any]:
     allowed_extensions: Set[str] = {"tar", "tgz", "tar.gz"}
     if not _validate_file_extension(file.filename, allowed_extensions):
         raise HTTPException(
@@ -955,7 +961,6 @@ async def _create_image_import(
     finally:
         await file.close()
 
-    background_tasks.add_task(process_image_import_task, task_id)
     result = find_image_import_task(task_id, include_items=False)
     return result or task
 
@@ -968,10 +973,9 @@ async def _create_image_import(
 @auth_with_renew()
 async def create_image_import_api(
     request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="要上传的镜像文件"),
 ):
-    task = await _create_image_import(file, background_tasks)
+    task = await _create_image_import(file)
     return 200, "镜像导入任务已创建", task
 
 
@@ -979,10 +983,9 @@ async def create_image_import_api(
 @auth_with_renew()
 async def upload_image(
     request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="要上传的镜像文件"),
 ):
-    task = await _create_image_import(file, background_tasks)
+    task = await _create_image_import(file)
     return 200, "镜像导入任务已创建", task
 
 
@@ -1011,7 +1014,6 @@ async def get_image_import_task_api(
 @auth_with_renew()
 async def retry_image_import_task_api(
     request: Request,
-    background_tasks: BackgroundTasks,
     task_id: int = Path(..., description="镜像导入任务 ID"),
 ):
     task = find_image_import_task(task_id, include_file_path=True)
@@ -1021,6 +1023,6 @@ async def retry_image_import_task_api(
         raise HTTPException(status_code=409, detail="镜像导入任务正在处理")
     if not os.path.exists(str(task.get("file_path") or "")):
         raise HTTPException(status_code=410, detail="原始镜像文件已不存在")
-    background_tasks.add_task(process_image_import_task, task_id, True)
-    update_image_import_task(task_id, status="pending", completed_at=None)
+    if not requeue_image_import_task(task_id):
+        raise HTTPException(status_code=409, detail="镜像导入任务已被其他请求调度")
     return find_image_import_task(task_id, include_items=False)

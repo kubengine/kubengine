@@ -168,6 +168,25 @@ def run(host: str, port: int, workers: int, reload: bool) -> None:
         sys.exit(1)
 
 
+@app.command("image-worker")
+@click.option("--concurrency", default=1, show_default=True, type=click.IntRange(1, 8))
+@click.option("--poll-interval", default=2.0, show_default=True, type=float)
+@click.option("--lease-seconds", default=90, show_default=True, type=click.IntRange(30))
+def image_worker(concurrency: int, poll_interval: float, lease_seconds: int) -> None:
+    """运行持久化镜像导入 worker（应由 systemd 独立托管）。"""
+    from core.image_import_worker import run_image_import_worker
+    from core.orm.task import recover_unfinished_tasks_async
+    import threading
+
+    # 通用任务的启动恢复不再由每个 Uvicorn worker 重复执行。
+    threading.Thread(
+        target=recover_unfinished_tasks_async,
+        daemon=True,
+        name="generic-task-recovery",
+    ).start()
+    run_image_import_worker(concurrency, poll_interval, lease_seconds)
+
+
 @app.command()
 @click.option(
     "-p",

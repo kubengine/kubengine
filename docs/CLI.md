@@ -39,6 +39,17 @@ python -m cli.app run --host 0.0.0.0 --port 8080 --workers 4
 kubengine app run --host 0.0.0.0 --port 8080 --workers 4
 ```
 
+### 启动镜像导入 Worker
+
+镜像导入由独立持久化 worker 执行，生产环境应交给 systemd 托管：
+
+```bash
+kubengine app image-worker --concurrency 1
+```
+
+`--concurrency` 控制同时处理的镜像包数量，默认为 `1`；任务通过数据库租约、
+心跳和过期接管机制在 worker 重启后自动恢复。
+
 ---
 
 ### 设置管理员密码

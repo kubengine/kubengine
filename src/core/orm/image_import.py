@@ -1,9 +1,12 @@
 """Persistent records for offline image import tasks."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
+import fcntl
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, desc
+from sqlalchemy import (
+    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, desc, inspect, text
+)
 from sqlalchemy.orm import relationship
 
 from core.orm.engine import Base, get_db
@@ -29,6 +32,11 @@ class ImageImportTask(Base):
         DateTime, default=datetime.now, onupdate=datetime.now, nullable=False
     )
     completed_at = Column(DateTime)
+    lease_owner = Column(String)
+    lease_expires_at = Column(DateTime, index=True)
+    heartbeat_at = Column(DateTime)
+    attempt_count = Column(Integer, default=0, nullable=False)
+    retry_failed = Column(Boolean, default=False, nullable=False)
 
     items = relationship(
         "ImageImportItem",
@@ -99,6 +107,8 @@ def _task_to_dict(
         "created_at": task.created_at,
         "updated_at": task.updated_at,
         "completed_at": task.completed_at,
+        "heartbeat_at": task.heartbeat_at,
+        "attempt_count": task.attempt_count,
     }
     if include_file_path:
         result["file_path"] = task.file_path
@@ -117,11 +127,138 @@ def create_image_import_task(
             filename=filename,
             content_type=content_type,
             file_path=file_path,
+            # The durable worker must not claim the row until the potentially
+            # large archive has been copied into its final path.
+            status="uploading",
         )
         db.add(task)
         db.commit()
         db.refresh(task)
         return _task_to_dict(task)
+
+
+def ensure_image_import_schema() -> None:
+    """Add worker lease columns when upgrading an existing SQLite database."""
+    from core.orm.engine import engine
+
+    additions = {
+        "lease_owner": "VARCHAR",
+        "lease_expires_at": "DATETIME",
+        "heartbeat_at": "DATETIME",
+        "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+        "retry_failed": "BOOLEAN NOT NULL DEFAULT 0",
+    }
+    # Multiple Uvicorn workers start concurrently. Serialize the lightweight
+    # SQLite compatibility migration across processes.
+    with open("/tmp/kubengine-image-import-schema.lock", "w", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        existing = {
+            column["name"]
+            for column in inspect(engine).get_columns("image_import_task")
+        }
+        with engine.begin() as connection:
+            for name, sql_type in additions.items():
+                if name not in existing:
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE image_import_task ADD COLUMN {name} {sql_type}"
+                        )
+                    )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS "
+                    "ix_image_import_task_lease_expires_at "
+                    "ON image_import_task (lease_expires_at)"
+                )
+            )
+
+
+def claim_next_image_import_task(
+    worker_id: str, lease_seconds: int
+) -> Optional[Dict[str, Any]]:
+    """Atomically claim one pending task or a task whose worker lease expired."""
+    now = datetime.now()
+    expires_at = now + timedelta(seconds=lease_seconds)
+    with get_db() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        task = (
+            db.query(ImageImportTask)
+            .filter(
+                (ImageImportTask.status == "pending")
+                | (
+                    (ImageImportTask.status == "processing")
+                    & (
+                        (ImageImportTask.lease_expires_at.is_(None))
+                        | (ImageImportTask.lease_expires_at < now)
+                    )
+                )
+            )
+            .order_by(ImageImportTask.created_at, ImageImportTask.task_id)
+            .first()
+        )
+        if task is None:
+            db.commit()
+            return None
+        task.status = "processing"
+        task.lease_owner = worker_id
+        task.lease_expires_at = expires_at
+        task.heartbeat_at = now
+        task.attempt_count = int(task.attempt_count or 0) + 1
+        task.updated_at = now
+        db.commit()
+        db.refresh(task)
+        result = _task_to_dict(task, include_items=False, include_file_path=True)
+        result["retry_failed"] = bool(task.retry_failed)
+        return result
+
+
+def renew_image_import_lease(
+    task_id: int, worker_id: str, lease_seconds: int
+) -> bool:
+    """Renew a task lease if it is still owned by this worker."""
+    now = datetime.now()
+    with get_db() as db:
+        updated = (
+            db.query(ImageImportTask)
+            .filter_by(task_id=task_id, lease_owner=worker_id, status="processing")
+            .update(
+                {
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "updated_at": now,
+                },
+                synchronize_session=False,
+            )
+        )
+        db.commit()
+        return bool(updated == 1)
+
+
+def requeue_image_import_task(task_id: int) -> bool:
+    """Atomically queue a completed task for retry without duplicate scheduling."""
+    with get_db() as db:
+        updated = (
+            db.query(ImageImportTask)
+            .filter(
+                ImageImportTask.task_id == task_id,
+                ImageImportTask.status.notin_(["pending", "processing"]),
+            )
+            .update(
+                {
+                    "status": "pending",
+                    "retry_failed": True,
+                    "completed_at": None,
+                    "error_message": None,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "heartbeat_at": None,
+                    "updated_at": datetime.now(),
+                },
+                synchronize_session=False,
+            )
+        )
+        db.commit()
+        return bool(updated == 1)
 
 
 def update_image_import_task(task_id: int, **values: Any) -> None:
