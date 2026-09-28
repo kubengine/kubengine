@@ -95,6 +95,39 @@ def mock_commands(monkeypatch, refs, on_push=None):
     return pushed
 
 
+def test_import_push_keeps_containerd_available(image_queue, monkeypatch):
+    _, archive = image_queue
+    task_id = queue_task(archive)
+    _, lease = claim()
+    ref = "example.test/app:one"
+    runtime_available = True
+    pushed = []
+
+    def run(argv, **kwargs):
+        nonlocal runtime_available
+        if "add-proxy" in argv:
+            runtime_available = "--no-restart" in argv
+            assert "--no-sync" in argv
+        elif argv[0] == "ctr":
+            if not runtime_available:
+                return CommandResult(1, "", "ctr: cannot access socket")
+            if argv[3:5] == ["i", "ls"]:
+                return CommandResult(0, ref, "")
+            if argv[3:5] == ["i", "push"]:
+                assert argv[argv.index("--hosts-dir") + 1] == (
+                    "/etc/containerd/certs.d/"
+                )
+                pushed.append(argv[-1])
+        return CommandResult(0, "", "")
+
+    monkeypatch.setattr(artifacts, "execute_command", run)
+    artifacts.process_image_import_task(task_id, lease=lease)
+    final = find_image_import_task(task_id)
+    assert pushed == [ref]
+    assert final["status"] == "success"
+    assert final["cleanup_pending"] is False
+
+
 def test_expired_image_task_lease_can_be_reclaimed(image_queue):
     test_engine, archive = image_queue
     task = create_image_import_task(

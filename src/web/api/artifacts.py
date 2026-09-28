@@ -1031,6 +1031,9 @@ def process_image_import_task(
                         "add-proxy",
                         "-y",
                         "--no-sync",
+                        # ctr reads --hosts-dir for each push. Restarting
+                        # containerd here races with socket creation.
+                        "--no-restart",
                         *sorted(proxy_registries),
                     ]
                     proxy_result = execute_command(proxy_command, timeout=600)
