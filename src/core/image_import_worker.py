@@ -1,4 +1,4 @@
-"""Durable worker for offline image-import jobs.
+"""Unified durable worker for applications and offline image-import jobs.
 
 The API only persists work. This process owns execution, renews a database
 lease while a job is running, and can reclaim jobs after a crash.
@@ -19,6 +19,8 @@ from core.runtime_files import private_runtime_file, runtime_path
 from core.orm.engine import Base, engine
 from core.orm.cluster import ensure_cluster_schema
 from core.task_worker import AppTaskWorker
+from core.orm.task import ensure_task_schema
+from core.task_runtime import lease_heartbeat
 from core.orm import notifications  # register shared notification table
 from core.orm.image_import import (
     ImageImportLease,
@@ -33,8 +35,8 @@ logger = get_logger(__name__)
 WORKER_HEARTBEAT_PATH = runtime_path("image-import-worker.heartbeat")
 
 
-class ImageImportWorker:
-    """Poll and execute image-import jobs with bounded concurrency."""
+class TaskWorker:
+    """Poll both task families with the shared lease lifecycle and bounded pools."""
 
     def __init__(
         self,
@@ -58,26 +60,6 @@ class ImageImportWorker:
         self._stop.set()
 
     @with_log_context(task_id="task_id")
-    def _heartbeat(
-        self, task_id: int, lease: ImageImportLease,
-        done: threading.Event, lease_lost: threading.Event,
-    ) -> None:
-        interval = max(10.0, self.lease_seconds / 3)
-        while not done.wait(interval):
-            try:
-                if not renew_image_import_lease(
-                    task_id, lease.owner, self.lease_seconds, lease.attempt
-                ):
-                    logger.warning("Lost lease for image-import task %s", task_id)
-                    lease_lost.set()
-                    return
-            except Exception:
-                logger.exception("Failed to renew lease for image-import task %s", task_id)
-                # Fail closed; the durable row can be reclaimed on expiry.
-                lease_lost.set()
-                return
-
-    @with_log_context(task_id="task_id")
     def _run_task(
         self, task_id: int, retry_failed: bool, lease: ImageImportLease
     ) -> None:
@@ -85,49 +67,42 @@ class ImageImportWorker:
         # loads the image-processing service and its CLI dependencies.
         from web.api.artifacts import process_image_import_task
 
-        heartbeat_done = threading.Event()
-        lease_lost = threading.Event()
-        heartbeat = threading.Thread(
-            target=self._heartbeat,
-            args=(task_id, lease, heartbeat_done, lease_lost),
-            daemon=True,
-            name=f"image-import-heartbeat-{task_id}",
-        )
-        heartbeat.start()
-        try:
-            process_image_import_task(
-                task_id, retry_failed=retry_failed, lease=lease, lease_lost=lease_lost
-            )
-        except ImageImportLeaseLost:
-            logger.warning("Stopped stale image-import attempt for task %s", task_id)
-        except BaseException as exc:
-            logger.exception("Image-import task %s escaped worker boundary", task_id)
-            # Do not convert a process interruption into a completed retry;
-            # keep its item state recoverable until a later claim takes over.
+        with lease_heartbeat(
+            lambda: renew_image_import_lease(task_id, lease.owner, self.lease_seconds, lease.attempt),
+            interval=max(10.0, self.lease_seconds / 3),
+        ) as lease_lost:
             try:
-                update_image_import_task(
-                    task_id, lease=lease,
-                    error_message=f"worker interrupted: {exc}",
-                    lease_expires_at=datetime.now(),
+                process_image_import_task(
+                    task_id, retry_failed=retry_failed, lease=lease, lease_lost=lease_lost
                 )
             except ImageImportLeaseLost:
-                logger.warning("Ignored failure from stale attempt for task %s", task_id)
-        finally:
-            heartbeat_done.set()
-            heartbeat.join(timeout=2)
+                logger.warning("Stopped stale image-import attempt for task %s", task_id)
+            except BaseException as exc:
+                logger.exception("Image-import task %s escaped worker boundary", task_id)
+                # Do not convert a process interruption into a completed retry;
+                # keep its item state recoverable until a later claim takes over.
+                try:
+                    update_image_import_task(
+                        task_id, lease=lease,
+                        error_message=f"worker interrupted: {exc}",
+                        lease_expires_at=datetime.now(),
+                    )
+                except ImageImportLeaseLost:
+                    logger.warning("Ignored failure from stale attempt for task %s", task_id)
 
     def run_forever(self) -> None:
         """Run until stopped, reclaiming expired leases automatically."""
         Base.metadata.create_all(bind=engine)
         ensure_image_import_schema()
         ensure_cluster_schema()
-        app_worker = AppTaskWorker()
+        ensure_task_schema()
+        app_worker = AppTaskWorker(owner=self.worker_id, lease_seconds=self.lease_seconds)
         from core.image_maintenance import maintain_images
         maintenance_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-maintenance")
         maintenance_future = None
         next_maintenance = 0.0
         logger.info(
-            "Image-import worker %s started (concurrency=%s, lease=%ss)",
+            "Task worker %s started (image concurrency=%s, lease=%ss)",
             self.worker_id,
             self.concurrency,
             self.lease_seconds,
@@ -169,7 +144,7 @@ class ImageImportWorker:
 
                 self._stop.wait(self.poll_interval)
         finally:
-            logger.info("Image-import worker stopping; waiting for active jobs")
+            logger.info("Task worker stopping; waiting for active jobs")
             maintenance_executor.shutdown(wait=True)
             app_worker.close()
             self._executor.shutdown(wait=True, cancel_futures=False)
@@ -179,6 +154,9 @@ class ImageImportWorker:
             except OSError:
                 pass
 
+
+# Backwards-compatible import and CLI entry for existing installations.
+ImageImportWorker = TaskWorker
 
 def run_image_import_worker(
     concurrency: int = 1,

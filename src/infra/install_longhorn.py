@@ -102,7 +102,7 @@ if "master" in host.groups:
     server.shell(
         name="Install longhorn",
         commands=" ".join(
-            ["KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
+            ["KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
              "longhorn",
              helm_charts_dir,
              "-n", "longhorn-system",

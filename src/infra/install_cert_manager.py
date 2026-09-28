@@ -21,7 +21,7 @@ if "master" in host.groups:
         name="Install cert-manager",
         commands=" ".join(
             [
-                "KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
+                "KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
                 "cert-manager",
                 helm_charts_dir,
                 "-n", "cert-manager",
@@ -34,8 +34,6 @@ if "master" in host.groups:
                 # 导致 helm install 阻塞不返回。
                 "--set", "startupapicheck.enabled=false",
                 "-f", f"{helm_charts_dir}/values.yaml",
-                # 兜底超时，避免异常情况下无限挂起
-                "--timeout", "5m"
             ]
         )
     )

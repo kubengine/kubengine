@@ -35,7 +35,7 @@ if "master" in host.groups:
         name="Install metrics-server",
         commands=" ".join(
             [
-                "KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
+                "KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
                 "metrics-server",
                 helm_charts_dir,
                 "-n", "kube-system",

@@ -1,7 +1,6 @@
 """Persistent records for offline image import tasks."""
 
 from datetime import datetime, timedelta
-from dataclasses import dataclass
 import fcntl
 from typing import Any, Dict, List, Optional
 
@@ -14,15 +13,11 @@ from core.orm.engine import Base, get_db
 from core.runtime_files import private_runtime_file
 
 
-@dataclass(frozen=True)
-class ImageImportLease:
-    """Identity of one claim; the same worker may claim a task more than once."""
-
-    owner: str
-    attempt: int
+from core.task_runtime import TaskLease as ImageImportLease, TaskLeaseLost
+from core.orm.task_lease import owned_query, renew_lease
 
 
-class ImageImportLeaseLost(RuntimeError):
+class ImageImportLeaseLost(TaskLeaseLost):
     """The execution attempt no longer owns a live task lease."""
 
 
@@ -251,27 +246,8 @@ def renew_image_import_lease(
     task_id: int, worker_id: str, lease_seconds: int, attempt_count: int
 ) -> bool:
     """Renew a task lease if it is still owned by this worker."""
-    with get_db() as db:
-        db.execute(text("BEGIN IMMEDIATE"))
-        now = datetime.now()
-        updated = (
-            db.query(ImageImportTask)
-            .filter_by(
-                task_id=task_id, lease_owner=worker_id,
-                attempt_count=attempt_count, status="processing",
-            )
-            .filter(ImageImportTask.lease_expires_at > now)
-            .update(
-                {
-                    "heartbeat_at": now,
-                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                    "updated_at": now,
-                },
-                synchronize_session=False,
-            )
-        )
-        db.commit()
-        return bool(updated == 1)
+    return renew_lease(ImageImportTask, task_id, ImageImportLease(worker_id, attempt_count),
+                       "processing", lease_seconds, "updated_at")
 
 
 def requeue_image_import_task(task_id: int) -> bool:
@@ -350,13 +326,7 @@ def record_cleanup_result(task_id: int, attempt: int, error: Optional[str]):
 def _owned_task_query(
     db: Session, task_id: int, lease: ImageImportLease
 ) -> Query[ImageImportTask]:
-    return db.query(ImageImportTask).filter(
-        ImageImportTask.task_id == task_id,
-        ImageImportTask.status == "processing",
-        ImageImportTask.lease_owner == lease.owner,
-        ImageImportTask.attempt_count == lease.attempt,
-        ImageImportTask.lease_expires_at > datetime.now(),
-    )
+    return owned_query(db, ImageImportTask, task_id, lease, "processing")
 
 
 def assert_image_import_lease(task_id: int, lease: ImageImportLease) -> None:

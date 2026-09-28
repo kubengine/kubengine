@@ -56,7 +56,7 @@ if "master" in host.groups:
                           dest=chart_file,
                           domain=domain)
 
-    server.shell(name="Install dashboard", commands=" ".join(["KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
+    server.shell(name="Install dashboard", commands=" ".join(["KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
                                                               "dashboard",
                                                               helm_charts_dir,
                                                               "-n", "dashboard-system",

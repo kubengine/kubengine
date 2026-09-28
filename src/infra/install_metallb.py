@@ -13,7 +13,7 @@ loadbalancer_ippools = data.loadbalancer_ippools
 images_file = os.path.join(
     deploy_src, "images", "metallb.images.v0.15.2.tar.gz")
 helm_charts_dir = os.path.join(
-    deploy_src, "/root/offline-deploy/charts/metallb")
+    deploy_src, "charts", "metallb")
 
 images_budget = import_seconds(images_file)
 
@@ -35,7 +35,7 @@ server.shell(
 
 if "master" in host.groups:
     commands = [
-        "KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
+        "KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
         "metallb",
         helm_charts_dir,
         "-n", "metallb-system",

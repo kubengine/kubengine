@@ -18,7 +18,9 @@ from core.orm.task import (
     APP_CLEANUP_TASK, APP_DEPLOY_TASK, Task, TaskStatus, create_task_record,
     execute_task_function,
 )
-import web.api.app as app_api
+import core.services.app_deployment as app_api
+
+_real_notify = app_api._notify
 
 
 class Result:
@@ -43,7 +45,7 @@ def lifecycle(monkeypatch, tmp_path):
     monkeypatch.setattr(engine_module, "SessionLocal", sessions)
     monkeypatch.setattr(Application, "ROOT_DIR", str(tmp_path))
     monkeypatch.setattr(app_api, "pendulum_sleep", lambda *args: None)
-    monkeypatch.setattr(app_api.connection_manager, "broadcast_from_thread", lambda message: None)
+    monkeypatch.setattr(app_api, "_notify", lambda message: None)
     monkeypatch.setattr(app_api, "HelmResourceChecker", lambda **kwargs: SimpleNamespace(
         check_pods_with_polling=lambda: {"status": True},
     ))
@@ -78,7 +80,7 @@ def test_failed_cleanup_retries_helm_before_removing_record(monkeypatch, lifecyc
         nonlocal uninstall_count
         calls.append((argv, kwargs))
         if argv[1] == "list":
-            return Result(output=json.dumps([{"name": lifecycle.helm_name, "status": "deployed"}]))
+            return Result(output=json.dumps([{"name": lifecycle.helm_name, "status": "deployed", "chart": "test-chart-1.0.0"}]))
         assert find_cluster_by_id(lifecycle.cluster_id).status == "cleaning"
         uninstall_count += 1
         return Result(failed=uninstall_count == 1)
@@ -102,16 +104,21 @@ def test_failed_cleanup_retries_helm_before_removing_record(monkeypatch, lifecyc
 
 
 def test_notification_failure_does_not_undo_successful_cleanup(monkeypatch, lifecycle):
+    monkeypatch.setattr(app_api, "_notify", _real_notify)
     monkeypatch.setattr(app_api, "execute_command", lambda argv, **kwargs: Result(
-        output=json.dumps([{"name": lifecycle.helm_name, "status": "deployed"}]) if argv[1] == "list" else "",
+        output=json.dumps([{"name": lifecycle.helm_name, "status": "deployed", "chart": "test-chart-1.0.0"}]) if argv[1] == "list" else "",
     ))
 
-    def fail_notification(message):
+    calls = []
+
+    def fail_notification():
+        calls.append(True)
         raise RuntimeError("notification unavailable")
 
-    monkeypatch.setattr(app_api.connection_manager, "broadcast_from_thread", fail_notification)
+    monkeypatch.setattr("core.orm.notifications.publish_cluster_change", fail_notification)
     task = task_for(lifecycle, APP_CLEANUP_TASK)
     run(task)
+    assert calls
     assert find_cluster_by_id(lifecycle.cluster_id) is None
     assert task_state(task) == (TaskStatus.success, None)
 
@@ -121,7 +128,9 @@ def test_deploy_recovery_checks_existing_release_without_reinstall(monkeypatch, 
 
     def command(argv, **kwargs):
         calls.append(argv)
-        return Result(output=json.dumps([{"name": lifecycle.helm_name, "status": "deployed"}]))
+        if argv[1:3] == ["get", "values"]:
+            return Result(output="{}")
+        return Result(output=json.dumps([{"name": lifecycle.helm_name, "status": "deployed", "chart": "test-chart-1.0.0"}]))
 
     monkeypatch.setattr(app_api, "execute_command", command)
     task = task_for(lifecycle, APP_DEPLOY_TASK)
@@ -129,7 +138,7 @@ def test_deploy_recovery_checks_existing_release_without_reinstall(monkeypatch, 
         db.query(Task).filter_by(task_id=task.task_id).update({"status": TaskStatus.running})
         db.commit()
     run(task, recover_running=True)
-    assert len(calls) == 1 and calls[0][1] == "list"
+    assert [call[1] for call in calls] == ["list", "get"]
     assert find_cluster_by_id(lifecycle.cluster_id).status == "healthy"
     assert task_state(task) == (TaskStatus.success, None)
 
@@ -181,8 +190,8 @@ def test_release_discovery_failures_never_run_install(monkeypatch, lifecycle, re
 
 
 def test_failed_health_check_marks_task_failed(monkeypatch, lifecycle):
-    monkeypatch.setattr(app_api, "execute_command", lambda *args, **kwargs: Result(
-        output=json.dumps([{"name": lifecycle.helm_name, "status": "deployed"}]),
+    monkeypatch.setattr(app_api, "execute_command", lambda argv, **kwargs: Result(
+        output="{}" if argv[1] == "get" else json.dumps([{"name": lifecycle.helm_name, "status": "deployed", "chart": "test-chart-1.0.0"}]),
     ))
     monkeypatch.setattr(app_api, "HelmResourceChecker", lambda **kwargs: SimpleNamespace(
         check_pods_with_polling=lambda: {"status": False},
@@ -214,7 +223,7 @@ def test_live_task_is_not_replayed_by_recovery(monkeypatch, lifecycle):
 
     def command(argv, **kwargs):
         if argv[1] == "list":
-            return Result(output=json.dumps([{"name": lifecycle.helm_name, "status": "deployed"}]))
+            return Result(output=json.dumps([{"name": lifecycle.helm_name, "status": "deployed", "chart": "test-chart-1.0.0"}]))
         calls.append(argv)
         entered.set()
         assert release.wait(5)
@@ -295,7 +304,7 @@ def test_timeout_then_missing_release_keeps_record_on_retry(monkeypatch, lifecyc
         nonlocal release_exists
         if argv[1] == "list":
             return Result(output=json.dumps([
-                {"name": lifecycle.helm_name, "status": "deployed"},
+                {"name": lifecycle.helm_name, "status": "deployed", "chart": "test-chart-1.0.0"},
             ] if release_exists else []))
         assert find_cluster_by_id(lifecycle.cluster_id).status == "cleaning"
         uninstalls.append(argv)
@@ -318,7 +327,7 @@ def test_crash_during_uninstall_leaves_cleaning_marker_for_recovery(monkeypatch,
         nonlocal release_exists
         if argv[1] == "list":
             return Result(output=json.dumps([
-                {"name": lifecycle.helm_name, "status": "deployed"},
+                {"name": lifecycle.helm_name, "status": "deployed", "chart": "test-chart-1.0.0"},
             ] if release_exists else []))
         release_exists = False
         assert find_cluster_by_id(lifecycle.cluster_id).status == "cleaning"
@@ -363,7 +372,7 @@ def test_old_deployment_cannot_reinstall_after_later_cleanup_failed(monkeypatch,
         calls.append(argv)
         if argv[1] == "list":
             return Result(output=json.dumps([
-                {"name": lifecycle.helm_name, "status": "deployed"},
+                {"name": lifecycle.helm_name, "status": "deployed", "chart": "test-chart-1.0.0"},
             ] if release_exists else []))
         assert argv[1] == "uninstall", "old deploy must never reinstall the release"
         release_exists = False

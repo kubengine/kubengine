@@ -11,7 +11,7 @@ deploy_src = data.deploy_src
 images_file = os.path.join(
     deploy_src, "images", "ingress-nginx.images.v1.13.3.tar.gz")
 helm_charts_dir = os.path.join(
-    deploy_src, "/root/offline-deploy/charts/ingress-nginx")
+    deploy_src, "charts", "ingress-nginx")
 loadbalancer_ip = data.loadbalancer_ip
 
 images_budget = import_seconds(images_file)
@@ -45,7 +45,7 @@ if "master" in host.groups:
                           dest=values_manifests_file,
                           loadbalancer_ip=loadbalancer_ip)
 
-    commands = ["KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
+    commands = ["KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
                 "ingress-nginx",
                 helm_charts_dir,
                 "-n", "ingress-nginx-system",

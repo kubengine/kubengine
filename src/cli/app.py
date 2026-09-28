@@ -150,14 +150,17 @@ def run(host: str, port: int, workers: int, reload: bool) -> None:
         sys.exit(1)
 
 
-@app.command("image-worker")
+@app.command("task-worker")
 @click.option("--concurrency", default=1, show_default=True, type=click.IntRange(1, 8))
 @click.option("--poll-interval", default=2.0, show_default=True, type=float)
 @click.option("--lease-seconds", default=90, show_default=True, type=click.IntRange(30))
 def image_worker(concurrency: int, poll_interval: float, lease_seconds: int) -> None:
-    """运行持久化镜像导入 worker（应由 systemd 独立托管）。"""
+    """统一运行应用与镜像任务，持续恢复中断执行（由 systemd 独立托管）。"""
     from core.image_import_worker import run_image_import_worker
     run_image_import_worker(concurrency, poll_interval, lease_seconds)
+
+
+app.add_command(image_worker, name="image-worker")
 
 
 @app.command()

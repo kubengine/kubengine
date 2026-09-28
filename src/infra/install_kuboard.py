@@ -45,7 +45,7 @@ if "master" in host.groups:
                           src=values_template_file,
                           dest=values_file,
                           domain=domain)
-    server.shell(name="Install kuboard", commands=" ".join(["KUBECONFIG=/etc/kubernetes/admin.conf helm", "install",
+    server.shell(name="Install kuboard", commands=" ".join(["KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
                                                             "kuboard",
                                                             helm_charts_dir,
                                                             "-n", "kuboard-system",

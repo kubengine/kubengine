@@ -14,6 +14,7 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from starlette.concurrency import run_in_threadpool
 from core.orm.cluster import ensure_cluster_schema
+from core.orm.task import ensure_task_schema
 from core.orm.notifications import read_cluster_revision
 from core.misc.websocket import connection_manager
 import platform
@@ -93,6 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Base.metadata.create_all(bind=engine)
     ensure_image_import_schema()
     ensure_cluster_schema()
+    ensure_task_schema()
     logger.info("数据库表已创建")
 
     async def relay():

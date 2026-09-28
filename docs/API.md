@@ -113,11 +113,14 @@ WebSocket 保持现有 `token=Bearer ...` 查询参数接入方式，每次广�
 | `PUT` | `/api/v1/app/update` | 更新应用 |
 | `DELETE` | `/api/v1/app/del/{app_id}` | 删除应用 |
 | `POST` | `/api/v1/app/deploy` | 提交应用部署 |
+| `POST` | `/api/v1/app/cluster/{cluster_id}/retry` | 重试现有应用部署，复用当前任务意图 |
 | `GET` | `/api/v1/app/cluster` | 获取集群记录 |
 | `GET` | `/api/v1/app/cluster/{cluster_id}` | 获取指定集群 |
 | `GET` | `/api/v1/app/clusterInfo/{cluster_id}` | 获取集群 Helm 资源信息 |
 | `PUT` | `/api/v1/app/cluster/{cluster_id}/name` | 修改集群名称 |
 | `DELETE` | `/api/v1/app/cluster/{cluster_ip}` | 删除集群记录 |
+
+部署提交支持 `Idempotency-Key` 请求头（1–128 位字母、数字及 `._:-`）。同一用户使用同一键与相同参数重复提交时返回原应用；参数冲突返回 409，原应用已删除返回 410。省略该头保持旧版每次创建的行为。失败部署使用上表的 retry 接口；清理失败继续调用 DELETE 重试。应用与镜像任务均由 `kubengine app task-worker` 执行，原 `image-worker` 命令保持兼容。恢复边界和升级要求见[统一任务恢复与部署幂等](统一任务恢复与部署幂等-2026-09-28.md)。
 
 ### Harbor 制品
 

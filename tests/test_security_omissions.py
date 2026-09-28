@@ -26,6 +26,7 @@ from core.orm.image_import import ImageImportTask, find_image_import_task, creat
 from core.command import CommandResult
 from core.ssh import AsyncSSHClient
 from web.api import app as app_api, artifacts, auth_routes, ssh as ssh_api
+from core.services import app_deployment as app_service
 from web.utils import auth
 
 
@@ -41,8 +42,8 @@ def test_delayed_cleanup_rejects_reused_cluster_id(lifecycle, monkeypatch):
         db.commit()
         delayed = TaskSchema.model_validate(row)
     removed = []
-    monkeypatch.setattr(app_api, '_find_helm_release', lambda name: {'name': name, 'status': 'deployed'})
-    monkeypatch.setattr(app_api, '_helm_command', lambda argv: removed.append(argv[1]) or CommandResult(0, '', ''))
+    monkeypatch.setattr(app_service, '_find_helm_release', lambda name: {'name': name, 'status': 'deployed'})
+    monkeypatch.setattr(app_service, '_helm_command', lambda argv: removed.append(argv[1]) or CommandResult(0, '', ''))
     run(earlier)
     replacement = create_cluster(ClusterSchema(name='replacement', helm_chart='chart', helm_chart_version='1', config={}))
     assert replacement.cluster_id == lifecycle.cluster_id
@@ -57,7 +58,7 @@ def test_deploy_and_task_insert_roll_back_together(lifecycle, monkeypatch):
         raise RuntimeError('task insert failed')
     monkeypatch.setattr(app_api, 'create_task_record', fail)
     with pytest.raises(RuntimeError, match='task insert'):
-        app_api.deploy.__wrapped__(Request({'type': 'http'}),
+        app_api.deploy.__wrapped__(Request({'type': 'http', 'headers': []}),
             ClusterSchema(name='rollback', helm_chart='chart', helm_chart_version='1', config={}), BackgroundTasks())
     assert find_cluster_by_id(lifecycle.cluster_id + 1) is None
     with get_db() as db:
@@ -67,7 +68,7 @@ def test_deploy_and_task_insert_roll_back_together(lifecycle, monkeypatch):
 def test_worker_picks_up_work_created_after_initial_poll(lifecycle, monkeypatch):
     from core.task_worker import AppTaskWorker
     worker = AppTaskWorker(concurrency=1)
-    monkeypatch.setattr(app_api, '_find_helm_release', lambda name: None)
+    monkeypatch.setattr(app_service, '_find_helm_release', lambda name: None)
     try:
         worker.poll()
         task = task_for(lifecycle, APP_CLEANUP_TASK)
@@ -366,7 +367,7 @@ def test_legacy_schema_migration_is_repeatable(tmp_path, monkeypatch):
 def test_legacy_task_without_identity_is_never_dispatched(lifecycle, monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail('legacy task must not touch Helm')
-    monkeypatch.setattr(app_api, 'clean_up_cluster', forbidden)
+    monkeypatch.setattr(app_service, 'clean_up_cluster', forbidden)
     with get_db() as db:
         row = Task(task_func_path=APP_CLEANUP_TASK, resource_id=lifecycle.cluster_id,
                    params={'cluster_id': lifecycle.cluster_id})

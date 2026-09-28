@@ -2,15 +2,17 @@
 
 from concurrent.futures import ThreadPoolExecutor
 
-from core.orm.task import find_unfinished_tasks, _execute_and_log_task
+from core.orm.task import find_unfinished_tasks, execute_task_function
 from core.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class AppTaskWorker:
-    def __init__(self, concurrency=4):
+    def __init__(self, concurrency=4, *, owner=None, lease_seconds=90):
         self.concurrency = concurrency
+        self.owner = owner
+        self.lease_seconds = lease_seconds
         self.executor = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="app-task")
         self.futures = {}
         self.cursor = 0
@@ -20,7 +22,7 @@ class AppTaskWorker:
             if future.done():
                 del self.futures[task_id]
                 if future.exception() is not None:
-                    logger.error("应用任务 %s 被中断，将由下轮恢复", task_id)
+                    logger.error("应用任务 %s 执行结束并报告错误：%s", task_id, future.exception())
         if len(self.futures) >= self.concurrency:
             return
         tasks = find_unfinished_tasks()
@@ -29,7 +31,8 @@ class AppTaskWorker:
             if task.task_id not in self.futures:
                 self.cursor = task.task_id
                 self.futures[task.task_id] = self.executor.submit(
-                    _execute_and_log_task, task.task_id, task.task_func_path, task.params,
+                    execute_task_function, task.task_id, task.task_func_path, task.params,
+                    recover_running=True, owner=self.owner, lease_seconds=self.lease_seconds,
                 )
             if len(self.futures) >= self.concurrency:
                 break

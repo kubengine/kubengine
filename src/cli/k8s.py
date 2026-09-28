@@ -52,6 +52,8 @@ import shutil  # noqa
 import sys  # noqa
 import time  # noqa
 import yaml  # noqa
+from core.deployment_state import DeploymentState, DeploymentStateError, deployment_lock, exclusive_deployment  # noqa
+from core.deployment_inputs import DeploymentInputs  # noqa
 
 
 # 初始化日志
@@ -145,111 +147,6 @@ class DeploymentInterrupted(KeyboardInterrupt):
     def __init__(self, signum: int) -> None:
         self.signum = signum
         super().__init__(f"deployment interrupted by signal {signum}")
-
-
-class DeploymentState:
-    """部署状态管理器"""
-
-    def __init__(self, state_file: Optional[Path] = None):
-        self.state_file = state_file or Path(
-            Application.ROOT_DIR) / "config" / ".k8s_deployment_state.json"
-        self.state: Dict[str, Any] = self._load_state()
-
-    def _load_state(self) -> Dict[str, Any]:
-        """加载部署状态"""
-        default_state = {
-            "completed_files": [],
-            "failed_files": [],
-            "skip_files": [],
-            "file_hashes": {},
-            "config_hash": None,
-            "last_execution_time": None
-        }
-        if self.state_file.exists():
-            try:
-                with open(self.state_file, 'r', encoding='utf-8') as f:
-                    state = json.load(f)
-                # 合并默认值，确保新增字段（如skip_files）存在
-                default_state.update(state)
-                if not isinstance(default_state.get("skip_files"), list):
-                    default_state["skip_files"] = []
-                return default_state
-            except Exception as e:
-                logger.warning(f"加载部署状态失败: {e}")
-
-        return default_state
-
-    def _save_state(self) -> None:
-        """保存部署状态"""
-        try:
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.state_file, 'w', encoding='utf-8') as f:
-                json.dump(self.state, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"保存部署状态失败: {e}")
-
-    def is_file_completed(self, file_name: str) -> bool:
-        """检查文件是否已完成"""
-        return file_name in self.state["completed_files"]
-
-    def is_file_failed(self, file_name: str) -> bool:
-        """检查文件是否失败过"""
-        return file_name in self.state["failed_files"]
-
-    def is_file_skipped(self, file_name: str) -> bool:
-        """检查文件是否被手动配置跳过"""
-        return file_name in self.state.get("skip_files", [])
-
-    def mark_file_completed(self, file_name: str) -> None:
-        """标记文件为已完成"""
-        if file_name not in self.state["completed_files"]:
-            self.state["completed_files"].append(file_name)
-        # 如果之前失败过，从失败列表中移除
-        if file_name in self.state["failed_files"]:
-            self.state["failed_files"].remove(file_name)
-        self._save_state()
-
-    def mark_file_failed(self, file_name: str) -> None:
-        """标记文件为失败"""
-        if file_name not in self.state["failed_files"]:
-            self.state["failed_files"].append(file_name)
-        self._save_state()
-
-    def set_config_hash(self, config_hash: str) -> None:
-        """设置配置哈希"""
-        self.state["config_hash"] = config_hash
-        self.state["last_execution_time"] = os.path.getmtime(
-            self.state_file) if self.state_file.exists() else None
-        self._save_state()
-
-    def get_file_hash(self, file_name: str) -> Optional[str]:
-        """获取文件的已存储哈希"""
-        return self.state.get("file_hashes", {}).get(file_name)
-
-    def set_file_hash(self, file_name: str, file_hash: str) -> None:
-        """设置单个文件的哈希"""
-        if "file_hashes" not in self.state:
-            self.state["file_hashes"] = {}
-        self.state["file_hashes"][file_name] = file_hash
-        self._save_state()
-
-    def reset_state(self) -> None:
-        """重置部署状态"""
-        # 保留手动配置的skip_files（不属于部署产物）
-        skip_files = self.state.get("skip_files", [])
-        self.state = {
-            "completed_files": [],
-            "failed_files": [],
-            "skip_files": skip_files,
-            "file_hashes": {},
-            "config_hash": None,
-            "last_execution_time": None
-        }
-        self._save_state()
-
-    def should_force_redeploy(self, config_hash: str) -> bool:
-        """判断是否应该因配置变更强制重新部署"""
-        return self.state.get("config_hash") != config_hash
 
 
 class K8sDeploymentConfigValidator:
@@ -531,24 +428,27 @@ class K8sDeployer:
         self.deployment_files = self._get_deployment_files()
 
         # 生成每个部署文件的哈希（用于检测单文件变更）
+        self.input_fingerprints = DeploymentInputs()
         self.file_hashes = self._generate_file_hashes()
 
     def _generate_file_hashes(self) -> Dict[str, str]:
-        """生成每个部署文件的哈希（用于检测单文件变更）"""
-        import hashlib
-
-        file_hashes: Dict[str, str] = {}
+        """按组件计算脚本、共享代码、配置及离线制品的内容摘要。"""
+        config = self.config.deploy_data()
+        shared = [Path(__file__).parent.parent / "core" / name for name in ("ssh.py", "command.py")]
+        shared.extend((Path(__file__).parent.parent / "core/config").glob("*.py"))
+        result = {}
         for file_path, _ in self.deployment_files:
-            if file_path.exists():
-                mtime = file_path.stat().st_mtime
-                file_hashes[file_path.name] = hashlib.md5(
-                    f"{file_path}:{mtime}".encode()).hexdigest()
-
-        return file_hashes
+            extras = [*shared]
+            if file_path.name == "issue_cert.py":
+                extras.append(Path(Application.TLS_CONFIG.CA_CRT))
+            result[file_path.name] = self.input_fingerprints.fingerprint(file_path, self.config.deploy_src, config, extras)
+        return result
 
     def _filter_pending_files(self) -> List[Tuple[Path, str]]:
-        """过滤出需要执行的文件（防幂等）"""
+        """保留尚未完成或输入已变化的组件。"""
+        self.deployment_state.reload()
         self._validate_bootstrap_state()
+        self.file_hashes = self._generate_file_hashes()
         # 过滤掉手动配置跳过的infra文件
         active_files = [
             (fp, desc) for fp, desc in self.deployment_files
@@ -717,6 +617,7 @@ class K8sDeployer:
         for file_path, description in pending_files:
             click.echo(f"\n部署组件: {description} ({file_path.name})")
 
+            owner = self.deployment_state.mark_file_running(file_path.name, self.file_hashes[file_path.name])
             try:
                 with bind_log_context(component=file_path.stem):
                     result = self.infra_executor.execute_file(
@@ -730,21 +631,22 @@ class K8sDeployer:
                     click.echo(f"{description} 部署成功")
                     logger.info("%s 部署成功", description)
                     # 标记为已完成并保存当前文件哈希
-                    self.deployment_state.mark_file_completed(file_path.name)
-                    self.deployment_state.set_file_hash(
-                        file_path.name, self.file_hashes.get(file_path.name, ""))
+                    current_hash = self._generate_file_hashes()[file_path.name]
+                    if current_hash != self.file_hashes[file_path.name]:
+                        raise K8sDeploymentError("组件执行期间输入已变化，拒绝保存成功检查点")
+                    self.deployment_state.mark_file_completed(file_path.name, current_hash, owner)
                 else:
                     click.echo(f"{description} 部署失败")
                     logger.error("%s 部署失败", description)
                     # 标记为失败
-                    self.deployment_state.mark_file_failed(file_path.name)
+                    self.deployment_state.mark_file_failed(file_path.name, owner)
                     self._show_failure_details(result)
                     return False
 
             except Exception as e:
                 click.echo(f"{description} 部署异常: {str(e)}")
                 logger.error("%s 部署异常: %s", description, e, exc_info=True)
-                self.deployment_state.mark_file_failed(file_path.name)
+                self.deployment_state.mark_file_failed(file_path.name, owner)
                 return False
 
         # 所有组件部署完成
@@ -865,18 +767,20 @@ class K8sDeployer:
     async def deploy(self) -> bool:
         """执行完整的部署流程"""
         try:
-            # Run before certificate generation or any node mutation.
-            self._validate_bootstrap_state()
-            # 环境验证
-            if not await self.validate_environment():
-                return False
+            with deployment_lock():
+                self.deployment_state.reload()
+                # Run before certificate generation or any node mutation.
+                self._validate_bootstrap_state()
+                # 环境验证
+                if not await self.validate_environment():
+                    return False
 
-            # 证书准备
-            if not self.prepare_certificates():
-                return False
+                # 证书准备
+                if not self.prepare_certificates():
+                    return False
 
-            # 执行部署
-            return self.execute_deployment()
+                # 执行部署
+                return self.execute_deployment()
 
         except Exception as e:
             logger.error(f"部署过程中发生异常: {str(e)}", exc_info=True)
@@ -1058,6 +962,7 @@ def config(validate: bool, show: bool) -> None:
     is_flag=True,
     help="强制重置状态"
 )
+@exclusive_deployment
 def reset_state(force: bool) -> None:
     """重置部署状态"""
 
@@ -1100,6 +1005,7 @@ def reset_state(force: bool) -> None:
 )
 @with_new_log_context("deployment_id", prefix="scale-")
 @with_deployment_lifecycle("scale")
+@exclusive_deployment
 def scale(
     worker_ips: Tuple[str, ...],
     deploy_src: str,
@@ -1181,6 +1087,8 @@ def scale(
                 f"以下节点已在集群中，将跳过: {already_in_cluster}", fg="yellow"))
 
         if not truly_new:
+            if not dry_run:
+                _update_worker_ips(new_workers)
             click.echo(click.style(
                 "没有需要扩容的新节点", fg="yellow"))
             return "skipped"
@@ -1290,7 +1198,7 @@ def scale(
 
         # ---- 5. 更新配置文件 ----
         click.echo(click.style("\n更新配置文件...", fg="cyan"))
-        _update_worker_ips(truly_new)
+        _update_worker_ips(new_workers)
 
         # ---- 6. 结果展示 ----
         click.echo(click.style(
@@ -1364,16 +1272,15 @@ def _update_worker_ips(new_workers: List[str]) -> None:
         config.kubernetes.worker.ips = merged
 
         # 保存到文件
-        config_path = os.path.join(
-            Application.ROOT_DIR, "config", "application.yaml")
+        config_path = getattr(config, "_source_path", None)
+        if not config_path:
+            raise K8sDeploymentError("无法确定实际配置文件位置")
         config.save_to_file(config_path)
 
         click.echo(click.style(
             f"  配置已更新: worker.ips = {merged}", fg="green"))
     except Exception as e:
-        click.echo(click.style(
-            f"  配置更新失败（扩容已成功，请手动更新 application.yaml）: {e}",
-            fg="yellow"))
+        raise K8sDeploymentError("节点操作已完成，但配置持久化失败；请修复后重试扩容") from e
 
 
 @cli.command(name="init-harbor")

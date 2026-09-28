@@ -42,6 +42,7 @@ class Cluster(Base):
     cluster_id = Column(Integer, primary_key=True,
                         index=True, comment="Cluster ID")
     resource_uid = Column(String(32), nullable=False, default=lambda: uuid.uuid4().hex)
+    operation_version = Column(Integer, nullable=False, default=0)
     name = Column(String, nullable=False, comment="Cluster name")
     helm_chart = Column(String, nullable=False, comment="Helm chart template")
     helm_chart_version = Column(
@@ -76,6 +77,7 @@ class ClusterSchema(BaseModel):
 
     cluster_id: Optional[int] = None
     resource_uid: Optional[str] = None
+    operation_version: int = 0
     name: Optional[str] = None
     helm_chart: Optional[str] = None
     helm_chart_version: Optional[str] = None
@@ -255,6 +257,8 @@ def ensure_cluster_schema() -> None:
         with engine.begin() as connection:
             if "resource_uid" not in {c["name"] for c in inspect(connection).get_columns("cluster")}:
                 connection.execute(text("ALTER TABLE cluster ADD COLUMN resource_uid VARCHAR(32)"))
+            if "operation_version" not in {c["name"] for c in inspect(connection).get_columns("cluster")}:
+                connection.execute(text("ALTER TABLE cluster ADD COLUMN operation_version INTEGER NOT NULL DEFAULT 0"))
             rows = connection.execute(text("SELECT cluster_id FROM cluster WHERE resource_uid IS NULL OR resource_uid = ''"))
             for row in rows.fetchall():
                 connection.execute(text("UPDATE cluster SET resource_uid = :uid WHERE cluster_id = :id"),
@@ -375,6 +379,9 @@ def update_cluster_status(cluster_id: int, status: ClusterStatus) -> ClusterSche
     """
     try:
         with get_db() as db:
+            from core.task_runtime import check_application_attempt
+            db.execute(text("BEGIN IMMEDIATE"))
+            check_application_attempt(db, cluster_id)
             cluster_orm = db.query(Cluster).filter(
                 Cluster.cluster_id == cluster_id
             ).first()
@@ -440,6 +447,9 @@ def remove_cluster_by_id(cluster_id: int) -> bool:
     """
     try:
         with get_db() as db:
+            from core.task_runtime import check_application_attempt
+            db.execute(text("BEGIN IMMEDIATE"))
+            check_application_attempt(db, cluster_id)
             cluster_orm = db.query(Cluster).filter(
                 Cluster.cluster_id == cluster_id
             ).first()

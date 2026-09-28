@@ -144,7 +144,8 @@ def deployment_methods():
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "K8sDeployer")
     methods = [n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in {"_validate_bootstrap_state", "deploy"}]
     module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *methods], type_ignores=[])
-    namespace = {"Path": Path, "K8sDeploymentError": RuntimeError, "logger": SimpleNamespace(error=lambda *a, **kw: None)}
+    from contextlib import nullcontext
+    namespace = {"deployment_lock": nullcontext, "Path": Path, "K8sDeploymentError": RuntimeError, "logger": SimpleNamespace(error=lambda *a, **kw: None)}
     exec(compile(ast.fix_missing_locations(module), str(source), "exec"), namespace)
     return namespace
 
@@ -184,6 +185,7 @@ def test_guard_runs_before_certificates_or_environment_mutations():
         raise RuntimeError("existing control plane")
     deployer = SimpleNamespace(
         _validate_bootstrap_state=refuse,
+        deployment_state=SimpleNamespace(reload=lambda: None),
         validate_environment=lambda: pytest.fail("must stop before contacting nodes"),
         prepare_certificates=lambda: pytest.fail("must not rotate certificates"),
         _error=lambda message: None,
