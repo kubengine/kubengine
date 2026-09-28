@@ -121,15 +121,19 @@ def create_sdist(build_dir: str, source_dir: str) -> None:
 
     # 复制原始源代码
     src_sdist = sdist_path / source_dir
-    shutil.copytree(source_dir, src_sdist, ignore=shutil.ignore_patterns(
-        "__pycache__",
-        "*.pyc",
-        ".pytest_cache",
-        "*.egg-info",
-        ".mypy_cache",
-        "*.db",
-        "*.log",
-    ))
+    shutil.copytree(
+        source_dir,
+        src_sdist,
+        ignore=shutil.ignore_patterns(
+            "__pycache__",
+            "*.pyc",
+            ".pytest_cache",
+            "*.egg-info",
+            ".mypy_cache",
+            "*.db",
+            "*.log",
+        ),
+    )
 
     # 复制编译后的 C 文件
     c_files = list(build_path.rglob("*.c"))

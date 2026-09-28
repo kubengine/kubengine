@@ -1,8 +1,7 @@
-"""
-Helm 资源检查模块
+"""Helm 资源检查模块
 
-提供与 Kubernetes API 交互的类，用于检查 Helm Release 关联的 Pod 资源状态。
-支持轮询等待 Pod 就绪、健康状态检查等功能。
+提供与 Kubernetes API 交互的类，用于检查 Helm Release 关联的 Pod 资源状态。 支持轮询等待 Pod
+就绪、健康状态检查等功能。
 """
 
 import os
@@ -22,12 +21,13 @@ HELM_RELEASE_NAME = "d723b3d7361cf4145910778c04369cfca"
 
 # 轮询相关配置
 POLL_INTERVAL_SECONDS = 5  # 每次轮询的间隔时间（秒）
-MAX_POLL_TIMES = 60  # 最大轮询次数（总超时时间 = POLL_INTERVAL_SECONDS * MAX_POLL_TIMES）
+MAX_POLL_TIMES = (
+    60  # 最大轮询次数（总超时时间 = POLL_INTERVAL_SECONDS * MAX_POLL_TIMES）
+)
 
 
 class HelmResourceChecker:
-    """
-    Helm 资源检查类
+    """Helm 资源检查类
 
     使用官方 Kubernetes Python SDK 检查 Helm Release 关联的资源状态。
 
@@ -39,9 +39,13 @@ class HelmResourceChecker:
         core_api: Kubernetes Core V1 API 客户端
     """
 
-    def __init__(self, namespace: str, release_name: str, kubeconfig_path: Optional[str] = None) -> None:
-        """
-        初始化 Helm 资源检查器
+    def __init__(
+        self,
+        namespace: str,
+        release_name: str,
+        kubeconfig_path: Optional[str] = None,
+    ) -> None:
+        """初始化 Helm 资源检查器
 
         Args:
             namespace: 目标命名空间
@@ -52,7 +56,7 @@ class HelmResourceChecker:
         self.release_name = release_name
         self.helm_label_selector = (
             f"app.kubernetes.io/instance={release_name},"
-            f"app.kubernetes.io/managed-by=Helm"
+            "app.kubernetes.io/managed-by=Helm"
         )
 
         # 加载 Kubernetes 配置
@@ -73,8 +77,7 @@ class HelmResourceChecker:
                         config.load_kube_config()
                 logger.info("Loaded kubeconfig Kubernetes configuration")
             except Exception as e:
-                logger.error(
-                    f"Failed to load Kubernetes configuration: {e}")
+                logger.error(f"Failed to load Kubernetes configuration: {e}")
                 raise
 
         # 初始化 API 客户端
@@ -82,8 +85,7 @@ class HelmResourceChecker:
         self.core_api = client.CoreV1Api()
 
     def _check_single_pod_health(self, pod: Any) -> Dict[str, Any]:
-        """
-        检查单个 Pod 的健康状态
+        """检查单个 Pod 的健康状态
 
         Args:
             pod: Pod 对象
@@ -102,29 +104,28 @@ class HelmResourceChecker:
         pod_phase = pod.status.phase
 
         # 判断 Pod 是否就绪（Ready 探针通过）
-        pod_ready = any(cond.type == "Ready" and cond.status == "True"
-                        for cond in pod.status.conditions or [])  # type: ignore
+        pod_ready = any(
+            cond.type == "Ready" and cond.status == "True"
+            for cond in pod.status.conditions or []
+        )  # type: ignore
 
         # 统计容器重启次数
         restart_count = sum(
             container.restart_count
-            for container in pod.status.container_statuses or [])  # type: ignore
+            for container in pod.status.container_statuses or []
+        )  # type: ignore
 
         # Job Pod 成功完成后 phase 为 Succeeded（kubectl 显示为 Completed）
-        is_job_succeeded = (
-            pod_phase == "Succeeded"
-            and any(owner.kind == "Job"
-                    for owner in pod.metadata.owner_references or [])
+        is_job_succeeded = pod_phase == "Succeeded" and any(
+            owner.kind == "Job"
+            for owner in pod.metadata.owner_references or []
         )
 
         # 定义「明确结果状态」
         is_normal = (
-            (pod_phase == "Running" and pod_ready and restart_count < 5)
-            or is_job_succeeded
-        )
-        is_abnormal = (
-            pod_phase == "Failed" or restart_count >= 5
-        )
+            pod_phase == "Running" and pod_ready and restart_count < 5
+        ) or is_job_succeeded
+        is_abnormal = pod_phase == "Failed" or restart_count >= 5
         is_uncertain = not (is_normal or is_abnormal)
 
         return {
@@ -138,8 +139,7 @@ class HelmResourceChecker:
         }
 
     def check_pods_with_polling(self) -> Dict[str, Any]:
-        """
-        带轮询等待的 Pod 检查
+        """带轮询等待的 Pod 检查
 
         持续轮询 Pod 状态直到：
         - 所有 Pod 都达到明确状态（正常或异常）
@@ -150,13 +150,14 @@ class HelmResourceChecker:
                 - status: 是否已确认匹配的 Pod 健康（True/False）
                 - details: 详细信息列表
 
-            不创建 Pod 或已清理 Job Pod 的 Chart 无法通过此检查确认健康；
-            返回 False 和明确说明，需要使用相应资源类型的检查器。
+            不创建 Pod 或已清理 Job Pod 的 Chart 无法通过此检查确认健康； 返回 False
+            和明确说明，需要使用相应资源类型的检查器。
         """
         deadline = time.monotonic() + POLL_INTERVAL_SECONDS * MAX_POLL_TIMES
         poll_times = 0
         overall_pod_result: dict[str, Any] = {
-            "status": False, "details": ["尚未完成 Pod 健康检查"],
+            "status": False,
+            "details": ["尚未完成 Pod 健康检查"],
         }
 
         logger.info(
@@ -168,32 +169,45 @@ class HelmResourceChecker:
             poll_times += 1
             uncertain_pod_names: List[str] = []
             current_pod_result: dict[str, Any] = {
-                "status": True, "details": []}
+                "status": True,
+                "details": [],
+            }
 
             # 1. 查询当前 Pod 列表
             try:
                 pods = self.core_api.list_namespaced_pod(  # type: ignore
                     namespace=self.namespace,
-                    label_selector=self.helm_label_selector, _request_timeout=(5, 30),
+                    label_selector=self.helm_label_selector,
+                    _request_timeout=(5, 30),
                 )
             except ApiException as e:
-                error_msg = f"轮询第 {poll_times} 次失败：{e.reason}({e.status})"
+                error_msg = (
+                    f"轮询第 {poll_times} 次失败：{e.reason}({e.status})"
+                )
                 logger.error(error_msg)
                 return {"status": False, "details": [error_msg]}
 
             if not pods.items:
-                # Controllers may not have created Pods yet. An empty result
-                # is unverified, never proof that an application is healthy.
+                # Controllers may not have created Pods yet. An empty
+                # result is unverified, never proof that an application
+                # is healthy.
                 overall_pod_result = {
                     "status": False,
                     "reason": "no_matching_pods",
                     "details": [
-                        "未发现匹配 Helm release 标签的 Pod，无法确认应用健康；"
-                        "不创建 Pod 或 Job Pod 已清理的 Chart 需要对应资源类型的健康检查",
+                        (
+                            "未发现匹配 Helm release 标签的 Pod，无法确认应用健康；"
+                            "不创建 Pod 或 Job Pod 已清理的 Chart 需要对应资源类型的健康检查"
+                        ),
                     ],
                 }
                 if poll_times < MAX_POLL_TIMES:
-                    time.sleep(min(POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
+                    time.sleep(
+                        min(
+                            POLL_INTERVAL_SECONDS,
+                            max(0, deadline - time.monotonic()),
+                        )
+                    )
                 else:
                     overall_pod_result["details"].append(
                         f"已达到最大轮询次数 {MAX_POLL_TIMES}，仍未发现匹配的 Pod"
@@ -225,7 +239,8 @@ class HelmResourceChecker:
                     detail_msg = (
                         f"轮询第 {poll_times} 次："
                         f"Pod {pod_health['pod_name']} 状态未明确（创建中/探针未就绪），"
-                        f"当前状态 {pod_health['phase']}，就绪 {pod_health['ready']}"
+                        f"当前状态 {pod_health['phase']}，就绪"
+                        f" {pod_health['ready']}"
                     )
                     current_pod_result["details"].append(detail_msg)
                     logger.debug(detail_msg)
@@ -242,12 +257,17 @@ class HelmResourceChecker:
                     f"仍有 {len(uncertain_pod_names)} 个 Pod 状态未明确，"
                     f"{POLL_INTERVAL_SECONDS} 秒后继续轮询..."
                 )
-                time.sleep(min(POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
+                time.sleep(
+                    min(
+                        POLL_INTERVAL_SECONDS,
+                        max(0, deadline - time.monotonic()),
+                    )
+                )
             else:
                 # 5. 达到最大轮询次数，终止并返回最终结果
                 timeout_msg = (
                     f"已达到最大轮询次数 {MAX_POLL_TIMES}，"
-                    f"停止等待，未明确状态的 Pod 视为异常"
+                    "停止等待，未明确状态的 Pod 视为异常"
                 )
                 current_pod_result["details"].append(timeout_msg)
                 logger.warning(timeout_msg)

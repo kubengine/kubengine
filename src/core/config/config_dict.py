@@ -5,11 +5,11 @@ import threading
 from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, TypeVar, Union, cast
+
 import yaml
 
 # ===================== 新增：TOML 兼容导入 =====================
-# 读取：优先用Python 3.11+内置tomllib，否则用第三方toml库
-# 写入：依赖第三方toml库（tomllib无dump功能）
+# 读取：优先用Python 3.11+内置tomllib，否则用第三方toml库 写入：依赖第三方toml库（tomllib无dump功能）
 try:
     import tomllib  # Python 3.11+ 内置（仅读取）
 except ImportError:
@@ -20,7 +20,9 @@ try:
 except ImportError:
     if tomllib is None:
         raise ImportError(
-            "处理TOML文件需要安装toml库：pip install toml\nPython 3.11+仅内置读取功能，写入仍需安装toml库")
+            "处理TOML文件需要安装toml库：pip install toml\nPython"
+            " 3.11+仅内置读取功能，写入仍需安装toml库"
+        )
     toml = None
 
 # 泛型类型（用于类型提示）
@@ -288,13 +290,15 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
                     config_path = cls._find_config_file()
                     if config_path is None or not Path(config_path).exists():
                         raise FileNotFoundError(
-                            "配置文件不存在，请检查以下路径：\n"
-                            "  - /opt/kubengine/config/application.yaml (默认安装路径)\n"
-                            "  - ./config/application.yaml (相对路径)\n"
-                            "  或设置环境变量 KUBEENGINE_CONFIG 指定配置文件路径"
+                            "配置文件不存在，请检查以下路径：\n  -"
+                            " /opt/kubengine/config/application.yaml"
+                            " (默认安装路径)\n  - ./config/application.yaml"
+                            " (相对路径)\n  或设置环境变量 KUBEENGINE_CONFIG"
+                            " 指定配置文件路径"
                         )
                     _global_config = cast(
-                        Optional["ConfigDict"], cls.load_from_file(config_path))
+                        Optional["ConfigDict"], cls.load_from_file(config_path)
+                    )
         return cast(T, _global_config)
 
     def get_with_default(
@@ -302,7 +306,7 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
         key: str,
         default: Any,
         value_type: Optional[Type[Any]] = None,
-        allow_none: bool = False
+        allow_none: bool = False,
     ) -> Any:
         """带默认值和类型校验的获取方法
 
@@ -325,10 +329,13 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
             if value is None:
                 if not allow_none:
                     raise TypeError(
-                        f"配置项 '{key}' 不允许为None（期望类型：{value_type.__name__}）")
+                        f"配置项 '{key}'"
+                        f" 不允许为None（期望类型：{value_type.__name__}）"
+                    )
             elif not isinstance(value, value_type):
                 raise TypeError(
-                    f"配置项 '{key}' 类型错误：期望 {value_type.__name__}，实际 {type(value).__name__}"
+                    f"配置项 '{key}' 类型错误：期望 {value_type.__name__}，"
+                    f"实际 {type(value).__name__}"
                 )
 
         return value
@@ -359,7 +366,13 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
         self._frozen = False
 
     @classmethod
-    def load_from_file(cls: Type[T], file_path: str, format: Optional[str] = None, *, use_cache: bool = True) -> T:
+    def load_from_file(
+        cls: Type[T],
+        file_path: str,
+        format: Optional[str] = None,
+        *,
+        use_cache: bool = True,
+    ) -> T:
         """从文件加载配置（支持JSON/YAML/TOML）
 
         Args:
@@ -388,7 +401,9 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
             elif file_ext == ".toml":
                 format = "toml"
             else:
-                raise ValueError(f"无法识别文件格式：{file_path}（仅支持json/yaml/toml）")
+                raise ValueError(
+                    f"无法识别文件格式：{file_path}（仅支持json/yaml/toml）"
+                )
 
         # 读取文件并解析（核心修复段）
         try:
@@ -420,7 +435,9 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
 
         return config
 
-    def save_to_file(self, file_path: str, format: Optional[str] = None, indent: int = 4) -> None:
+    def save_to_file(
+        self, file_path: str, format: Optional[str] = None, indent: int = 4
+    ) -> None:
         """保存配置到文件（支持JSON/YAML/TOML）
 
         Args:
@@ -443,7 +460,9 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
             elif file_ext == ".toml":
                 format = "toml"
             else:
-                raise ValueError(f"无法识别文件格式：{file_path}（仅支持json/yaml/toml）")
+                raise ValueError(
+                    f"无法识别文件格式：{file_path}（仅支持json/yaml/toml）"
+                )
 
         # 转换为原生dict（避免嵌套ConfigDict序列化问题）
         def to_raw_dict(obj: Any) -> Any:
@@ -460,16 +479,24 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
         # Write completely before replacing the published configuration.
         target = Path(file_path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        fd, temporary = tempfile.mkstemp(
+            prefix=f".{target.name}.", dir=target.parent
+        )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 if format == "json":
-                    json.dump(raw_data, stream, ensure_ascii=False, indent=indent)
+                    json.dump(
+                        raw_data, stream, ensure_ascii=False, indent=indent
+                    )
                 elif format == "yaml":
-                    yaml.safe_dump(raw_data, stream, allow_unicode=True, sort_keys=False)
+                    yaml.safe_dump(
+                        raw_data, stream, allow_unicode=True, sort_keys=False
+                    )
                 elif format == "toml":
                     if toml is None:
-                        raise ImportError("保存TOML文件需要安装toml库：pip install toml")
+                        raise ImportError(
+                            "保存TOML文件需要安装toml库：pip install toml"
+                        )
                     toml.dump(raw_data, stream)
                 else:
                     raise ValueError(f"不支持的文件格式：{format}")
@@ -479,12 +506,11 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
         finally:
             Path(temporary).unlink(missing_ok=True)
 
-
     def merge(
         self,
         *config_sources: Union[Dict[str, Any], "ConfigDict"],
         extend_lists: bool = False,
-        overwrite: bool = True
+        overwrite: bool = True,
     ) -> "ConfigDict":
         """递归合并配置（支持多源、嵌套、灵活的列表处理）
 
@@ -496,7 +522,10 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
         Returns:
             合并后的自身实例（支持链式调用）
         """
-        def _recursive_merge(target: "ConfigDict", source: Union[Dict[str, Any], "ConfigDict"]) -> None:
+
+        def _recursive_merge(
+            target: "ConfigDict", source: Union[Dict[str, Any], "ConfigDict"]
+        ) -> None:
             """内部递归合并逻辑
 
             Args:
@@ -505,20 +534,31 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
             """
             for key, value in source.items():
                 # 目标存在该键，且双方都是字典/ConfigDict → 递归合并
-                if (key in target and isinstance(target[key], (dict, ConfigDict)) and isinstance(value, (dict, ConfigDict))):
+                if (
+                    key in target
+                    and isinstance(target[key], (dict, ConfigDict))
+                    and isinstance(value, (dict, ConfigDict))
+                ):
                     # 确保目标值是ConfigDict（统一类型）
                     if not isinstance(target[key], ConfigDict):
                         target[key] = ConfigDict(
-                            cast(Dict[str, Any], target[key]))
+                            cast(Dict[str, Any], target[key])
+                        )
                     # 递归合并子配置
-                    _recursive_merge(target[key], cast(
-                        "ConfigDict", cast(List[Any], value)))
+                    _recursive_merge(
+                        target[key], cast("ConfigDict", cast(List[Any], value))
+                    )
                 # 目标存在该键，且双方都是列表 → 扩展/替换
-                elif (key in target and isinstance(target[key], list) and isinstance(value, list)):
+                elif (
+                    key in target
+                    and isinstance(target[key], list)
+                    and isinstance(value, list)
+                ):
                     if extend_lists:
                         # 扩展列表：去重（可选）+ 合并
-                        combined_list = list(
-                            target[key]) + list(cast(List[Any], value))
+                        combined_list = list(target[key]) + list(
+                            cast(List[Any], value)
+                        )
                         target[key] = list(dict.fromkeys(combined_list))
                     else:
                         # 替换列表（默认）
@@ -527,7 +567,9 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
                 else:
                     if overwrite:
                         # 覆盖：新值替换旧值（自动转换嵌套字典为ConfigDict）
-                        if isinstance(value, dict) and not isinstance(value, ConfigDict):
+                        if isinstance(value, dict) and not isinstance(
+                            value, ConfigDict
+                        ):
                             target[key] = ConfigDict(value)
                         else:
                             target[key] = value

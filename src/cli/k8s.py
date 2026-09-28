@@ -7,54 +7,62 @@ Kubernetes 集群部署CLI工具
 3. 节点可达性检测、证书自动生成、配置参数校验
 """
 
-import warnings  # noqa
-from functools import wraps  # noqa
+import warnings
+from functools import wraps
+
 # 必须在任何其他导入之前执行 gevent monkey patching
 # 以避免 MonkeyPatchWarning
-try:  # noqa
-    from gevent import monkey  # noqa
-    monkey.patch_all()  # noqa
-except ImportError:  # noqa
-    pass  # noqa
+try:
+    from gevent import monkey
+
+    monkey.patch_all()
+except ImportError:
+    pass
 
 # 忽略 gevent 的 MonkeyPatchWarning
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="gevent")  # noqa
-from core.ssh import AsyncSSHClient  # noqa
-from infra.executor_wrapper import (  # noqa
-    InfraExecutionResult,
-    InfraFileExecutor,
-    InfraExecutionConfig
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="gevent")
+# Standard-library, third-party and application imports must follow
+# gevent patching so network and threading modules initialize safely.
+import asyncio  # noqa: E402
+import ipaddress  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import shlex  # noqa: E402
+import shutil  # noqa: E402
+import signal  # noqa: E402
+import sys  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Dict, List, Optional, Set, Tuple  # noqa: E402
+
+import click  # noqa: E402
+import yaml  # noqa: E402
+
+from core.command import execute_command  # noqa: E402
+from core.config import Application  # noqa: E402
+from core.deployment_inputs import DeploymentInputs  # noqa: E402
+from core.deployment_state import (  # noqa: E402
+    DeploymentState,
+    deployment_lock,
+    exclusive_deployment,
 )
-from core.logger import (  # noqa
+from core.http_api_client.harbor_client import HarborClient  # noqa: E402
+from core.logger import (  # noqa: E402
     bind_log_context,
     get_logger,
     log_lifecycle_event,
     setup_cli_logging,
     with_new_log_context,
 )
-from core.misc.network import local_ips  # noqa
-from core.misc.ca import create_cert  # noqa
-from core.config import Application  # noqa
-from core.command import execute_command  # noqa
-from core.http_api_client.harbor_client import HarborClient  # noqa
-import ipaddress  # noqa
-import click  # noqa
-import logging  # noqa
-from typing import Any, Dict, List, Optional, Set, Tuple  # noqa
-from pathlib import Path  # noqa
-import os  # noqa
-import json  # noqa
-import asyncio  # noqa
-import re  # noqa
-import signal  # noqa
-import shlex  # noqa
-import shutil  # noqa
-import sys  # noqa
-import time  # noqa
-import yaml  # noqa
-from core.deployment_state import DeploymentState, DeploymentStateError, deployment_lock, exclusive_deployment  # noqa
-from core.deployment_inputs import DeploymentInputs  # noqa
-
+from core.misc.ca import create_cert  # noqa: E402
+from core.misc.network import local_ips  # noqa: E402
+from core.ssh import AsyncSSHClient  # noqa: E402
+from infra.executor_wrapper import (  # noqa: E402
+    InfraExecutionConfig,
+    InfraExecutionResult,
+    InfraFileExecutor,
+)
 
 # 初始化日志
 setup_cli_logging(
@@ -138,6 +146,7 @@ def with_deployment_lifecycle(operation_type: str) -> Any:
 
 class K8sDeploymentError(Exception):
     """K8s部署异常"""
+
     pass
 
 
@@ -166,7 +175,9 @@ class K8sDeploymentConfigValidator:
         try:
             ipaddress.IPv4Address(ip)
         except ValueError as e:
-            raise K8sDeploymentError(f"{field_name} '{ip}' 不是有效的IPv4地址: {e}")
+            raise K8sDeploymentError(
+                f"{field_name} '{ip}' 不是有效的IPv4地址: {e}"
+            )
 
     @staticmethod
     def validate_cidr(cidr: str, field_name: str) -> None:
@@ -182,7 +193,9 @@ class K8sDeploymentConfigValidator:
         try:
             ipaddress.ip_network(cidr, strict=False)
         except ValueError as e:
-            raise K8sDeploymentError(f"{field_name} '{cidr}' 不是有效的CIDR格式: {e}")
+            raise K8sDeploymentError(
+                f"{field_name} '{cidr}' 不是有效的CIDR格式: {e}"
+            )
 
     @staticmethod
     def validate_loadbalancer_ippool(ippool: List[str]) -> None:
@@ -203,21 +216,27 @@ class K8sDeploymentConfigValidator:
                     # IP范围格式：192.168.1.100-192.168.1.200
                     start_ip, end_ip = ip_config.split("-")
                     K8sDeploymentConfigValidator.validate_ip_address(
-                        start_ip.strip(), "IP范围起始地址")
+                        start_ip.strip(), "IP范围起始地址"
+                    )
                     K8sDeploymentConfigValidator.validate_ip_address(
-                        end_ip.strip(), "IP范围结束地址")
+                        end_ip.strip(), "IP范围结束地址"
+                    )
                 elif "/" in ip_config:
                     # CIDR格式：192.168.1.0/24
                     K8sDeploymentConfigValidator.validate_cidr(
-                        ip_config, "负载均衡CIDR")
+                        ip_config, "负载均衡CIDR"
+                    )
                 else:
                     # 单个IP格式：192.168.1.100
                     K8sDeploymentConfigValidator.validate_ip_address(
-                        ip_config, "负载均衡IP")
+                        ip_config, "负载均衡IP"
+                    )
             except Exception as e:
                 if isinstance(e, K8sDeploymentError):
                     raise
-                raise K8sDeploymentError(f"无效的负载均衡IP配置 '{ip_config}': {e}")
+                raise K8sDeploymentError(
+                    f"无效的负载均衡IP配置 '{ip_config}': {e}"
+                )
 
     @staticmethod
     def validate_nameservers(nameservers: List[str]) -> None:
@@ -234,7 +253,8 @@ class K8sDeploymentConfigValidator:
 
         for nameserver in nameservers:
             K8sDeploymentConfigValidator.validate_ip_address(
-                nameserver, "DNS服务器")
+                nameserver, "DNS服务器"
+            )
 
     @staticmethod
     def validate_master_node(master_ip: str) -> None:
@@ -247,13 +267,15 @@ class K8sDeploymentConfigValidator:
             K8sDeploymentError: Master节点配置无效
         """
         K8sDeploymentConfigValidator.validate_ip_address(
-            master_ip, "Master节点IP")
+            master_ip, "Master节点IP"
+        )
 
         # 检查是否为本机IP
         local_ips_list = local_ips()
         if master_ip not in local_ips_list:
             raise K8sDeploymentError(
-                f"Master节点 {master_ip} 不在本机IP列表{local_ips_list}中，请确认Master节点是否为本机"
+                f"Master节点 {master_ip} 不在本机IP列表{local_ips_list}中，"
+                "请确认Master节点是否为本机"
             )
 
 
@@ -275,31 +297,38 @@ class K8sDeploymentConfig:
 
         # 验证Master节点
         K8sDeploymentConfigValidator.validate_master_node(
-            Application.K8S_CONFIG.MASTER_IP)
+            Application.K8S_CONFIG.MASTER_IP
+        )
 
         # 验证Worker节点
         for worker in Application.K8S_CONFIG.WORKER_IPS:
             K8sDeploymentConfigValidator.validate_ip_address(
-                worker, "Worker节点IP")
+                worker, "Worker节点IP"
+            )
 
         # 验证附加Master节点（HA模式）
         for master in Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS:
             K8sDeploymentConfigValidator.validate_ip_address(
-                master, "附加Master节点IP")
+                master, "附加Master节点IP"
+            )
 
         # 验证网络配置
         K8sDeploymentConfigValidator.validate_cidr(
-            Application.K8S_CONFIG.SERVICE_CIDR, "Service网段")
+            Application.K8S_CONFIG.SERVICE_CIDR, "Service网段"
+        )
         K8sDeploymentConfigValidator.validate_cidr(
-            Application.K8S_CONFIG.POD_CIDR, "Pod网段")
+            Application.K8S_CONFIG.POD_CIDR, "Pod网段"
+        )
 
         # 验证负载均衡配置
         K8sDeploymentConfigValidator.validate_loadbalancer_ippool(
-            Application.K8S_CONFIG.LOADBALANCER_IP_POOLS)
+            Application.K8S_CONFIG.LOADBALANCER_IP_POOLS
+        )
 
         # 验证DNS配置
         K8sDeploymentConfigValidator.validate_nameservers(
-            Application.K8S_CONFIG.NAMESERVER)
+            Application.K8S_CONFIG.NAMESERVER
+        )
 
         # 验证部署源目录
         if not self.deploy_src:
@@ -314,36 +343,54 @@ class K8sDeploymentConfig:
     def get_config_hash(self) -> str:
         """获取配置哈希值（用于检测配置变更）"""
         import hashlib
-        config_str = json.dumps({
-            "domain": Application.DOMAIN,
-            "master_ip": Application.K8S_CONFIG.MASTER_IP,
-            "additional_master_ips": sorted(Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS),
-            "control_plane_endpoint": Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT,
-            "worker_ips": sorted(Application.K8S_CONFIG.WORKER_IPS),
-            "service_cidr": Application.K8S_CONFIG.SERVICE_CIDR,
-            "pod_cidr": Application.K8S_CONFIG.POD_CIDR,
-            "loadbalancer_ippools": Application.K8S_CONFIG.LOADBALANCER_IP_POOLS,
-            "nameserver": sorted(Application.K8S_CONFIG.NAMESERVER),
-            "deploy_src": self.deploy_src
-        }, sort_keys=True)
+
+        config_str = json.dumps(
+            {
+                "domain": Application.DOMAIN,
+                "master_ip": Application.K8S_CONFIG.MASTER_IP,
+                "additional_master_ips": sorted(
+                    Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS
+                ),
+                "control_plane_endpoint": (
+                    Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT
+                ),
+                "worker_ips": sorted(Application.K8S_CONFIG.WORKER_IPS),
+                "service_cidr": Application.K8S_CONFIG.SERVICE_CIDR,
+                "pod_cidr": Application.K8S_CONFIG.POD_CIDR,
+                "loadbalancer_ippools": (
+                    Application.K8S_CONFIG.LOADBALANCER_IP_POOLS
+                ),
+                "nameserver": sorted(Application.K8S_CONFIG.NAMESERVER),
+                "deploy_src": self.deploy_src,
+            },
+            sort_keys=True,
+        )
         return hashlib.md5(config_str.encode()).hexdigest()
 
     @property
     def all_hosts(self) -> List[str]:
         """获取所有节点IP列表"""
-        return ["@local", *Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS, *Application.K8S_CONFIG.WORKER_IPS]
+        return [
+            "@local",
+            *Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS,
+            *Application.K8S_CONFIG.WORKER_IPS,
+        ]
 
     @property
-    def host_groups(self) -> Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]]:
+    def host_groups(
+        self,
+    ) -> Optional[Dict[str, Tuple[list[str], Dict[str, Any]]]]:
         """获取节点分组"""
         non_data: dict[str, Any] = {}
         groups: Dict[str, Tuple[list[str], Dict[str, Any]]] = {
             "master": (["@local"], non_data),
-            "worker": (Application.K8S_CONFIG.WORKER_IPS, non_data)
+            "worker": (Application.K8S_CONFIG.WORKER_IPS, non_data),
         }
         if Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS:
             groups["additional_master"] = (
-                Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS, non_data)
+                Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS,
+                non_data,
+            )
         return groups
 
     def get_loadbalancer_ip(self) -> str:
@@ -368,21 +415,29 @@ class K8sDeploymentConfig:
         """转换为字典格式（用于部署脚本）"""
         return {
             "master_ip": Application.K8S_CONFIG.MASTER_IP,
-            "additional_master_ips": Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS,
-            "control_plane_endpoint": Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT,
+            "additional_master_ips": (
+                Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS
+            ),
+            "control_plane_endpoint": (
+                Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT
+            ),
             "master_interface": Application.K8S_CONFIG.MASTER_INTERFACE,
             "worker_ips": Application.K8S_CONFIG.WORKER_IPS,
             "service_cidr": Application.K8S_CONFIG.SERVICE_CIDR,
             "pod_cidr": Application.K8S_CONFIG.POD_CIDR,
-            "loadbalancer_ippools": Application.K8S_CONFIG.LOADBALANCER_IP_POOLS,
+            "loadbalancer_ippools": (
+                Application.K8S_CONFIG.LOADBALANCER_IP_POOLS
+            ),
             "loadbalancer_ip": self.get_loadbalancer_ip(),
             "nameserver": Application.K8S_CONFIG.NAMESERVER,
             "deploy_src": self.deploy_src,
-            "manifest_dir": os.path.join(Application.ROOT_DIR, "config", "manifest"),
+            "manifest_dir": os.path.join(
+                Application.ROOT_DIR, "config", "manifest"
+            ),
             "master_schedule": Application.K8S_CONFIG.MASTER_SCHEDULABLE,
             "root_dir": Application.ROOT_DIR,
             "domain": Application.DOMAIN,
-            "ca_crt_file": Application.TLS_CONFIG.CA_CRT
+            "ca_crt_file": Application.TLS_CONFIG.CA_CRT,
         }
 
     def show_config(self) -> None:
@@ -390,15 +445,19 @@ class K8sDeploymentConfig:
         click.echo(click.style("当前K8s部署配置:", fg="blue", bold=True))
         click.echo(f"  Master节点: {Application.K8S_CONFIG.MASTER_IP}")
         click.echo(
-            f"  附加Master节点: {Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS}")
+            f"  附加Master节点: {Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS}"
+        )
         if Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT:
             click.echo(
-                f"  控制面端点(VIP): {Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT}")
+                "  控制面端点(VIP):"
+                f" {Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT}"
+            )
         click.echo(f"  Worker节点: {Application.K8S_CONFIG.WORKER_IPS}")
         click.echo(f"  Service网段: {Application.K8S_CONFIG.SERVICE_CIDR}")
         click.echo(f"  Pod网段: {Application.K8S_CONFIG.POD_CIDR}")
         click.echo(
-            f"  负载均衡IP池: {Application.K8S_CONFIG.LOADBALANCER_IP_POOLS}")
+            f"  负载均衡IP池: {Application.K8S_CONFIG.LOADBALANCER_IP_POOLS}"
+        )
         click.echo(f"  DNS服务器: {Application.K8S_CONFIG.NAMESERVER}")
         click.echo(f"  部署源目录: {self.deploy_src}")
 
@@ -419,7 +478,7 @@ class K8sDeployer:
             parallel=3,  # 适中的并发数
             connect_timeout=30,
             verbosity=verbosity,
-            fail_fast=True
+            fail_fast=True,
         )
         self.infra_executor = InfraFileExecutor(executor_config)
 
@@ -434,14 +493,21 @@ class K8sDeployer:
     def _generate_file_hashes(self) -> Dict[str, str]:
         """按组件计算脚本、共享代码、配置及离线制品的内容摘要。"""
         config = self.config.deploy_data()
-        shared = [Path(__file__).parent.parent / "core" / name for name in ("ssh.py", "command.py")]
-        shared.extend((Path(__file__).parent.parent / "core/config").glob("*.py"))
+        shared = [
+            Path(__file__).parent.parent / "core" / name
+            for name in ("ssh.py", "command.py")
+        ]
+        shared.extend(
+            (Path(__file__).parent.parent / "core/config").glob("*.py")
+        )
         result = {}
         for file_path, _ in self.deployment_files:
             extras = [*shared]
             if file_path.name == "issue_cert.py":
                 extras.append(Path(Application.TLS_CONFIG.CA_CRT))
-            result[file_path.name] = self.input_fingerprints.fingerprint(file_path, self.config.deploy_src, config, extras)
+            result[file_path.name] = self.input_fingerprints.fingerprint(
+                file_path, self.config.deploy_src, config, extras
+            )
         return result
 
     def _filter_pending_files(self) -> List[Tuple[Path, str]]:
@@ -451,17 +517,21 @@ class K8sDeployer:
         self.file_hashes = self._generate_file_hashes()
         # 过滤掉手动配置跳过的infra文件
         active_files = [
-            (fp, desc) for fp, desc in self.deployment_files
+            (fp, desc)
+            for fp, desc in self.deployment_files
             if not self.deployment_state.is_file_skipped(fp.name)
         ]
         skipped_count = len(self.deployment_files) - len(active_files)
         if skipped_count > 0:
             skipped_names = [
-                fp.name for fp, _ in self.deployment_files
+                fp.name
+                for fp, _ in self.deployment_files
                 if self.deployment_state.is_file_skipped(fp.name)
             ]
             click.echo(
-                f"检测到 {skipped_count} 个组件被配置跳过（skip_files）: {skipped_names}")
+                f"检测到 {skipped_count} 个组件被配置跳过（skip_files）:"
+                f" {skipped_names}"
+            )
 
         config_hash = self.config.get_config_hash()
 
@@ -483,8 +553,10 @@ class K8sDeployer:
             stored_hash = self.deployment_state.get_file_hash(file_name)
 
             # 文件已完成且内容未变 → 跳过；否则需要（重新）执行
-            if (self.deployment_state.is_file_completed(file_name)
-                    and current_hash == stored_hash):
+            if (
+                self.deployment_state.is_file_completed(file_name)
+                and current_hash == stored_hash
+            ):
                 completed_count += 1
                 click.echo(f"{description} ({file_name}) - 已完成，跳过")
             else:
@@ -492,13 +564,17 @@ class K8sDeployer:
 
         if completed_count > 0:
             click.echo(
-                f"检测到 {completed_count} 个组件已完成，{len(pending_files)} 个组件待部署")
+                f"检测到 {completed_count} 个组件已完成，{len(pending_files)}"
+                " 个组件待部署"
+            )
 
         return pending_files
 
     def _validate_bootstrap_state(self) -> None:
-        """Never reinterpret an existing control plane as a fresh deployment."""
-        if not self.deployment_state.should_force_redeploy(self.config.get_config_hash()):
+        """Keep existing control planes out of fresh deployments."""
+        if not self.deployment_state.should_force_redeploy(
+            self.config.get_config_hash()
+        ):
             return
         markers = (
             "/etc/kubernetes/admin.conf",
@@ -530,8 +606,8 @@ class K8sDeployer:
         # 2. 检测所有节点SSH可达性
         click.echo("🔗 检测节点SSH连通性...")
         _, not_reachable_hosts = await self.ssh_client.is_reachable(
-            [Application.K8S_CONFIG.MASTER_IP] + [x
-                                                  for x in self.config.all_hosts if x != "@local"]
+            [Application.K8S_CONFIG.MASTER_IP]
+            + [x for x in self.config.all_hosts if x != "@local"]
         )
 
         if not_reachable_hosts:
@@ -565,7 +641,8 @@ class K8sDeployer:
         # HA模式：在 kubeadm init 前部署 keepalived 提供 VIP
         if Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS:
             filenames.append(
-                ("install_keepalived.py", "Keepalived VIP（高可用）"))
+                ("install_keepalived.py", "Keepalived VIP（高可用）")
+            )
 
         filenames += [
             ("install_kubernetes.py", "K8s核心组件"),
@@ -574,7 +651,11 @@ class K8sDeployer:
         # HA模式：附加 master 节点通过 --control-plane join
         if Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS:
             filenames.append(
-                ("kubernetes_join_control_plane.py", "附加Master节点加入控制面"))
+                (
+                    "kubernetes_join_control_plane.py",
+                    "附加Master节点加入控制面",
+                )
+            )
 
         filenames += [
             ("kubernetes_join_node.py", "Worker节点加入"),
@@ -588,7 +669,7 @@ class K8sDeployer:
             ("install_metrics_server.py", "监控组件"),
             ("install_dashboard.py", "Dashboard"),
             ("install_kuboard.py", "KubeBoard"),
-            ("install_cert_manager.py", "证书管理组件")
+            ("install_cert_manager.py", "证书管理组件"),
         ]
 
         # 返回完整的文件路径（Path对象）
@@ -617,14 +698,16 @@ class K8sDeployer:
         for file_path, description in pending_files:
             click.echo(f"\n部署组件: {description} ({file_path.name})")
 
-            owner = self.deployment_state.mark_file_running(file_path.name, self.file_hashes[file_path.name])
+            owner = self.deployment_state.mark_file_running(
+                file_path.name, self.file_hashes[file_path.name]
+            )
             try:
                 with bind_log_context(component=file_path.stem):
                     result = self.infra_executor.execute_file(
                         infra_file_path=file_path,
                         host_ips=self.config.all_hosts,
                         shared_data=self.config.deploy_data(),
-                        target_groups=self.config.host_groups
+                        target_groups=self.config.host_groups,
                     )
 
                 if result.success:
@@ -633,13 +716,19 @@ class K8sDeployer:
                     # 标记为已完成并保存当前文件哈希
                     current_hash = self._generate_file_hashes()[file_path.name]
                     if current_hash != self.file_hashes[file_path.name]:
-                        raise K8sDeploymentError("组件执行期间输入已变化，拒绝保存成功检查点")
-                    self.deployment_state.mark_file_completed(file_path.name, current_hash, owner)
+                        raise K8sDeploymentError(
+                            "组件执行期间输入已变化，拒绝保存成功检查点"
+                        )
+                    self.deployment_state.mark_file_completed(
+                        file_path.name, current_hash, owner
+                    )
                 else:
                     click.echo(f"{description} 部署失败")
                     logger.error("%s 部署失败", description)
                     # 标记为失败
-                    self.deployment_state.mark_file_failed(file_path.name, owner)
+                    self.deployment_state.mark_file_failed(
+                        file_path.name, owner
+                    )
                     self._show_failure_details(result)
                     return False
 
@@ -659,7 +748,8 @@ class K8sDeployer:
         """显示部署成功结果"""
         loadbalancer_ip = self.config.get_loadbalancer_ip()
         registry_credential_status = (
-            "已配置" if Application.REGISTRY.USERNAME and Application.REGISTRY.PASSWORD
+            "已配置"
+            if Application.REGISTRY.USERNAME and Application.REGISTRY.PASSWORD
             else "未配置"
         )
         # 高可用模式下优先使用控制面端点（VIP），否则用 master IP
@@ -669,7 +759,9 @@ class K8sDeployer:
         )
 
         click.echo(click.style("=" * 80, fg="green", bold=True))
-        click.echo(click.style("Kubernetes 集群部署成功！", fg="green", bold=True))
+        click.echo(
+            click.style("Kubernetes 集群部署成功！", fg="green", bold=True)
+        )
         click.echo(click.style("=" * 80, fg="green", bold=True))
 
         # 域名映射信息
@@ -681,49 +773,44 @@ class K8sDeployer:
     {loadbalancer_ip:<15} kuboard.{Application.DOMAIN}      # KubeBoard管理面板
     """
 
-        success_msg = f"""
-    集群核心信息：
-    ├─ Master节点IP:          {Application.K8S_CONFIG.MASTER_IP}
-    ├─ Worker节点数量:        {len(Application.K8S_CONFIG.WORKER_IPS)}
-    ├─ Service网段:           {Application.K8S_CONFIG.SERVICE_CIDR}
-    ├─ Pod网段:               {Application.K8S_CONFIG.POD_CIDR}
-    ├─ 负载均衡IP池:           {Application.K8S_CONFIG.LOADBALANCER_IP_POOLS}
-    ├─ 负载均衡VIP:           {loadbalancer_ip}
-    └─ 离线部署目录:          {self.config.deploy_src}
-
-    证书相关：
-    ├─ CA证书路径:       {Application.TLS_CONFIG.CA_CRT}
-    ├─ 集群证书目录:     {Application.TLS_CONFIG.ROOT_DIR}
-    └─ KubeConfig文件:  /root/.kube/config
-
-    {domain_mappings.strip()}
-
-    组件访问地址：
-    ├─ Harbor镜像仓库:        https://{Application.DOMAIN}
-    ├─ Longhorn管理面板:      https://longhorn.{Application.DOMAIN}
-    ├─ K8s Dashboard:         https://dashboard.{Application.DOMAIN}
-    ├─ KubeBoard管理面板:     https://kuboard.{Application.DOMAIN}
-    └─ K8s APIServer:         http://{apiserver_endpoint}:6443
-
-    组件访问凭据：
-    ├─ Harbor凭据:            {registry_credential_status}（通过 registry.username/password 管理）
-    ├─ Longhorn无默认密码     （基于K8s RBAC认证）
-    └─ Dashboard令牌获取:     kubectl -n kubernetes-dashboard create token admin-user
-
-    常用操作提示：
-    ├─ 查看节点状态:          kubectl get nodes
-    ├─ 查看集群组件:          kubectl get pods -A
-    ├─ 查看Longhorn状态:      kubectl get pods -n longhorn-system
-    ├─ 查看Harbor状态:        kubectl get pods -n harbor-system
-    └─ 查看KubeBoard状态:     kubectl get pods -n kuboard-system
-
-    重要提醒：
-    1. 请确保所有节点已配置上述域名映射（/etc/hosts）
-    2. 请妥善管理组件访问凭据，Harbor改密后同步更新 registry.password
-    3. 建议备份 {Application.TLS_CONFIG.ROOT_DIR} 证书目录
-    4. 如访问面板异常，请检查节点防火墙/SELinux配置
-    5. 请耐心等待10分钟左右，通过 kubectl get pods -A 检查所有Pod状态正常后即可使用
-    """
+        success_msg = (
+            "\n    集群核心信息：\n    ├─ Master节点IP:         "
+            f" {Application.K8S_CONFIG.MASTER_IP}\n    ├─ Worker节点数量:     "
+            f"   {len(Application.K8S_CONFIG.WORKER_IPS)}\n    ├─ Service网段:"
+            f"           {Application.K8S_CONFIG.SERVICE_CIDR}\n    ├─"
+            f" Pod网段:               {Application.K8S_CONFIG.POD_CIDR}\n   "
+            " ├─ 负载均衡IP池:          "
+            f" {Application.K8S_CONFIG.LOADBALANCER_IP_POOLS}\n    ├─"
+            f" 负载均衡VIP:           {loadbalancer_ip}\n    └─ 离线部署目录: "
+            f"         {self.config.deploy_src}\n\n    证书相关：\n    ├─"
+            f" CA证书路径:       {Application.TLS_CONFIG.CA_CRT}\n    ├─"
+            f" 集群证书目录:     {Application.TLS_CONFIG.ROOT_DIR}\n    └─"
+            " KubeConfig文件:  /root/.kube/config\n\n   "
+            f" {domain_mappings.strip()}\n\n    组件访问地址：\n    ├─"
+            f" Harbor镜像仓库:        https://{Application.DOMAIN}\n    ├─"
+            f" Longhorn管理面板:      https://longhorn.{Application.DOMAIN}\n "
+            "   ├─ K8s Dashboard:        "
+            f" https://dashboard.{Application.DOMAIN}\n    ├─"
+            f" KubeBoard管理面板:     https://kuboard.{Application.DOMAIN}\n  "
+            f"  └─ K8s APIServer:         http://{apiserver_endpoint}:6443\n\n"
+            "    组件访问凭据：\n    ├─ Harbor凭据:           "
+            f" {registry_credential_status}（通过 registry.username/password"
+            " 管理）\n    ├─ Longhorn无默认密码     （基于K8s RBAC认证）\n   "
+            " └─ Dashboard令牌获取:     kubectl -n kubernetes-dashboard"
+            " create token admin-user\n\n    常用操作提示：\n    ├─"
+            " 查看节点状态:          kubectl get nodes\n    ├─ 查看集群组件: "
+            "         kubectl get pods -A\n    ├─ 查看Longhorn状态:     "
+            " kubectl get pods -n longhorn-system\n    ├─ 查看Harbor状态:    "
+            "    kubectl get pods -n harbor-system\n    └─ 查看KubeBoard状态:"
+            "     kubectl get pods -n kuboard-system\n\n    重要提醒：\n   "
+            " 1. 请确保所有节点已配置上述域名映射（/etc/hosts）\n    2."
+            " 请妥善管理组件访问凭据，Harbor改密后同步更新"
+            " registry.password\n    3. 建议备份"
+            f" {Application.TLS_CONFIG.ROOT_DIR} 证书目录\n    4."
+            " 如访问面板异常，请检查节点防火墙/SELinux配置\n    5."
+            " 请耐心等待10分钟左右，通过 kubectl get pods -A"
+            " 检查所有Pod状态正常后即可使用\n    "
+        )
 
         click.echo(click.style(success_msg, fg="green"))
         click.echo(click.style("=" * 80, fg="green", bold=True))
@@ -733,7 +820,9 @@ class K8sDeployer:
         click.echo(click.style("部署失败详情:", fg="red", bold=True))
 
         if result.global_error:
-            click.echo(click.style(f"全局错误: {result.global_error}", fg="red"))
+            click.echo(
+                click.style(f"全局错误: {result.global_error}", fg="red")
+            )
 
         failed_hosts = result.get_failed_hosts()
         if failed_hosts:
@@ -741,18 +830,24 @@ class K8sDeployer:
 
         for hostname, host_result in result.host_results.items():
             if not host_result.success:
-                click.echo(click.style(
-                    f"\n主机 {hostname}:", fg="red", bold=True))
+                click.echo(
+                    click.style(f"\n主机 {hostname}:", fg="red", bold=True)
+                )
 
                 if host_result.error:
-                    click.echo(click.style(
-                        f"  错误: {host_result.error}", fg="red"))
+                    click.echo(
+                        click.style(f"  错误: {host_result.error}", fg="red")
+                    )
 
-                failed_ops = [op_name for op_name, op_result in host_result.operations.items()
-                              if not op_result.success]
+                failed_ops = [
+                    op_name
+                    for op_name, op_result in host_result.operations.items()
+                    if not op_result.success
+                ]
                 if failed_ops:
-                    click.echo(click.style(
-                        f"  失败操作: {failed_ops}", fg="yellow"))
+                    click.echo(
+                        click.style(f"  失败操作: {failed_ops}", fg="yellow")
+                    )
 
     def _success(self, message: str) -> None:
         """输出成功消息"""
@@ -769,7 +864,8 @@ class K8sDeployer:
         try:
             with deployment_lock():
                 self.deployment_state.reload()
-                # Run before certificate generation or any node mutation.
+                # Run before certificate generation or any node
+                # mutation.
                 self._validate_bootstrap_state()
                 # 环境验证
                 if not await self.validate_environment():
@@ -797,21 +893,13 @@ def cli():
 
 @cli.command(name="deploy")
 @click.option(
-    '--deploy-src',
+    "--deploy-src",
     default="/root/offline-deploy",
     required=True,
-    help="离线部署文件根目录（覆盖配置文件中的设置）"
+    help="离线部署文件根目录（覆盖配置文件中的设置）",
 )
-@click.option(
-    '-v', '--verbose',
-    count=True,
-    help="日志详细级别：-v/-vv/-vvv"
-)
-@click.option(
-    '--show-config',
-    is_flag=True,
-    help="显示当前配置（不执行部署）"
-)
+@click.option("-v", "--verbose", count=True, help="日志详细级别：-v/-vv/-vvv")
+@click.option("--show-config", is_flag=True, help="显示当前配置（不执行部署）")
 @with_new_log_context("deployment_id", prefix="dep-")
 def deploy(deploy_src: str, verbose: int, show_config: bool) -> None:
     """
@@ -924,16 +1012,8 @@ def deploy(deploy_src: str, verbose: int, show_config: bool) -> None:
 
 
 @cli.command(name="config")
-@click.option(
-    '--validate',
-    is_flag=True,
-    help="验证配置"
-)
-@click.option(
-    '--show',
-    is_flag=True,
-    help="显示配置"
-)
+@click.option("--validate", is_flag=True, help="验证配置")
+@click.option("--show", is_flag=True, help="显示配置")
 def config(validate: bool, show: bool) -> None:
     """K8s部署配置管理命令"""
 
@@ -957,11 +1037,7 @@ def config(validate: bool, show: bool) -> None:
 
 
 @cli.command(name="reset-state")
-@click.option(
-    '--force',
-    is_flag=True,
-    help="强制重置状态"
-)
+@click.option("--force", is_flag=True, help="强制重置状态")
 @exclusive_deployment
 def reset_state(force: bool) -> None:
     """重置部署状态"""
@@ -982,35 +1058,26 @@ def reset_state(force: bool) -> None:
 
 @cli.command(name="scale")
 @click.option(
-    '--worker-ip',
-    'worker_ips',
+    "--worker-ip",
+    "worker_ips",
     multiple=True,
     required=True,
-    help="新 Worker 节点 IP（可多次指定）"
+    help="新 Worker 节点 IP（可多次指定）",
 )
 @click.option(
-    '--deploy-src',
+    "--deploy-src",
     default="/root/offline-deploy",
-    help="离线部署文件根目录（覆盖配置文件中的设置）"
+    help="离线部署文件根目录（覆盖配置文件中的设置）",
 )
 @click.option(
-    '--dry-run',
-    is_flag=True,
-    help="仅预览将要扩容的节点，不执行部署"
+    "--dry-run", is_flag=True, help="仅预览将要扩容的节点，不执行部署"
 )
-@click.option(
-    '-v', '--verbose',
-    count=True,
-    help="日志详细级别：-v/-vv/-vvv"
-)
+@click.option("-v", "--verbose", count=True, help="日志详细级别：-v/-vv/-vvv")
 @with_new_log_context("deployment_id", prefix="scale-")
 @with_deployment_lifecycle("scale")
 @exclusive_deployment
 def scale(
-    worker_ips: Tuple[str, ...],
-    deploy_src: str,
-    dry_run: bool,
-    verbose: int
+    worker_ips: Tuple[str, ...], deploy_src: str, dry_run: bool, verbose: int
 ) -> Optional[str]:
     """
     集群扩容：向已有 K8s 集群添加 Worker 节点
@@ -1022,7 +1089,8 @@ def scale(
 
     示例：
       kubengine-k8s scale --worker-ip 172.31.57.30
-      kubengine-k8s scale --worker-ip 172.31.57.30 --worker-ip 172.31.57.31 --dry-run
+      kubengine-k8s scale --worker-ip 172.31.57.30 --worker-ip \\
+          172.31.57.31 --dry-run
     """
     logger.info("=============== 开始集群扩容 ===============")
 
@@ -1035,40 +1103,63 @@ def scale(
             try:
                 ipaddress.IPv4Address(ip)
             except ValueError:
-                click.echo(click.style(f"无效的 IP 地址: {ip}", fg="red"), err=True)
+                click.echo(
+                    click.style(f"无效的 IP 地址: {ip}", fg="red"), err=True
+                )
                 exit(1)
 
         # 校验 master 为本机
         local_ip_list = local_ips()
         if Application.K8S_CONFIG.MASTER_IP not in local_ip_list:
-            click.echo(click.style(
-                "本机不是 Master 节点，扩容命令必须在 Master 上执行", fg="red"), err=True)
+            click.echo(
+                click.style(
+                    "本机不是 Master 节点，扩容命令必须在 Master 上执行",
+                    fg="red",
+                ),
+                err=True,
+            )
             exit(1)
 
         # 校验新节点不与已有节点重复
         existing_workers = set[str](Application.K8S_CONFIG.WORKER_IPS)
-        existing_masters = set[str](Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS) | {
-            Application.K8S_CONFIG.MASTER_IP}
+        existing_masters = set[str](
+            Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS
+        ) | {Application.K8S_CONFIG.MASTER_IP}
         dup_existing = [ip for ip in new_workers if ip in existing_workers]
         dup_master = [ip for ip in new_workers if ip in existing_masters]
         if dup_existing:
-            click.echo(click.style(
-                f"以下节点已在 WORKER_IPS 配置中: {dup_existing}", fg="yellow"))
+            click.echo(
+                click.style(
+                    f"以下节点已在 WORKER_IPS 配置中: {dup_existing}",
+                    fg="yellow",
+                )
+            )
         if dup_master:
-            click.echo(click.style(
-                f"以下节点已是 Master 节点: {dup_master}", fg="red"), err=True)
+            click.echo(
+                click.style(
+                    f"以下节点已是 Master 节点: {dup_master}", fg="red"
+                ),
+                err=True,
+            )
             exit(1)
 
         # ---- 2. 获取集群中已有的节点列表 ----
         click.echo(click.style("\n检查集群已有节点...", fg="cyan"))
         result = execute_command(
-            "kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}'",
-            timeout=15
+            "kubectl get nodes -o"
+            " jsonpath='{.items[*].status.addresses[?(@.type=="
+            '"InternalIP")].address}\'',
+            timeout=15,
         )
         if result.is_failure():
-            click.echo(click.style(
-                f"无法获取集群节点列表（kubectl 不可用或集群未初始化）: {result.get_error_lines()}",
-                fg="red"), err=True)
+            click.echo(
+                click.style(
+                    "无法获取集群节点列表（kubectl 不可用或集群未初始化）:"
+                    f" {result.get_error_lines()}",
+                    fg="red",
+                ),
+                err=True,
+            )
             exit(1)
 
         cluster_node_ips_raw = result.stdout.strip()
@@ -1080,17 +1171,21 @@ def scale(
         # 过滤掉已加入集群的节点
         truly_new = [ip for ip in new_workers if ip not in cluster_node_ips]
         already_in_cluster = [
-            ip for ip in new_workers if ip in cluster_node_ips]
+            ip for ip in new_workers if ip in cluster_node_ips
+        ]
 
         if already_in_cluster:
-            click.echo(click.style(
-                f"以下节点已在集群中，将跳过: {already_in_cluster}", fg="yellow"))
+            click.echo(
+                click.style(
+                    f"以下节点已在集群中，将跳过: {already_in_cluster}",
+                    fg="yellow",
+                )
+            )
 
         if not truly_new:
             if not dry_run:
                 _update_worker_ips(new_workers)
-            click.echo(click.style(
-                "没有需要扩容的新节点", fg="yellow"))
+            click.echo(click.style("没有需要扩容的新节点", fg="yellow"))
             return "skipped"
 
         # ---- 3. 展示扩容计划 ----
@@ -1126,10 +1221,7 @@ def scale(
         infra_path = os.path.join(Path(__file__).parent.parent, "infra")
 
         executor_config = InfraExecutionConfig(
-            parallel=3,
-            connect_timeout=30,
-            verbosity=verbose,
-            fail_fast=True
+            parallel=3, connect_timeout=30, verbosity=verbose, fail_fast=True
         )
         infra_executor = InfraFileExecutor(executor_config)
 
@@ -1161,7 +1253,7 @@ def scale(
                 infra_file_path=file_path,
                 host_ips=phase1_hosts,
                 shared_data=deploy_data,
-                target_groups=phase1_groups
+                target_groups=phase1_groups,
             )
 
             if not result.success:
@@ -1179,14 +1271,14 @@ def scale(
         phase2_hosts = ["@local", *truly_new]
         phase2_groups: Dict[str, Tuple[list[str], Dict[str, Any]]] = {
             "master": (["@local"], {}),
-            "worker": (truly_new, {})
+            "worker": (truly_new, {}),
         }
 
         result = infra_executor.execute_file(
             infra_file_path=join_file,
             host_ips=phase2_hosts,
             shared_data=deploy_data,
-            target_groups=phase2_groups
+            target_groups=phase2_groups,
         )
 
         if not result.success:
@@ -1201,19 +1293,15 @@ def scale(
         _update_worker_ips(new_workers)
 
         # ---- 6. 结果展示 ----
-        click.echo(click.style(
-            f"\n{'=' * 60}", fg="green", bold=True))
-        click.echo(click.style(
-            "集群扩容成功！", fg="green", bold=True))
-        click.echo(click.style(
-            f"{'=' * 60}", fg="green", bold=True))
+        click.echo(click.style(f"\n{'=' * 60}", fg="green", bold=True))
+        click.echo(click.style("集群扩容成功！", fg="green", bold=True))
+        click.echo(click.style(f"{'=' * 60}", fg="green", bold=True))
         click.echo(f"  新增 Worker 节点: {truly_new}")
         updated_workers = list(Application.K8S_CONFIG.WORKER_IPS) + truly_new
         click.echo(f"  当前 Worker 总数: {len(updated_workers)}")
         click.echo("\n  请稍候，通过以下命令确认节点状态:")
         click.echo("    kubectl get nodes")
-        click.echo(click.style(
-            f"{'=' * 60}", fg="green", bold=True))
+        click.echo(click.style(f"{'=' * 60}", fg="green", bold=True))
 
         logger.info("=============== 集群扩容完成 ===============")
 
@@ -1247,14 +1335,16 @@ def _show_scale_failure(result: InfraExecutionResult) -> None:
                     if not err_msg and op_result.output:
                         err_msg = "\n".join(op_result.output)
                     if err_msg:
-                        click.echo(click.style(
-                            f"  错误: {err_msg[:500]}", fg="red"))
+                        click.echo(
+                            click.style(f"  错误: {err_msg[:500]}", fg="red")
+                        )
 
 
 def _update_worker_ips(new_workers: List[str]) -> None:
     """扩容成功后将新节点追加到 application.yaml 的 worker.ips"""
     try:
         from core.config.config_dict import ConfigDict
+
         config = ConfigDict.get_instance()
 
         # 读取现有 worker ips
@@ -1264,9 +1354,12 @@ def _update_worker_ips(new_workers: List[str]) -> None:
         merged = existing + [w for w in new_workers if w not in existing]
 
         # 更新配置对象
-        if not hasattr(config, 'kubernetes') or config.kubernetes is None:
+        if not hasattr(config, "kubernetes") or config.kubernetes is None:
             config.kubernetes = ConfigDict({})
-        if not hasattr(config.kubernetes, 'worker') or config.kubernetes.worker is None:
+        if (
+            not hasattr(config.kubernetes, "worker")
+            or config.kubernetes.worker is None
+        ):
             config.kubernetes.worker = ConfigDict({})
 
         config.kubernetes.worker.ips = merged
@@ -1277,24 +1370,27 @@ def _update_worker_ips(new_workers: List[str]) -> None:
             raise K8sDeploymentError("无法确定实际配置文件位置")
         config.save_to_file(config_path)
 
-        click.echo(click.style(
-            f"  配置已更新: worker.ips = {merged}", fg="green"))
+        click.echo(
+            click.style(f"  配置已更新: worker.ips = {merged}", fg="green")
+        )
     except Exception as e:
-        raise K8sDeploymentError("节点操作已完成，但配置持久化失败；请修复后重试扩容") from e
+        raise K8sDeploymentError(
+            "节点操作已完成，但配置持久化失败；请修复后重试扩容"
+        ) from e
 
 
 @cli.command(name="init-harbor")
 @click.option(
-    '--timeout',
+    "--timeout",
     default=600,
     type=int,
-    help="等待 Harbor 就绪的最大时间（秒），默认 600"
+    help="等待 Harbor 就绪的最大时间（秒），默认 600",
 )
 @click.option(
-    '--interval',
+    "--interval",
     default=10,
     type=int,
-    help="轮询 Harbor 就绪的间隔（秒），默认 10"
+    help="轮询 Harbor 就绪的间隔（秒），默认 10",
 )
 def init_harbor(timeout: int, interval: int) -> None:
     """
@@ -1334,7 +1430,8 @@ def init_harbor(timeout: int, interval: int) -> None:
     if not client.wait_for_ready(timeout=timeout, interval=interval):
         click.echo(
             click.style(
-                "Harbor 服务未就绪，请稍后重试，或执行 kubectl get pods -n harbor-system 检查状态",
+                "Harbor 服务未就绪，请稍后重试，或执行 kubectl get pods -n"
+                " harbor-system 检查状态",
                 fg="red",
             ),
             err=True,
@@ -1360,7 +1457,9 @@ def init_harbor(timeout: int, interval: int) -> None:
             )
 
     if success_count == len(projects):
-        click.echo(click.style("Harbor 项目初始化完成！", fg="green", bold=True))
+        click.echo(
+            click.style("Harbor 项目初始化完成！", fg="green", bold=True)
+        )
         exit(0)
     else:
         click.echo(
@@ -1375,15 +1474,13 @@ def init_harbor(timeout: int, interval: int) -> None:
 
 @cli.command(name="push-images")
 @click.option(
-    '--dry-run',
-    is_flag=True,
-    help="仅展示将要推送的镜像，不实际推送"
+    "--dry-run", is_flag=True, help="仅展示将要推送的镜像，不实际推送"
 )
 @click.option(
-    '--image-timeout',
+    "--image-timeout",
     default=600,
     type=int,
-    help="单个镜像推送超时（秒），默认 600"
+    help="单个镜像推送超时（秒），默认 600",
 )
 def push_images(dry_run: bool, image_timeout: int) -> None:
     """推送集群所有节点的镜像到 Harbor 镜像仓库
@@ -1405,15 +1502,20 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
     registry_pass = Application.REGISTRY.PASSWORD
 
     # 解析所有节点（@local 表示本机 Master）
-    hosts = ["@local", *Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS,
-             *Application.K8S_CONFIG.WORKER_IPS]
+    hosts = [
+        "@local",
+        *Application.K8S_CONFIG.ADDITIONAL_MASTER_IPS,
+        *Application.K8S_CONFIG.WORKER_IPS,
+    ]
 
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(click.style("推送集群节点镜像到 Harbor", fg="blue", bold=True))
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(f"  Harbor 地址:  https://{domain}")
     click.echo(
-        f"  集群节点:     {', '.join(h.replace('@local', '本机') for h in hosts)}")
+        "  集群节点:    "
+        f" {', '.join(h.replace('@local', '本机') for h in hosts)}"
+    )
     click.echo(f"  dry-run:      {'是' if dry_run else '否'}")
     click.echo("")
 
@@ -1428,32 +1530,39 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
         try:
             # 本机
             local_res = execute_command(list_cmd, timeout=120)
-            local_images = [
-                line.strip() for line in local_res.get_output_lines()
-                if line.strip()
-            ] if not local_res.is_failure() else []
+            local_images = (
+                [
+                    line.strip()
+                    for line in local_res.get_output_lines()
+                    if line.strip()
+                ]
+                if not local_res.is_failure()
+                else []
+            )
             node_images["@local"] = local_images
 
             # 远程节点并行收集
             remote_hosts = [h for h in hosts if h != "@local"]
             if remote_hosts:
                 results = await ssh_client.execute_multiple_commands(
-                    [(h, list_cmd) for h in remote_hosts],
-                    connect_timeout=30
+                    [(h, list_cmd) for h in remote_hosts], connect_timeout=30
                 )
                 for item in results:
                     host = item.get("host", "")
                     stdout = str(item.get("stdout", "") or "")
                     if item.get("exit_status") == 0 and stdout:
                         node_images[host] = [
-                            line.strip() for line in stdout.splitlines()
+                            line.strip()
+                            for line in stdout.splitlines()
                             if line.strip()
                         ]
                     else:
                         node_images[host] = []
-                        click.echo(click.style(
-                            f"  ⚠ {host}: 镜像列表获取失败",
-                            fg="yellow"))
+                        click.echo(
+                            click.style(
+                                f"  ⚠ {host}: 镜像列表获取失败", fg="yellow"
+                            )
+                        )
         finally:
             await ssh_client.close_all_connections()
         return node_images
@@ -1478,8 +1587,9 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
 
     all_images = sorted(image_hosts.keys())
 
-    click.echo(click.style(
-        f"\n去重后待推送镜像: {len(all_images)} 个", fg="cyan"))
+    click.echo(
+        click.style(f"\n去重后待推送镜像: {len(all_images)} 个", fg="cyan")
+    )
 
     if not all_images:
         click.echo(click.style("没有需要推送的镜像", fg="green"))
@@ -1494,9 +1604,13 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
     harbor_client = HarborClient()
     click.echo("等待 Harbor 服务就绪...")
     if not harbor_client.wait_for_ready(timeout=300, interval=10):
-        click.echo(click.style(
-            "Harbor 未就绪，请先执行 kubectl get pods -n harbor-system 检查",
-            fg="red"), err=True)
+        click.echo(
+            click.style(
+                "Harbor 未就绪，请先执行 kubectl get pods -n harbor-system 检查",
+                fg="red",
+            ),
+            err=True,
+        )
         exit(1)
     click.echo(click.style("Harbor 已就绪", fg="green"))
 
@@ -1519,14 +1633,20 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
             for idx, ref in enumerate(all_images, 1):
                 # 优先从本机推送（更快），本机没有则从首个拥有该镜像的远程节点推送
                 candidate_hosts = image_hosts[ref]
-                push_host = "@local" if "@local" in candidate_hosts else candidate_hosts[0]
+                push_host = (
+                    "@local"
+                    if "@local" in candidate_hosts
+                    else candidate_hosts[0]
+                )
                 label = "本机" if push_host == "@local" else push_host
                 click.echo(
-                    f"  [{idx}/{len(all_images)}] {ref}  (from {label})")
+                    f"  [{idx}/{len(all_images)}] {ref}  (from {label})"
+                )
 
                 push_cmd = (
-                    f"ctr -n k8s.io i push --hosts-dir /etc/containerd/certs.d/ "
-                    f"-u {registry_user}:{registry_pass} {ref}"
+                    "ctr -n k8s.io i push --hosts-dir"
+                    " /etc/containerd/certs.d/ -u"
+                    f" {registry_user}:{registry_pass} {ref}"
                 )
 
                 if push_host == "@local":
@@ -1535,14 +1655,17 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
                     err_msg = res.get_error_lines()
                 else:
                     result = await ssh_client.execute_command(
-                        push_host, push_cmd, connect_timeout=30)
+                        push_host, push_cmd, connect_timeout=30
+                    )
                     failed = result.get("exit_status") != 0
-                    err_msg = str(result.get("stderr", "")
-                                  or result.get("error", ""))
+                    err_msg = str(
+                        result.get("stderr", "") or result.get("error", "")
+                    )
 
                 if failed:
-                    click.echo(click.style(
-                        f"    ❌ 推送失败: {err_msg}", fg="red"))
+                    click.echo(
+                        click.style(f"    ❌ 推送失败: {err_msg}", fg="red")
+                    )
                     fail_count += 1
                     failed_images.append(ref)
                 else:
@@ -1561,7 +1684,9 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
     click.echo(f"  成功: {ok_count}")
     click.echo(f"  失败: {fail_count}")
     if needed_registries:
-        click.echo(f"  涉及 Harbor 项目: {', '.join(sorted(needed_registries))}")
+        click.echo(
+            f"  涉及 Harbor 项目: {', '.join(sorted(needed_registries))}"
+        )
     if failed_images:
         click.echo(click.style("\n失败镜像:", fg="red"))
         for ref in failed_images:
@@ -1571,6 +1696,7 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
 
 
 # ======================== Bitnami 同步辅助函数 ========================
+
 
 def _bitnami_extract_images(chart_yaml_path: Path) -> List[str]:
     """从 Chart.yaml 的 annotations.images 提取完整镜像清单
@@ -1590,7 +1716,11 @@ def _bitnami_extract_images(chart_yaml_path: Path) -> List[str]:
     if not images_block:
         return []
     image_items = yaml.safe_load(images_block) or []
-    return [item["image"] for item in image_items if isinstance(item, dict) and "image" in item]
+    return [
+        item["image"]
+        for item in image_items
+        if isinstance(item, dict) and "image" in item
+    ]
 
 
 def _split_image_ref(ref: str) -> Tuple[str, str]:
@@ -1599,8 +1729,10 @@ def _split_image_ref(ref: str) -> Tuple[str, str]:
     判断首段是否为 registry 地址（含 . 或 :），否则视为 docker.io。
 
     Examples:
-        docker.io/bitnami/redis:8.2.1 -> ("docker.io", "bitnami/redis:8.2.1")
-        quay.io/jetstack/cert-manager:v1.0 -> ("quay.io", "jetstack/cert-manager:v1.0")
+        docker.io/bitnami/redis:8.2.1
+            -> ("docker.io", "bitnami/redis:8.2.1")
+        quay.io/jetstack/cert-manager:v1.0
+            -> ("quay.io", "jetstack/cert-manager:v1.0")
         nginx:1.25 -> ("docker.io", "library/nginx:1.25")
     """
     parts = ref.split("/", 1)
@@ -1646,6 +1778,7 @@ def _render_template(template: str, parts: Dict[str, str]) -> str:
 
 # ======================== sync-bitnami 命令组 ========================
 
+
 @cli.group(name="sync-bitnami")
 def sync_bitnami() -> None:
     """同步 bitnami charts 到 Harbor（离线三步：export + pull-images + import）
@@ -1662,11 +1795,14 @@ def sync_bitnami() -> None:
       $ python k8s.py sync-bitnami export redis
 
       # 2. 互联网机器：经镜像源下载镜像（支持模板 + 逐个覆盖）
-      $ python k8s.py sync-bitnami pull-images /tmp/bitnami-bundles/redis-images.txt \\
-          --template 'swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/{name}:{tag}'
+      $ python k8s.py sync-bitnami pull-images \\
+          /tmp/bitnami-bundles/redis-images.txt \\
+          --template \\
+          'swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/{name}:{tag}'
 
       # 3. 内网机器：导入到 Harbor
-      $ python k8s.py sync-bitnami import /tmp/bitnami-bundles/redis-21.0.1.tgz \\
+      $ python k8s.py sync-bitnami import \\
+          /tmp/bitnami-bundles/redis-21.0.1.tgz \\
           --images-tar /tmp/bitnami-bundles/redis-images.images.tar
     """
     pass
@@ -1674,30 +1810,25 @@ def sync_bitnami() -> None:
 
 # -------------------- export 子命令（互联网环境） --------------------
 
+
 @sync_bitnami.command(name="export")
-@click.argument('charts', nargs=-1)
+@click.argument("charts", nargs=-1)
 @click.option(
-    '--charts-dir',
-    default='/opt/charts/bitnami',
+    "--charts-dir",
+    default="/opt/charts/bitnami",
     show_default=True,
-    help="bitnami charts 根目录"
+    help="bitnami charts 根目录",
 )
 @click.option(
-    '-o', '--output-dir',
-    default='/tmp/bitnami-bundles',
+    "-o",
+    "--output-dir",
+    default="/tmp/bitnami-bundles",
     show_default=True,
-    help="离线产物输出目录"
+    help="离线产物输出目录",
 )
-@click.option(
-    '--dry-run',
-    is_flag=True,
-    help="仅展示将执行的操作，不实际执行"
-)
+@click.option("--dry-run", is_flag=True, help="仅展示将执行的操作，不实际执行")
 def sync_export(
-    charts: tuple,
-    charts_dir: str,
-    output_dir: str,
-    dry_run: bool
+    charts: tuple, charts_dir: str, output_dir: str, dry_run: bool
 ) -> None:
     """【阶段一·互联网环境】打包 bitnami chart + 依赖 + 镜像清单
 
@@ -1713,32 +1844,42 @@ def sync_export(
 
     示例：
       $ python k8s.py sync-bitnami export redis
-      $ python k8s.py sync-bitnami export redis postgresql -o /data/bundles
+      $ python k8s.py sync-bitnami export redis postgresql -o \\
+          /data/bundles
     """
     import tempfile
 
     charts_root = Path(charts_dir)
     if not charts_root.exists():
-        click.echo(click.style(
-            f"charts 目录不存在: {charts_dir}", fg="red"), err=True)
+        click.echo(
+            click.style(f"charts 目录不存在: {charts_dir}", fg="red"), err=True
+        )
         exit(1)
 
     # 确定待导出的 chart 列表
     if charts:
         chart_names = list(charts)
     else:
-        chart_names = sorted([
-            d.name for d in charts_root.iterdir()
-            if d.is_dir() and (d / "Chart.yaml").exists()
-        ])
+        chart_names = sorted(
+            [
+                d.name
+                for d in charts_root.iterdir()
+                if d.is_dir() and (d / "Chart.yaml").exists()
+            ]
+        )
 
     if not chart_names:
         click.echo(click.style("未找到可导出的 chart", fg="red"), err=True)
         exit(1)
 
     click.echo(click.style("=" * 70, fg="blue"))
-    click.echo(click.style(
-        "[阶段一] 打包 bitnami chart + 依赖 + 镜像清单", fg="blue", bold=True))
+    click.echo(
+        click.style(
+            "[阶段一] 打包 bitnami chart + 依赖 + 镜像清单",
+            fg="blue",
+            bold=True,
+        )
+    )
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(f"  charts 目录:     {charts_dir}")
     click.echo(f"  输出目录:        {output_dir}")
@@ -1756,8 +1897,11 @@ def sync_export(
         chart_yaml = chart_dir / "Chart.yaml"
 
         if not chart_yaml.exists():
-            click.echo(click.style(
-                f"[{chart_name}] Chart.yaml 不存在，跳过", fg="yellow"))
+            click.echo(
+                click.style(
+                    f"[{chart_name}] Chart.yaml 不存在，跳过", fg="yellow"
+                )
+            )
             fail_count += 1
             continue
 
@@ -1768,15 +1912,22 @@ def sync_export(
             chart_version = chart_meta.get("version", "")
             dependencies = chart_meta.get("dependencies", []) or []
         except Exception as e:
-            click.echo(click.style(
-                f"[{chart_name}] 读取 Chart.yaml 失败: {e}", fg="red"), err=True)
+            click.echo(
+                click.style(
+                    f"[{chart_name}] 读取 Chart.yaml 失败: {e}", fg="red"
+                ),
+                err=True,
+            )
             fail_count += 1
             continue
 
         dep_names = [d.get("name") for d in dependencies if d.get("name")]
 
-        click.echo(click.style(
-            f"\n[{chart_name}] (v{chart_version})", fg="cyan", bold=True))
+        click.echo(
+            click.style(
+                f"\n[{chart_name}] (v{chart_version})", fg="cyan", bold=True
+            )
+        )
         if dep_names:
             click.echo(f"  依赖项: {', '.join(dep_names)}")
 
@@ -1791,14 +1942,21 @@ def sync_export(
                 if dep_src.exists():
                     click.echo(f"  [dry-run] 拷贝依赖 {dn} -> charts/{dn}")
                     click.echo(
-                        f"  [dry-run] helm package {dn} -> {output_dir}/")
+                        f"  [dry-run] helm package {dn} -> {output_dir}/"
+                    )
                 else:
-                    click.echo(click.style(
-                        f"  [dry-run] 依赖 {dn} 在 {charts_dir} 未找到", fg="yellow"))
+                    click.echo(
+                        click.style(
+                            f"  [dry-run] 依赖 {dn} 在 {charts_dir} 未找到",
+                            fg="yellow",
+                        )
+                    )
             click.echo(
-                f"  [dry-run] helm package {chart_name} -> {output_dir}/")
+                f"  [dry-run] helm package {chart_name} -> {output_dir}/"
+            )
             click.echo(
-                f"  [dry-run] 镜像清单 -> {output_dir}/{chart_name}-images.txt")
+                f"  [dry-run] 镜像清单 -> {output_dir}/{chart_name}-images.txt"
+            )
             ok_count += 1
             continue
 
@@ -1818,8 +1976,12 @@ def sync_export(
             for dep_name in dep_names:
                 dep_src = charts_root / dep_name
                 if not dep_src.exists():
-                    click.echo(click.style(
-                        f"  依赖 {dep_name} 在 {charts_dir} 未找到，跳过", fg="yellow"))
+                    click.echo(
+                        click.style(
+                            f"  依赖 {dep_name} 在 {charts_dir} 未找到，跳过",
+                            fg="yellow",
+                        )
+                    )
                     continue
 
                 dep_dest = charts_subdir / dep_name
@@ -1828,13 +1990,16 @@ def sync_export(
 
                 # ---- 3. 依赖项也 helm package ----
                 dep_pkg_result = execute_command(
-                    f"helm package {dep_dest} -d {output_dir}",
-                    timeout=60
+                    f"helm package {dep_dest} -d {output_dir}", timeout=60
                 )
                 if dep_pkg_result.is_failure():
-                    click.echo(click.style(
-                        f"  helm package 依赖 {dep_name} 失败: "
-                        f"{dep_pkg_result.get_error_lines()}", fg="yellow"))
+                    click.echo(
+                        click.style(
+                            f"  helm package 依赖 {dep_name} 失败: "
+                            f"{dep_pkg_result.get_error_lines()}",
+                            fg="yellow",
+                        )
+                    )
                 else:
                     # 获取依赖版本用于日志
                     try:
@@ -1844,18 +2009,26 @@ def sync_export(
                         dep_ver = dep_meta.get("version", "?")
                     except Exception:
                         dep_ver = "?"
-                    click.echo(click.style(
-                        f"  ✅ 依赖打包: {dep_name}-{dep_ver}.tgz", fg="green"))
+                    click.echo(
+                        click.style(
+                            f"  ✅ 依赖打包: {dep_name}-{dep_ver}.tgz",
+                            fg="green",
+                        )
+                    )
                     dep_packed.append(dep_name)
 
             # ---- 4. helm package 目标 chart（依赖已就位） ----
             pkg_result = execute_command(
-                f"helm package {work_chart_dir} -d {output_dir}",
-                timeout=60
+                f"helm package {work_chart_dir} -d {output_dir}", timeout=60
             )
             if pkg_result.is_failure():
-                click.echo(click.style(
-                    f"  helm package 失败: {pkg_result.get_error_lines()}", fg="red"), err=True)
+                click.echo(
+                    click.style(
+                        f"  helm package 失败: {pkg_result.get_error_lines()}",
+                        fg="red",
+                    ),
+                    err=True,
+                )
                 fail_count += 1
                 continue
 
@@ -1867,8 +2040,12 @@ def sync_export(
             with open(images_file, "w", encoding="utf-8") as f:
                 for img in images:
                     f.write(img + "\n")
-            click.echo(click.style(
-                f"  ✅ 镜像清单: {images_file.name} ({len(images)} 个)", fg="green"))
+            click.echo(
+                click.style(
+                    f"  ✅ 镜像清单: {images_file.name} ({len(images)} 个)",
+                    fg="green",
+                )
+            )
 
             ok_count += 1
 
@@ -1882,45 +2059,56 @@ def sync_export(
     click.echo(f"  成功 {ok_count}，失败 {fail_count}")
     if ok_count > 0:
         click.echo(click.style(f"  产物目录: {output_dir}", fg="cyan"))
-        click.echo(click.style(
-            "  下一步: 将 .tgz 和 *-images.txt 拷贝到内网，执行 sync-bitnami import",
-            fg="cyan"))
+        click.echo(
+            click.style(
+                "  下一步: 将 .tgz 和 *-images.txt 拷贝到内网，执行"
+                " sync-bitnami import",
+                fg="cyan",
+            )
+        )
 
     exit(0 if fail_count == 0 else 1)
 
 
 # -------------------- pull-images 子命令（互联网环境） --------------------
 
+
 @sync_bitnami.command(name="pull-images")
-@click.argument('images_file', type=click.Path(exists=True))
+@click.argument("images_file", type=click.Path(exists=True))
 @click.option(
-    '-o', '--output',
-    help='导出的镜像 tar 路径（默认: 与输入同目录的 {stem}.images.tar）'
+    "-o",
+    "--output",
+    help="导出的镜像 tar 路径（默认: 与输入同目录的 {stem}.images.tar）",
 )
 @click.option(
-    '-t', '--template',
-    help='镜像源地址模板，支持 {original}/{registry}/{repo}/{name}/{tag}。'
-         '例: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/{name}:{tag}'
+    "-t",
+    "--template",
+    help=(
+        "镜像源地址模板，支持 {original}/{registry}/{repo}/{name}/{tag}。"
+        "例: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/"
+        "docker.io/bitnamilegacy/{name}:{tag}"
+    ),
 )
 @click.option(
-    '-n', '--namespace',
-    default='k8s.io',
+    "-n",
+    "--namespace",
+    default="k8s.io",
     show_default=True,
-    help='containerd namespace'
+    help="containerd namespace",
 )
 @click.option(
-    '--timeout',
+    "--timeout",
     type=int,
     default=600,
     show_default=True,
-    help='单个镜像 pull 超时时间（秒）'
+    help="单个镜像 pull 超时时间（秒）",
 )
 def sync_pull_images(
     images_file: str,
     output: Optional[str],
     template: Optional[str],
     namespace: str,
-    timeout: int
+    timeout: int,
 ) -> None:
     """【互联网环境】经国内镜像源批量下载镜像并导出 tar
 
@@ -1930,8 +2118,10 @@ def sync_pull_images(
     \b
     支持模板占位符（--template），适配路径中段变化，例如 bitnami->bitnamilegacy：
       原引用: docker.io/bitnami/kubectl:1.33.4-debian-12-r0
-      模板:   swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/{name}:{tag}
-      渲染后: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/kubectl:1.33.4-debian-12-r0
+      模板:
+      swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/{name}:{tag}
+      渲染后:
+      swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/bitnamilegacy/kubectl:1.33.4-debian-12-r0
 
     \b
     每个镜像交互操作：
@@ -1943,7 +2133,8 @@ def sync_pull_images(
     img_path = Path(images_file)
     with open(img_path, "r", encoding="utf-8") as f:
         images = [
-            line.strip() for line in f
+            line.strip()
+            for line in f
             if line.strip() and not line.strip().startswith("#")
         ]
 
@@ -1955,7 +2146,11 @@ def sync_pull_images(
         output = str(img_path.parent / f"{img_path.stem}.images.tar")
 
     click.echo(click.style("=" * 70, fg="blue"))
-    click.echo(click.style("[镜像下载] 经国内镜像源批量下载并导出 tar", fg="blue", bold=True))
+    click.echo(
+        click.style(
+            "[镜像下载] 经国内镜像源批量下载并导出 tar", fg="blue", bold=True
+        )
+    )
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(f"  镜像清单:    {images_file} ({len(images)} 个)")
     click.echo(f"  模板:        {template or '无（需逐个输入）'}")
@@ -1971,20 +2166,29 @@ def sync_pull_images(
         parts = _parse_image_ref(original_ref)
         default_ref = _render_template(template, parts) if template else ""
 
-        click.echo(click.style(
-            f"\n[{idx}/{total}] {original_ref}", fg="cyan", bold=True))
+        click.echo(
+            click.style(
+                f"\n[{idx}/{total}] {original_ref}", fg="cyan", bold=True
+            )
+        )
 
         # 交互获取镜像源地址（用 click.prompt 确保 stdout 刷新，避免卡死）
         mirror_ref = ""
         skip = False
         try:
             raw = click.prompt(
-                f"  镜像源地址 [回车={'默认' if default_ref else '跳过'} s=跳过 r=原引用]",
+                f"  镜像源地址 [回车={'默认' if default_ref else '跳过'}"
+                " s=跳过 r=原引用]",
                 default=default_ref,
                 show_default=False,
-                prompt_suffix=": "
+                prompt_suffix=": ",
             ).strip()
-        except (click.exceptions.Abort, KeyboardInterrupt, EOFError, SystemExit):
+        except (
+            click.exceptions.Abort,
+            KeyboardInterrupt,
+            EOFError,
+            SystemExit,
+        ):
             click.echo("")
             click.echo(click.style("已中止", fg="yellow"))
             skip = True
@@ -2008,8 +2212,7 @@ def sync_pull_images(
 
         # ---- 1. 从镜像源 pull ----
         pull_res = execute_command(
-            f"ctr -n {namespace} i pull {mirror_ref}",
-            timeout=timeout
+            f"ctr -n {namespace} i pull {mirror_ref}", timeout=timeout
         )
         if pull_res.is_failure():
             click.echo(click.style(f"  ❌ pull 失败: {mirror_ref}", fg="red"))
@@ -2027,15 +2230,18 @@ def sync_pull_images(
             if tag_res.is_failure():
                 # 目标引用可能已存在（重跑），删除后重试
                 execute_command(
-                    f"ctr -n {namespace} i rm {original_ref}",
-                    timeout=30
+                    f"ctr -n {namespace} i rm {original_ref}", timeout=30
                 )
                 tag_res = execute_command(
                     f"ctr -n {namespace} i tag {mirror_ref} {original_ref}"
                 )
             if tag_res.is_failure():
-                click.echo(click.style(
-                    f"  ❌ tag 失败: {mirror_ref} -> {original_ref}", fg="red"))
+                click.echo(
+                    click.style(
+                        f"  ❌ tag 失败: {mirror_ref} -> {original_ref}",
+                        fg="red",
+                    )
+                )
                 continue
             click.echo(click.style(f"  ✅ tag -> {original_ref}", fg="green"))
 
@@ -2046,19 +2252,22 @@ def sync_pull_images(
         click.echo(click.style("\n无成功镜像，跳过导出", fg="yellow"))
         exit(1)
 
-    click.echo(click.style(
-        f"\n导出 {len(success_refs)} 个镜像到 tar...", fg="blue"))
-    export_cmd = (
-        f"ctr -n {namespace} i export {output} "
-        + " ".join(success_refs)
+    click.echo(
+        click.style(f"\n导出 {len(success_refs)} 个镜像到 tar...", fg="blue")
+    )
+    export_cmd = f"ctr -n {namespace} i export {output} " + " ".join(
+        success_refs
     )
     export_res = execute_command(
-        export_cmd,
-        timeout=max(300, timeout * len(success_refs))
+        export_cmd, timeout=max(300, timeout * len(success_refs))
     )
     if export_res.is_failure():
-        click.echo(click.style(
-            f"❌ 导出失败: {export_res.get_error_lines()}", fg="red"), err=True)
+        click.echo(
+            click.style(
+                f"❌ 导出失败: {export_res.get_error_lines()}", fg="red"
+            ),
+            err=True,
+        )
         exit(1)
 
     size_mb = Path(output).stat().st_size / (1024 * 1024)
@@ -2067,9 +2276,12 @@ def sync_pull_images(
     click.echo(click.style("=" * 70, fg="green"))
     click.echo(f"  成功: {len(success_refs)}/{total}")
     click.echo(f"  产物: {output} ({size_mb:.1f} MB)")
-    click.echo(click.style(
-        "  下一步: 将 .tgz 与此 tar 拷贝到内网，执行 sync-bitnami import",
-        fg="cyan"))
+    click.echo(
+        click.style(
+            "  下一步: 将 .tgz 与此 tar 拷贝到内网，执行 sync-bitnami import",
+            fg="cyan",
+        )
+    )
 
 
 # -------------------- import 子命令（纯内网环境） --------------------
@@ -2081,7 +2293,8 @@ def _load_image_refs(images_file: Optional[str]) -> List[str]:
         return []
     with open(images_file, "r", encoding="utf-8") as f:
         return [
-            line.strip() for line in f
+            line.strip()
+            for line in f
             if line.strip() and not line.strip().startswith("#")
         ]
 
@@ -2115,24 +2328,29 @@ def _configure_registry_proxies(
     if harbor_client:
         for registry in sorted_registries:
             if not harbor_client.create_project(registry, public=True):
-                click.echo(click.style(
-                    f"  Harbor 项目 '{registry}' 创建失败",
-                    fg="red"), err=True)
+                click.echo(
+                    click.style(
+                        f"  Harbor 项目 '{registry}' 创建失败", fg="red"
+                    ),
+                    err=True,
+                )
                 return False
 
     proxy_cmd = (
-        f"{shlex.quote(sys.executable)} -m cli.app "
-        "image ctr add-proxy -y "
+        f"{shlex.quote(sys.executable)} -m cli.app image ctr add-proxy -y "
         + " ".join(shlex.quote(registry) for registry in sorted_registries)
     )
-    click.echo(
-        f"  配置 containerd 透明代理: {', '.join(sorted_registries)}")
+    click.echo(f"  配置 containerd 透明代理: {', '.join(sorted_registries)}")
     proxy_res = execute_command(proxy_cmd, timeout=600)
     if proxy_res.is_failure():
-        click.echo(click.style(
-            f"  ❌ containerd 透明代理配置失败: "
-            f"{proxy_res.get_error_lines()}",
-            fg="red"), err=True)
+        click.echo(
+            click.style(
+                "  ❌ containerd 透明代理配置失败: "
+                f"{proxy_res.get_error_lines()}",
+                fg="red",
+            ),
+            err=True,
+        )
         return False
 
     click.echo(click.style("  ✅ containerd 透明代理配置完成", fg="green"))
@@ -2165,8 +2383,10 @@ def _do_sync_import(
     resolved_images: List[str] = []
     if images_tar:
         if not Path(images_tar).exists():
-            click.echo(click.style(
-                f"  镜像 tar 不存在: {images_tar}", fg="red"), err=True)
+            click.echo(
+                click.style(f"  镜像 tar 不存在: {images_tar}", fg="red"),
+                err=True,
+            )
             return chart_ok, chart_fail, 0, 0, needed_projects
         images_file = _resolve_images_file(images_tar, images_file)
         resolved_images = _load_image_refs(images_file)
@@ -2178,8 +2398,10 @@ def _do_sync_import(
     for tgz_str in tgzs:
         tgz_path = Path(tgz_str)
         if not tgz_path.exists():
-            click.echo(click.style(
-                f"  chart 包不存在: {tgz_path}", fg="red"), err=True)
+            click.echo(
+                click.style(f"  chart 包不存在: {tgz_path}", fg="red"),
+                err=True,
+            )
             chart_fail += 1
             continue
 
@@ -2191,18 +2413,26 @@ def _do_sync_import(
             continue
 
         push_res = execute_command(
-            " ".join([
-                "helm", "push", str(tgz_path),
-                f"oci://{domain}/charts",
-                f"--username {registry_user}",
-                f"--password {registry_pass}",
-            ]),
-            timeout=120
+            " ".join(
+                [
+                    "helm",
+                    "push",
+                    str(tgz_path),
+                    f"oci://{domain}/charts",
+                    f"--username {registry_user}",
+                    f"--password {registry_pass}",
+                ]
+            ),
+            timeout=120,
         )
         if push_res.is_failure():
-            click.echo(click.style(
-                f"    ❌ helm push 失败: {push_res.get_error_lines()}",
-                fg="red"), err=True)
+            click.echo(
+                click.style(
+                    f"    ❌ helm push 失败: {push_res.get_error_lines()}",
+                    fg="red",
+                ),
+                err=True,
+            )
             chart_fail += 1
         else:
             click.echo(click.style("    ✅ chart 推送成功", fg="green"))
@@ -2210,14 +2440,16 @@ def _do_sync_import(
 
     # ---- 2. 导入镜像 tar + push ----
     if images_tar:
-        click.echo(click.style(
-            f"\n  镜像导入: {Path(images_tar).name}", fg="cyan"))
+        click.echo(
+            click.style(f"\n  镜像导入: {Path(images_tar).name}", fg="cyan")
+        )
 
         if dry_run:
             if needed_projects and configure_proxy:
                 click.echo(
                     "    [dry-run] kubengine image ctr add-proxy -y "
-                    + " ".join(sorted(needed_projects)))
+                    + " ".join(sorted(needed_projects))
+                )
             for img_ref in resolved_images:
                 registry, repo_tag = _split_image_ref(img_ref)
                 target = f"{domain}/{registry}/{repo_tag}"
@@ -2225,85 +2457,107 @@ def _do_sync_import(
             image_ok = len(resolved_images)
         else:
             if configure_proxy and not _configure_registry_proxies(
-                    needed_projects, harbor_client):
+                needed_projects, harbor_client
+            ):
                 image_fail = len(resolved_images)
                 return (
-                    chart_ok, chart_fail, image_ok, image_fail,
-                    needed_projects
+                    chart_ok,
+                    chart_fail,
+                    image_ok,
+                    image_fail,
+                    needed_projects,
                 )
 
             import_res = execute_command(
-                f"ctr -n apps i import {shlex.quote(images_tar)}",
-                timeout=600
+                f"ctr -n apps i import {shlex.quote(images_tar)}", timeout=600
             )
             if import_res.is_failure():
-                click.echo(click.style(
-                    f"    ❌ images.tar 导入失败: {import_res.get_error_lines()}",
-                    fg="red"), err=True)
+                click.echo(
+                    click.style(
+                        "    ❌ images.tar 导入失败:"
+                        f" {import_res.get_error_lines()}",
+                        fg="red",
+                    ),
+                    err=True,
+                )
                 image_fail = len(resolved_images)
             elif not resolved_images:
-                click.echo(click.style(
-                    "    镜像已导入本地，但无清单文件无法 push", fg="yellow"))
+                click.echo(
+                    click.style(
+                        "    镜像已导入本地，但无清单文件无法 push",
+                        fg="yellow",
+                    )
+                )
             else:
                 click.echo(click.style("    ✅ 镜像导入本地", fg="green"))
                 for img_ref in resolved_images:
                     push_res = execute_command(
-                        "ctr -n apps i push "
-                        "--hosts-dir /etc/containerd/certs.d/ "
-                        f"-u {shlex.quote(registry_user + ':' + registry_pass)} "
-                        f"{shlex.quote(img_ref)}",
-                        timeout=image_timeout
+                        "ctr -n apps i push --hosts-dir"
+                        " /etc/containerd/certs.d/ -u"
+                        f" {shlex.quote(registry_user + ':' + registry_pass)}"
+                        f" {shlex.quote(img_ref)}",
+                        timeout=image_timeout,
                     )
                     if push_res.is_failure():
-                        click.echo(click.style(
-                            f"    ❌ push 失败: {img_ref}", fg="red"))
+                        click.echo(
+                            click.style(
+                                f"    ❌ push 失败: {img_ref}", fg="red"
+                            )
+                        )
                         image_fail += 1
                     else:
-                        click.echo(click.style(f"    ✅ {img_ref}", fg="green"))
+                        click.echo(
+                            click.style(f"    ✅ {img_ref}", fg="green")
+                        )
                         image_ok += 1
 
                 if image_ok == len(resolved_images) and image_fail == 0:
                     prune_res = execute_command(
-                        "ctr -n apps i prune --all", timeout=600)
+                        "ctr -n apps i prune --all", timeout=600
+                    )
                     if prune_res.is_failure():
-                        click.echo(click.style(
-                            "    ⚠ apps namespace 镜像清理失败: "
-                            f"{prune_res.get_error_lines()}", fg="yellow"))
+                        click.echo(
+                            click.style(
+                                "    ⚠ apps namespace 镜像清理失败: "
+                                f"{prune_res.get_error_lines()}",
+                                fg="yellow",
+                            )
+                        )
                     else:
-                        click.echo(click.style(
-                            "    ✅ apps namespace 镜像清理完成", fg="green"))
+                        click.echo(
+                            click.style(
+                                "    ✅ apps namespace 镜像清理完成",
+                                fg="green",
+                            )
+                        )
 
     return chart_ok, chart_fail, image_ok, image_fail, needed_projects
 
 
 @sync_bitnami.command(name="import")
-@click.argument('tgzs', nargs=-1, required=True)
+@click.argument("tgzs", nargs=-1, required=True)
 @click.option(
-    '--images-tar',
-    help='镜像 tar 路径（pull-images 产物），不提供则只导入 chart'
+    "--images-tar",
+    help="镜像 tar 路径（pull-images 产物），不提供则只导入 chart",
 )
 @click.option(
-    '--images-file',
-    help='镜像清单文件（export 产物），用于 tag+push；未指定时自动探测'
+    "--images-file",
+    help="镜像清单文件（export 产物），用于 tag+push；未指定时自动探测",
 )
+@click.option("--dry-run", is_flag=True, help="仅展示将执行的操作，不实际执行")
 @click.option(
-    '--dry-run',
-    is_flag=True,
-    help="仅展示将执行的操作，不实际执行"
-)
-@click.option(
-    '--image-timeout',
+    "--image-timeout",
     type=int,
     default=600,
     show_default=True,
-    help="单个镜像 push 超时时间（秒）"
+    help="单个镜像 push 超时时间（秒）",
 )
 def sync_import(
     tgzs: tuple,
     images_tar: Optional[str],
     images_file: Optional[str],
     dry_run: bool,
-    image_timeout: int
+    image_timeout: int,
 ) -> None:
     """【阶段二·纯内网环境】将 chart 包与镜像 tar 导入 Harbor
 
@@ -2313,19 +2567,24 @@ def sync_import(
     \b
     示例：
       # 仅导入 chart（含依赖）
-      $ python k8s.py sync-bitnami import common-2.31.10.tgz redis-21.0.1.tgz
+      $ python k8s.py sync-bitnami import common-2.31.10.tgz \\
+          redis-21.0.1.tgz
 
       # chart + 镜像一起导入
       $ python k8s.py sync-bitnami import redis-21.0.1.tgz \\
-          --images-tar redis-images.images.tar --images-file redis-images.txt
+          --images-tar redis-images.images.tar \\
+          --images-file redis-images.txt
     """
     domain = Application.DOMAIN
-    registry_user = Application.REGISTRY.USERNAME
-    registry_pass = Application.REGISTRY.PASSWORD
 
     click.echo(click.style("=" * 70, fg="blue"))
-    click.echo(click.style(
-        "[阶段二] 导入 bitnami 离线包到 Harbor（内网环境）", fg="blue", bold=True))
+    click.echo(
+        click.style(
+            "[阶段二] 导入 bitnami 离线包到 Harbor（内网环境）",
+            fg="blue",
+            bold=True,
+        )
+    )
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(f"  Harbor 地址:     https://{domain}")
     click.echo(f"  chart 包:        {len(tgzs)} 个")
@@ -2339,15 +2598,27 @@ def sync_import(
         harbor_client = HarborClient()
         click.echo("等待 Harbor 服务就绪...")
         if not harbor_client.wait_for_ready(timeout=300, interval=10):
-            click.echo(click.style(
-                "Harbor 未就绪，请先执行 kubectl get pods -n harbor-system 检查",
-                fg="red"), err=True)
+            click.echo(
+                click.style(
+                    "Harbor 未就绪，请先执行 kubectl get pods -n"
+                    " harbor-system 检查",
+                    fg="red",
+                ),
+                err=True,
+            )
             exit(1)
         click.echo(click.style("Harbor 已就绪", fg="green"))
     click.echo("")
 
-    chart_ok, chart_fail, image_ok, image_fail, needed_projects = _do_sync_import(
-        tgzs, images_tar, images_file, dry_run, image_timeout, harbor_client
+    chart_ok, chart_fail, image_ok, image_fail, needed_projects = (
+        _do_sync_import(
+            tgzs,
+            images_tar,
+            images_file,
+            dry_run,
+            image_timeout,
+            harbor_client,
+        )
     )
 
     # ---- 汇总 ----
@@ -2360,31 +2631,22 @@ def sync_import(
     if needed_projects:
         click.echo(f"  涉及 Harbor 项目: {', '.join(sorted(needed_projects))}")
         if not dry_run and image_fail == 0:
-            click.echo(click.style(
-                "  containerd 透明代理已配置", fg="green"))
+            click.echo(click.style("  containerd 透明代理已配置", fg="green"))
 
     exit(0 if (chart_fail == 0 and image_fail == 0) else 1)
 
 
 @sync_bitnami.command(name="import-dir")
-@click.argument('dir_path')
+@click.argument("dir_path")
+@click.option("--dry-run", is_flag=True, help="仅展示将执行的操作，不实际执行")
 @click.option(
-    '--dry-run',
-    is_flag=True,
-    help="仅展示将执行的操作，不实际执行"
-)
-@click.option(
-    '--image-timeout',
+    "--image-timeout",
     type=int,
     default=600,
     show_default=True,
-    help="单个镜像 push 超时时间（秒）"
+    help="单个镜像 push 超时时间（秒）",
 )
-def sync_import_dir(
-    dir_path: str,
-    dry_run: bool,
-    image_timeout: int
-) -> None:
+def sync_import_dir(dir_path: str, dry_run: bool, image_timeout: int) -> None:
     """【阶段二·批量】扫描目录下所有 bitnami 离线包，批量导入 Harbor
 
     自动扫描 DIR_PATH 下的 *-bundles 子目录（若 DIR_PATH 本身即为单个
@@ -2394,13 +2656,16 @@ def sync_import_dir(
     \b
     示例：
       # 批量导入 bitnami-bundles 下所有应用
-      $ kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles
+      $ kubengine-k8s sync-bitnami import-dir \\
+          /root/offline-deploy/bitnami-bundles
 
       # 仅导入单个应用
-      $ kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles/redis-bitnami-bundles
+      $ kubengine-k8s sync-bitnami import-dir \\
+          /root/offline-deploy/bitnami-bundles/redis-bitnami-bundles
 
       # 预览
-      $ kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles --dry-run
+      $ kubengine-k8s sync-bitnami import-dir \\
+          /root/offline-deploy/bitnami-bundles --dry-run
     """
     base_dir = Path(dir_path)
     if not base_dir.is_dir():
@@ -2414,14 +2679,17 @@ def sync_import_dir(
     if _is_bundle_dir(base_dir):
         bundle_dirs = [base_dir]
     else:
-        bundle_dirs = sorted([
-            d for d in base_dir.iterdir()
-            if d.is_dir() and _is_bundle_dir(d)
-        ])
+        bundle_dirs = sorted(
+            [d for d in base_dir.iterdir() if d.is_dir() and _is_bundle_dir(d)]
+        )
 
     if not bundle_dirs:
-        click.echo(click.style(
-            f"未找到包含 chart 包的 bundle 目录: {dir_path}", fg="red"), err=True)
+        click.echo(
+            click.style(
+                f"未找到包含 chart 包的 bundle 目录: {dir_path}", fg="red"
+            ),
+            err=True,
+        )
         exit(1)
 
     # 收集每个 bundle 的文件
@@ -2446,8 +2714,11 @@ def sync_import_dir(
 
     # ---- 展示扫描结果 ----
     click.echo(click.style("=" * 70, fg="blue"))
-    click.echo(click.style(
-        "[阶段二·批量] 导入 bitnami 离线包到 Harbor", fg="blue", bold=True))
+    click.echo(
+        click.style(
+            "[阶段二·批量] 导入 bitnami 离线包到 Harbor", fg="blue", bold=True
+        )
+    )
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(f"  扫描目录:  {dir_path}")
     click.echo(f"  Bundle 数: {len(bundles)}")
@@ -2458,8 +2729,10 @@ def sync_import_dir(
         tgz_names = [Path(t).name for t in tgzs]
         click.echo(f"  [{idx}/{len(bundles)}] {name}")
         click.echo(f"        charts: {tgz_names}")
-        click.echo(f"        images: {Path(images_tar).name if images_tar else '无'}"
-                   f" ({images_file or '无清单'})")
+        click.echo(
+            f"        images: {Path(images_tar).name if images_tar else '无'}"
+            f" ({images_file or '无清单'})"
+        )
     click.echo("")
 
     # ---- 等待 Harbor 就绪（仅一次）----
@@ -2468,9 +2741,14 @@ def sync_import_dir(
         harbor_client = HarborClient()
         click.echo("等待 Harbor 服务就绪...")
         if not harbor_client.wait_for_ready(timeout=300, interval=10):
-            click.echo(click.style(
-                "Harbor 未就绪，请先执行 kubectl get pods -n harbor-system 检查",
-                fg="red"), err=True)
+            click.echo(
+                click.style(
+                    "Harbor 未就绪，请先执行 kubectl get pods -n"
+                    " harbor-system 检查",
+                    fg="red",
+                ),
+                err=True,
+            )
             exit(1)
         click.echo(click.style("Harbor 已就绪", fg="green"))
         if not _configure_registry_proxies(all_projects, harbor_client):
@@ -2478,23 +2756,27 @@ def sync_import_dir(
     elif all_projects:
         click.echo(
             "[dry-run] kubengine image ctr add-proxy -y "
-            + " ".join(sorted(all_projects)))
+            + " ".join(sorted(all_projects))
+        )
     click.echo("")
 
     # ---- 逐个 bundle 导入 ----
     total_chart_ok, total_chart_fail = 0, 0
     total_image_ok, total_image_fail = 0, 0
     for idx, (name, tgzs, images_tar, images_file) in enumerate(bundles, 1):
-        click.echo(click.style(
-            f"\n{'─' * 70}", fg="blue"))
-        click.echo(click.style(
-            f"[{idx}/{len(bundles)}] {name}", fg="blue", bold=True))
-        click.echo(click.style(
-            f"{'─' * 70}", fg="blue"))
+        click.echo(click.style(f"\n{'─' * 70}", fg="blue"))
+        click.echo(
+            click.style(f"[{idx}/{len(bundles)}] {name}", fg="blue", bold=True)
+        )
+        click.echo(click.style(f"{'─' * 70}", fg="blue"))
 
         chart_ok, chart_fail, image_ok, image_fail, projects = _do_sync_import(
-            tuple(tgzs), images_tar, images_file,
-            dry_run, image_timeout, harbor_client,
+            tuple(tgzs),
+            images_tar,
+            images_file,
+            dry_run,
+            image_timeout,
+            harbor_client,
             configure_proxy=False,
         )
 
@@ -2509,8 +2791,12 @@ def sync_import_dir(
     click.echo(click.style("批量导入完成", fg="blue", bold=True))
     click.echo(click.style("=" * 70, fg="blue"))
     click.echo(f"  Bundle 数:       {len(bundles)}")
-    click.echo(f"  Chart:           成功 {total_chart_ok}，失败 {total_chart_fail}")
-    click.echo(f"  镜像:            成功 {total_image_ok}，失败 {total_image_fail}")
+    click.echo(
+        f"  Chart:           成功 {total_chart_ok}，失败 {total_chart_fail}"
+    )
+    click.echo(
+        f"  镜像:            成功 {total_image_ok}，失败 {total_image_fail}"
+    )
     if all_projects:
         click.echo(f"  涉及 Harbor 项目: {', '.join(sorted(all_projects))}")
     click.echo("")
@@ -2518,5 +2804,5 @@ def sync_import_dir(
     exit(0 if (total_chart_fail == 0 and total_image_fail == 0) else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

@@ -1,7 +1,9 @@
 """安装helm"""
+
 import os
-from pyinfra.operations import server
+
 from pyinfra.context import host
+from pyinfra.operations import server
 
 data = host.data
 deploy_src = data.deploy_src

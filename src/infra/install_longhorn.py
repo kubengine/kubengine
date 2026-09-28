@@ -1,11 +1,13 @@
 """安装longhorn"""
-from io import StringIO
+
 import os
-from pyinfra.operations import server, python
-from pyinfra.context import host
-from core.misc.ca import k8s_create_tls
+from io import StringIO
 
 from _offline_transfer import YUM_OP_SECONDS, import_seconds, op_timeout, pull
+from pyinfra.context import host
+from pyinfra.operations import python, server
+
+from core.misc.ca import k8s_create_tls
 
 data = host.data
 
@@ -15,7 +17,8 @@ deploy_src = data.deploy_src
 domain = data.domain
 loadbalancer_ip = data.loadbalancer_ip
 images_path = os.path.join(
-    deploy_src, "images", "longhorn.images.v1.9.1.tar.gz")
+    deploy_src, "images", "longhorn.images.v1.9.1.tar.gz"
+)
 helm_charts_dir = os.path.join(deploy_src, "charts", "longhorn")
 
 # 安装 open-iscsi
@@ -27,7 +30,7 @@ server.yum.repo(
     name="Add kubengine yum repository",
     src=repo_name,
     baseurl=baseurl,
-    gpgcheck=False
+    gpgcheck=False,
 )
 server.yum.packages(
     name="Install open-iscsi",
@@ -38,38 +41,42 @@ server.yum.packages(
     _retry_delay=10,
 )
 server.yum.repo(
-    name="Remove kubengine yum repository",
-    src=repo_name,
-    present=False
+    name="Remove kubengine yum repository", src=repo_name, present=False
 )
-server.shell(name="Configure iscsi initiator name",
-             commands='echo "InitiatorName=$(/sbin/iscsi-iname)" > /etc/iscsi/initiatorname.iscsi')
+server.shell(
+    name="Configure iscsi initiator name",
+    commands=(
+        'echo "InitiatorName=$(/sbin/iscsi-iname)" > /etc/iscsi/'
+        "initiatorname.iscsi"
+    ),
+)
 server.systemd.service(
-    name="Start and enable iscsid service",
-    service="iscsid",
-    enabled=True
+    name="Start and enable iscsid service", service="iscsid", enabled=True
 )
 
 # 加载 uio_pci_generic 模块
 server.modprobe(name="Load uio_pci_generic module", module="uio_pci_generic")
 server.files.put(
-    name="Create /etc/modules-load.d/uio_pci_generic.conf file for uio_pci_generic",
+    name=(
+        "Create /etc/modules-load.d/uio_pci_generic.conf file for "
+        "uio_pci_generic"
+    ),
     src=StringIO("uio_pci_generic"),
-    dest="/etc/modules-load.d/uio_pci_generic.conf"
+    dest="/etc/modules-load.d/uio_pci_generic.conf",
 )
 # 加载 vfio_pci 模块
 server.modprobe(name="Load vfio_pci module", module="vfio_pci")
 server.files.put(
     name="Create /etc/modules-load.d/vfio_pci.conf file for vfio_pci module",
     src=StringIO("vfio_pci"),
-    dest="/etc/modules-load.d/vfio_pci.conf"
+    dest="/etc/modules-load.d/vfio_pci.conf",
 )
 # 加载 iscsi_tcp 模块
 server.modprobe(name="Load iscsi_tcp module", module="iscsi_tcp")
 server.files.put(
     name="Create /etc/modules-load.d/iscsi_tcp.conf file for iscsi_tcp module",
     src=StringIO("iscsi_tcp"),
-    dest="/etc/modules-load.d/iscsi_tcp.conf"
+    dest="/etc/modules-load.d/iscsi_tcp.conf",
 )
 
 # 加载离线镜像
@@ -77,8 +84,11 @@ images_budget = import_seconds(images_path)
 
 if "master" not in host.groups:
     command, timeout = pull(
-        f"sftp://{master_ip}{images_path}", images_path,
-        "ctr -n k8s.io i import -", extra_seconds=images_budget)
+        f"sftp://{master_ip}{images_path}",
+        images_path,
+        "ctr -n k8s.io i import -",
+        extra_seconds=images_budget,
+    )
 else:
     command = f"ctr -n k8s.io i import {images_path}"
     timeout = op_timeout(images_path, extra_seconds=images_budget)
@@ -91,23 +101,39 @@ server.shell(
 )
 
 if "master" in host.groups:
-    python.call(name="Create TLS cert for longhorn-system namespace", function=k8s_create_tls,
-                namespace="longhorn-system", tls_name="longhorn-tls")
+    python.call(
+        name="Create TLS cert for longhorn-system namespace",
+        function=k8s_create_tls,
+        namespace="longhorn-system",
+        tls_name="longhorn-tls",
+    )
     values_template_file = os.path.join(helm_charts_dir, "values.yaml.j2")
     values_file = os.path.join(helm_charts_dir, "values.yaml")
-    server.files.template(name="Gen longhorn helm chart values file",
-                          src=values_template_file,
-                          dest=values_file,
-                          domain=domain)
+    server.files.template(
+        name="Gen longhorn helm chart values file",
+        src=values_template_file,
+        dest=values_file,
+        domain=domain,
+    )
     server.shell(
         name="Install longhorn",
         commands=" ".join(
-            ["KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
-             "longhorn",
-             helm_charts_dir,
-             "-n", "longhorn-system",
-             "--create-namespace",
-             "-f", f"{helm_charts_dir}/values.yaml"])
+            [
+                "KUBECONFIG=/etc/kubernetes/admin.conf helm",
+                "upgrade",
+                "--install",
+                "--wait",
+                "--timeout",
+                "5m",
+                "longhorn",
+                helm_charts_dir,
+                "-n",
+                "longhorn-system",
+                "--create-namespace",
+                "-f",
+                f"{helm_charts_dir}/values.yaml",
+            ]
+        ),
     )
 
 server.files.line(

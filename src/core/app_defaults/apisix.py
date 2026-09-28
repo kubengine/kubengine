@@ -18,7 +18,10 @@ def get_apisix_app(create_time: datetime) -> AppSchema:
     return AppSchema(
         name="apisix",
         category=["消息与集成"],
-        description="高性能实时 API 网关，提供负载均衡、动态上游、灰度发布、熔断、认证与可观测性等能力",
+        description=(
+            "高性能实时 API 网关，提供负载均衡、动态上游、灰度发布、熔断、"
+            "认证与可观测性等能力"
+        ),
         helm_chart="apisix",
         create_time=create_time,
         app_field_configs=[
@@ -111,7 +114,12 @@ def get_apisix_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=8,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 8 - 50", "min": 8, "max": 50},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 8 - 50",
+                        "min": 8,
+                        "max": 50,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -125,7 +133,10 @@ def get_apisix_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="service",
                 label="数据面Service",
-                extra="数据面对外暴露的 Service 类型，网关通常需通过 LoadBalancer 对外提供访问",
+                extra=(
+                    "数据面对外暴露的 Service 类型，网关通常需通过"
+                    " LoadBalancer 对外提供访问"
+                ),
                 order=4,
                 form_item_props={"required": True},
                 type="radio",
@@ -133,8 +144,14 @@ def get_apisix_app(create_time: datetime) -> AppSchema:
                 rules=[],
                 field_props={
                     "options": [
-                        {"label": "ClusterIP（集群内访问）", "value": "ClusterIP"},
-                        {"label": "LoadBalancer（公网负载均衡）", "value": "LoadBalancer"},
+                        {
+                            "label": "ClusterIP（集群内访问）",
+                            "value": "ClusterIP",
+                        },
+                        {
+                            "label": "LoadBalancer（公网负载均衡）",
+                            "value": "LoadBalancer",
+                        },
                     ],
                 },
                 helm_props={
@@ -223,7 +240,9 @@ def get_apisix_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -240,7 +259,10 @@ def get_apisix_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="ingressControllerEnabled",
                 label="Ingress控制器",
-                extra="开启 APISIX Ingress Controller，可通过 K8s Ingress/APISIX CRD 资源声明式管理路由",
+                extra=(
+                    "开启 APISIX Ingress Controller，可通过 K8s Ingress/APISIX"
+                    " CRD 资源声明式管理路由"
+                ),
                 order=4,
                 form_item_props={"required": True},
                 type="radio",

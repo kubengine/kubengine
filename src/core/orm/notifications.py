@@ -1,6 +1,9 @@
-"""A durable invalidation revision shared by web and background processes."""
+"""
+A durable invalidation revision shared by web and background processes.
+"""
 
 from sqlalchemy import Column, Integer, text
+
 from core.orm.engine import Base, get_db
 
 
@@ -12,8 +15,12 @@ class ClusterRevision(Base):
 
 def publish_cluster_change():
     with get_db() as db:
-        db.execute(text("INSERT INTO cluster_revision (id, revision) VALUES (1, 1) "
-                        "ON CONFLICT(id) DO UPDATE SET revision = revision + 1"))
+        db.execute(
+            text(
+                "INSERT INTO cluster_revision (id, revision) VALUES (1, 1) "
+                "ON CONFLICT(id) DO UPDATE SET revision = revision + 1"
+            )
+        )
         db.commit()
 
 

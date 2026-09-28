@@ -2,35 +2,39 @@ import enum
 from typing import Any, List, Optional
 
 from pydantic import BaseModel
-from core.orm.engine import Base
 from sqlalchemy import JSON, Column, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
+from core.orm.engine import Base
+
 
 class ConfigTypeEnum(enum.Enum):
-    '''
-    description: 枚举类型：区分配置项归属（cluster / env）
-    '''
+    """description: 枚举类型：区分配置项归属（cluster / env）"""
+
     cluster = "cluster"  # 集群相关配置
-    env = "env"          # 环境相关配置（如密码）
+    env = "env"  # 环境相关配置（如密码）
 
 
 class AppFieldConfig(Base):
     """应用字段配置"""
+
     __tablename__ = "app_field_config"
     field_id = Column(Integer, primary_key=True, index=True)
     app_id = Column(
         Integer,
         ForeignKey("app.app_id", ondelete="CASCADE"),  # 数据库级联删除
-        nullable=False
+        nullable=False,
     )
     app = relationship(
         "App",
-        back_populates="app_field_configs"  # 指向 App 中的 app_field_configs 字段
+        back_populates="app_field_configs",  # 指向 App 中的 app_field_configs 字段
     )
     # 配置项归属类型（cluster/env）
-    config_type = Column(Enum(ConfigTypeEnum), nullable=False,
-                         comment="配置项类型：cluster-集群配置，env-环境配置")
+    config_type = Column(
+        Enum(ConfigTypeEnum),
+        nullable=False,
+        comment="配置项类型：cluster-集群配置，env-环境配置",
+    )
     # 配置项名称（如architecture、cpu、password）
     name = Column(String(50), nullable=False, comment="配置项名称")
     # 配置项显示标签（如部署模式、cpu、密码）

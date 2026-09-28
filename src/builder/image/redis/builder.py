@@ -15,18 +15,24 @@ Redis镜像构建器
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Callable, Any, Union
+from typing import Any, Callable, List, Optional, Union
 from urllib.parse import urlparse
 
-from builder.image.base_builder import BaseBuilder, BuildContext, BuilderOptions
+from builder.image.base_builder import (
+    BaseBuilder,
+    BuildContext,
+    BuilderOptions,
+)
 from core.command import execute_command
-from core.logger import get_logger
 from core.config import ConfigDict
+from core.logger import get_logger
+
 logger = get_logger(__name__)
 
 
 class RedisBuilderError(Exception):
     """Redis构建器专用异常"""
+
     pass
 
 
@@ -55,7 +61,7 @@ class Builder(BaseBuilder):
             "redis_sentinel",
             "configuration_optimization",
             "build_cache",
-            "compile_container_reuse"
+            "compile_container_reuse",
         ]
 
     def __init__(
@@ -64,7 +70,7 @@ class Builder(BaseBuilder):
         config_file: Optional[Union[str, Path]] = None,
         options: Optional[BuilderOptions] = None,
         compile_container_id: Optional[str] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """初始化Redis基础构建器
 
@@ -86,9 +92,7 @@ class Builder(BaseBuilder):
             logger.debug(f"使用预编译容器: {compile_container_id}")
 
     def _compile_redis(
-        self,
-        config: ConfigDict,
-        hook_func: Callable[[str], None]
+        self, config: ConfigDict, hook_func: Callable[[str], None]
     ) -> str:
         """编译Redis
 
@@ -134,9 +138,7 @@ class Builder(BaseBuilder):
             raise RedisBuilderError(f"Redis编译失败: {e}")
 
     def _download_and_compile_redis(
-        self,
-        compile_container_id: str,
-        config: ConfigDict
+        self, compile_container_id: str, config: ConfigDict
     ) -> None:
         """下载并编译Redis
 
@@ -178,13 +180,12 @@ class Builder(BaseBuilder):
         cp sentinel.conf /opt/kubengine/redis/etc/sentinel.conf
         """
         execute_command(
-            f"buildah run {compile_container_id} -- bash -c '{compile_commands}'"
+            f"buildah run {compile_container_id} -- bash -c"
+            f" '{compile_commands}'"
         ).raise_if_failed("Redis编译失败")
 
     def _post_compile_steps(
-        self,
-        container_id: str,
-        postunpack_script: str
+        self, container_id: str, postunpack_script: str
     ) -> None:
         """执行构建后的通用步骤
 
@@ -199,14 +200,16 @@ class Builder(BaseBuilder):
             # 设置Redis制品仓库权限
             logger.debug("设置Redis制品仓库权限")
             execute_command(
-                f"buildah run {container_id} -- bash -c 'chmod g+rwX /opt/kubengine'"
+                f"buildah run {container_id} -- bash -c 'chmod g+rwX"
+                " /opt/kubengine'"
             ).raise_if_failed("设置Redis制品仓库权限失败")
 
             # 执行postunpack脚本
             if postunpack_script:
                 logger.debug("执行postunpack脚本")
                 execute_command(
-                    f"buildah run {container_id} -- bash -c '{postunpack_script}'"
+                    f"buildah run {container_id} -- bash -c"
+                    f" '{postunpack_script}'"
                 ).raise_if_failed("postunpack脚本执行失败")
 
             logger.info("后处理步骤完成")
@@ -258,7 +261,7 @@ class RedisBuilder(Builder):
             "redis_server_only",
             "redis_optimization",
             "sentinel_integration",
-            "dual_image_build"
+            "dual_image_build",
         ]
         return parent_features + redis_features
 
@@ -267,7 +270,7 @@ class RedisBuilder(Builder):
         name: str,
         config_file: Optional[Union[str, Path]] = None,
         options: Optional[BuilderOptions] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """初始化Redis构建器
 
@@ -311,14 +314,15 @@ class RedisBuilder(Builder):
 
                 # 复制二进制文件
                 execute_command(
-                    f"buildah copy --from={compile_container_id} {container_id} "
-                    "/usr/local/bin /opt/kubengine/redis/bin"
+                    f"buildah copy --from={compile_container_id}"
+                    f" {container_id} /usr/local/bin /opt/kubengine/redis/bin"
                 ).raise_if_failed("复制Redis二进制文件失败")
 
                 # 复制配置文件
                 execute_command(
-                    f"buildah copy --from={compile_container_id} {container_id} "
-                    "/opt/kubengine/redis/etc/redis.conf /opt/kubengine/redis/etc/redis-default.conf"
+                    f"buildah copy --from={compile_container_id}"
+                    f" {container_id} /opt/kubengine/redis/etc/redis.conf"
+                    " /opt/kubengine/redis/etc/redis-default.conf"
                 ).raise_if_failed("复制Redis配置文件失败")
 
                 context.log_operation("Redis制品复制完成")
@@ -331,8 +335,10 @@ class RedisBuilder(Builder):
                 self._build_sentinel_image(version, redis_config)
 
             # 执行后处理步骤
-            postunpack_script = config.get(
-                "postunpack_script") or "/opt/kubengine/scripts/redis/postunpack.sh"
+            postunpack_script = (
+                config.get("postunpack_script")
+                or "/opt/kubengine/scripts/redis/postunpack.sh"
+            )
             self._post_compile_steps(container_id, postunpack_script)
 
             context.log_operation("Redis自定义构建步骤完成")
@@ -355,7 +361,7 @@ class RedisBuilder(Builder):
             sentinel_builder = SentinelBuilder(
                 name="redis-sentinel",
                 compile_container_id=self.compile_container_id,
-                **self.kwargs
+                **self.kwargs,
             )
 
             # 构建Sentinel镜像
@@ -398,7 +404,7 @@ class SentinelBuilder(Builder):
             "redis_sentinel_only",
             "sentinel_optimization",
             "compile_reuse",
-            "high_availability"
+            "high_availability",
         ]
         return parent_features + sentinel_features
 
@@ -407,7 +413,7 @@ class SentinelBuilder(Builder):
         name: str,
         config_file: Optional[Union[str, Path]] = None,
         options: Optional[BuilderOptions] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """初始化Redis Sentinel构建器
 
@@ -451,14 +457,16 @@ class SentinelBuilder(Builder):
 
                 # 复制二进制文件
                 execute_command(
-                    f"buildah copy --from={compile_container_id} {container_id} "
-                    "/usr/local/bin /opt/kubengine/redis-sentinel/bin"
+                    f"buildah copy --from={compile_container_id}"
+                    f" {container_id} /usr/local/bin"
+                    " /opt/kubengine/redis-sentinel/bin"
                 ).raise_if_failed("复制Sentinel二进制文件失败")
 
                 # 复制Sentinel配置文件
                 execute_command(
-                    f"buildah copy --from={compile_container_id} {container_id} "
-                    "/opt/kubengine/redis/etc/sentinel.conf /opt/kubengine/redis-sentinel/etc/sentinel.conf"
+                    f"buildah copy --from={compile_container_id}"
+                    f" {container_id} /opt/kubengine/redis/etc/sentinel.conf"
+                    " /opt/kubengine/redis-sentinel/etc/sentinel.conf"
                 ).raise_if_failed("复制Sentinel配置文件失败")
 
                 context.log_operation("Sentinel制品复制完成")
@@ -467,8 +475,10 @@ class SentinelBuilder(Builder):
             self._compile_redis(sentinel_config, _copy_sentinel_artifacts)
 
             # 执行后处理步骤
-            postunpack_script = config.get(
-                "postunpack_script") or "/opt/kubengine/scripts/redis-sentinel/postunpack.sh"
+            postunpack_script = (
+                config.get("postunpack_script")
+                or "/opt/kubengine/scripts/redis-sentinel/postunpack.sh"
+            )
             self._post_compile_steps(container_id, postunpack_script)
 
             context.log_operation("Redis Sentinel自定义构建步骤完成")

@@ -159,12 +159,20 @@ kubengine/
 ```bash
 python -m pip install -e ".[dev]"
 pytest
-black src tests
-isort src tests
+black --check src tests scripts setup.py setup_install.py
+isort --check-only src tests scripts setup.py setup_install.py
+flake8
 mypy src
 ```
 
-仓库当前可能不包含 `tests/` 目录；新增功能时建议同时补充对应测试。项目要求 Python 3.11+，包版本以 `pyproject.toml` 为准。
+Python 代码遵循 PEP 8：代码行最长 79 字符，注释与文档字符串最长 72 字符，使用
+Black 格式化、isort 整理导入，并通过 Flake8 检查。需要自动整理时，去掉上述
+Black 和 isort 命令的检查选项。配置分别位于 `pyproject.toml` 和 `setup.cfg`；
+Flake8 仅全局忽略与 Black 的 PEP 8 排版冲突的 `E203`、`W503`。
+必须保留的导入初始化顺序等例外应在对应代码处说明原因。
+
+现有回归测试位于 `tests/`，新增功能时应补充对应测试。项目要求 Python 3.11+，
+包版本以 `pyproject.toml` 为准。
 
 ## 许可证
 

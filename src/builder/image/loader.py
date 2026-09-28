@@ -7,23 +7,33 @@
 from __future__ import annotations
 
 import inspect
-from typing import Dict, Mapping, Type, List, Optional, Any, TypeVar, Union, Callable
-from pathlib import Path
 from dataclasses import dataclass
+from importlib.metadata import EntryPoint, entry_points
+from pathlib import Path
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Type,
+    TypeVar,
+    Union,
+)
 
-from importlib.metadata import entry_points, EntryPoint
-
-from core.logger import get_logger
 from builder.image.base_builder import BaseBuilder, BuilderOptions
+from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-T = TypeVar('T', bound=Mapping[str, Any])
+T = TypeVar("T", bound=Mapping[str, Any])
 
 
 @dataclass
 class BuilderMetadata:
     """构建器元数据"""
+
     name: str
     class_type: Type[BaseBuilder]
     entry_point: EntryPoint
@@ -39,11 +49,13 @@ class BuilderMetadata:
 
 class BuilderValidationError(Exception):
     """构建器验证异常"""
+
     pass
 
 
 class BuilderLoadError(Exception):
     """构建器加载异常"""
+
     pass
 
 
@@ -57,7 +69,7 @@ class LazyBuilderLoader:
         self,
         entry_point_group: str = "image_builders",
         auto_load: bool = True,
-        strict_validation: bool = True
+        strict_validation: bool = True,
     ):
         """初始化加载器
 
@@ -137,7 +149,7 @@ class LazyBuilderLoader:
         name: str,
         config_file: Optional[Union[str, Path]] = None,
         options: Optional[BuilderOptions] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> BaseBuilder:
         """创建构建器实例
 
@@ -160,9 +172,13 @@ class LazyBuilderLoader:
 
         except Exception as e:
             logger.error(f"创建构建器实例失败: {e}")
-            raise BuilderLoadError(f"创建构建器 '{builder_name}' 实例失败: {e}")
+            raise BuilderLoadError(
+                f"创建构建器 '{builder_name}' 实例失败: {e}"
+            )
 
-    def get_builder_metadata(self, builder_name: str) -> Optional[BuilderMetadata]:
+    def get_builder_metadata(
+        self, builder_name: str
+    ) -> Optional[BuilderMetadata]:
         """获取构建器元数据
 
         Args:
@@ -194,7 +210,9 @@ class LazyBuilderLoader:
             except Exception as e:
                 raise BuilderValidationError(f"构建器验证失败: {e}")
 
-    def add_validator(self, validator: Callable[[Type[BaseBuilder]], None]) -> None:
+    def add_validator(
+        self, validator: Callable[[Type[BaseBuilder]], None]
+    ) -> None:
         """添加自定义验证器
 
         Args:
@@ -227,7 +245,9 @@ class LazyBuilderLoader:
                 except Exception as e:
                     logger.warning(f"加载构建器 {ep.name} 失败: {e}")
                     if self._strict_validation:
-                        raise BuilderLoadError(f"严格模式下无法加载构建器 {ep.name}: {e}")
+                        raise BuilderLoadError(
+                            f"严格模式下无法加载构建器 {ep.name}: {e}"
+                        )
 
             self._loaded = True
             logger.info(f"构建器加载完成: {loaded_count}/{len(list(eps))}")
@@ -235,7 +255,8 @@ class LazyBuilderLoader:
         except Exception as e:
             logger.error(f"加载构建器组失败: {e}")
             raise BuilderLoadError(
-                f"无法加载构建器组 '{self._entry_point_group}': {e}")
+                f"无法加载构建器组 '{self._entry_point_group}': {e}"
+            )
 
     def _load_builder_metadata(self, builder_name: str) -> BuilderMetadata:
         """加载单个构建器的元数据
@@ -271,7 +292,9 @@ class LazyBuilderLoader:
 
         return metadata
 
-    def _extract_metadata(self, entry_point: EntryPoint, builder_class: Type[BaseBuilder]) -> BuilderMetadata:
+    def _extract_metadata(
+        self, entry_point: EntryPoint, builder_class: Type[BaseBuilder]
+    ) -> BuilderMetadata:
         """从Entry Point和类中提取元数据
 
         Args:
@@ -298,7 +321,7 @@ class LazyBuilderLoader:
             description=description,
             version=version,
             author=author,
-            supported_features=supported_features
+            supported_features=supported_features,
         )
 
     def _validate_builder_inheritance(self, builder_class: Any) -> None:
@@ -313,7 +336,9 @@ class LazyBuilderLoader:
         if not issubclass(builder_class, BaseBuilder):
             raise BuilderValidationError("构建器必须继承自 BaseBuilder")
 
-    def _validate_required_methods(self, builder_class: Type[BaseBuilder]) -> None:
+    def _validate_required_methods(
+        self, builder_class: Type[BaseBuilder]
+    ) -> None:
         """验证必需的抽象方法是否实现
 
         Args:
@@ -322,17 +347,23 @@ class LazyBuilderLoader:
         Raises:
             BuilderValidationError: 必需方法验证失败
         """
-        required_methods = ['_custom_step']
+        required_methods = ["_custom_step"]
 
         for method_name in required_methods:
             if not hasattr(builder_class, method_name):
-                raise BuilderValidationError(f"构建器缺少必需方法: {method_name}")
+                raise BuilderValidationError(
+                    f"构建器缺少必需方法: {method_name}"
+                )
 
             method = getattr(builder_class, method_name)
             if not callable(method):
-                raise BuilderValidationError(f"构建器方法 {method_name} 不可调用")
+                raise BuilderValidationError(
+                    f"构建器方法 {method_name} 不可调用"
+                )
 
-    def _validate_class_signature(self, builder_class: Type[BaseBuilder]) -> None:
+    def _validate_class_signature(
+        self, builder_class: Type[BaseBuilder]
+    ) -> None:
         """验证类签名
 
         Args:
@@ -345,10 +376,12 @@ class LazyBuilderLoader:
             sig = inspect.signature(builder_class.__init__)
 
             # 检查必需参数
-            required_params = ['name']
+            required_params = ["name"]
             for param_name in required_params:
                 if param_name not in sig.parameters:
-                    raise BuilderValidationError(f"构建器缺少必需参数: {param_name}")
+                    raise BuilderValidationError(
+                        f"构建器缺少必需参数: {param_name}"
+                    )
 
         except Exception as e:
             if isinstance(e, BuilderValidationError):
@@ -385,8 +418,7 @@ class LazyBuilderLoader:
             List[Dict[str, Any]]: 构建器信息列表
         """
         return [
-            self.get_builder_info(name)
-            for name in self.get_builder_names()
+            self.get_builder_info(name) for name in self.get_builder_names()
         ]
 
 
@@ -423,7 +455,7 @@ def create_builder(
     name: str,
     config_file: Optional[Union[str, Path]] = None,
     options: Optional[BuilderOptions] = None,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> BaseBuilder:
     """便捷函数：创建构建器实例
 
@@ -436,7 +468,9 @@ def create_builder(
     Returns:
         BaseBuilder: 构建器实例
     """
-    return get_default_loader().create_builder(builder_name, name, config_file, options, **kwargs)
+    return get_default_loader().create_builder(
+        builder_name, name, config_file, options, **kwargs
+    )
 
 
 def list_available_builders() -> List[str]:

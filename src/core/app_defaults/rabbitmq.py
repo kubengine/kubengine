@@ -27,7 +27,10 @@ def get_rabbitmq_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="replicaCount",
                 label="集群节点数",
-                extra="RabbitMQ 集群节点数，1 为单机模式，3 及以上为集群模式（需保证 Erlang Cookie 一致）",
+                extra=(
+                    "RabbitMQ 集群节点数，1 为单机模式，3"
+                    " 及以上为集群模式（需保证 Erlang Cookie 一致）"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="radio",
@@ -105,7 +108,12 @@ def get_rabbitmq_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=8,
                 rules=[
-                    {"type": "number", "message": "仅允许设置8 - 50", "min": 8, "max": 50}
+                    {
+                        "type": "number",
+                        "message": "仅允许设置8 - 50",
+                        "min": 8,
+                        "max": 50,
+                    }
                 ],
                 field_props={},
                 helm_props={
@@ -119,7 +127,10 @@ def get_rabbitmq_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="service",
                 label="Service服务",
-                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                extra=(
+                    "请选择 K8s Service 类型（ClusterIP 集群内访问、"
+                    "LoadBalancer 公网负载均衡）"
+                ),
                 order=4,
                 form_item_props={"required": True},
                 type="radio",
@@ -209,8 +220,14 @@ def get_rabbitmq_app(create_time: datetime) -> AppSchema:
                 field_props={
                     "allowClear": False,
                     "options": [
-                        {"label": "relative（相对比例，默认 0.4）", "value": "relative"},
-                        {"label": "absolute（绝对值，单位 MiB）", "value": "absolute"},
+                        {
+                            "label": "relative（相对比例，默认 0.4）",
+                            "value": "relative",
+                        },
+                        {
+                            "label": "absolute（绝对值，单位 MiB）",
+                            "value": "absolute",
+                        },
                     ],
                 },
                 helm_props={
@@ -224,7 +241,10 @@ def get_rabbitmq_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="memoryWatermarkValue",
                 label="内存高水位线值",
-                extra="当类型为 relative 时取值 0~1（如 0.4 表示 40%），类型为 absolute 时单位为 MiB",
+                extra=(
+                    "当类型为 relative 时取值 0~1（如 0.4 表示 40%），类型为"
+                    " absolute 时单位为 MiB"
+                ),
                 order=4,
                 form_item_props={"required": True},
                 type="text",
@@ -242,7 +262,9 @@ def get_rabbitmq_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="extraPlugins",
                 label="额外插件",
-                extra="逗号分隔的插件列表，如 rabbitmq_mqtt,rabbitmq_management",
+                extra=(
+                    "逗号分隔的插件列表，如 rabbitmq_mqtt,rabbitmq_management"
+                ),
                 order=5,
                 form_item_props={"required": False},
                 type="text",
@@ -270,7 +292,10 @@ def get_rabbitmq_app(create_time: datetime) -> AppSchema:
                     "allowClear": False,
                     "options": [
                         {"label": "ignore（忽略，不推荐）", "value": "ignore"},
-                        {"label": "pause_minority（少数派暂停，推荐）", "value": "pause_minority"},
+                        {
+                            "label": "pause_minority（少数派暂停，推荐）",
+                            "value": "pause_minority",
+                        },
                         {"label": "autoheal（自动恢复）", "value": "autoheal"},
                     ],
                 },

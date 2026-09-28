@@ -1,14 +1,16 @@
 """Properties file parsing and manipulation utilities.
 
-This module provides utilities for parsing properties files and converting
-dot-separated key-value strings into nested dictionaries with intelligent
-type conversion.
+This module provides utilities for parsing properties files and
+converting dot-separated key-value strings into nested dictionaries with
+intelligent type conversion.
 """
 
 from typing import Any, Dict, List, Union
 
 
-def convert_property_value(raw_value: str) -> Union[int, float, bool, None, str]:
+def convert_property_value(
+    raw_value: str,
+) -> Union[int, float, bool, None, str]:
     """Intelligently convert property value to appropriate Python type.
 
     Conversion rules:
@@ -55,7 +57,8 @@ def parse_properties_to_dict(properties_data: str) -> Dict[str, Any]:
     """Convert properties format string to nested dictionary.
 
     Args:
-        properties_data: Properties format string (one key-value pair per line).
+        properties_data: Properties format string (one key-value pair
+        per line).
 
     Returns:
         Nested dictionary structure.
@@ -80,13 +83,13 @@ def parse_properties_to_dict(properties_data: str) -> Dict[str, Any]:
 
         # Process key: split into hierarchical levels
         key_levels: List[str] = [
-            level.strip() for level in key_part.split(".")
-            if level.strip()
+            level.strip() for level in key_part.split(".") if level.strip()
         ]
 
         if not key_levels:
             print(
-                f"Warning: Line {line_number} has empty key, skipping → {line}")
+                f"Warning: Line {line_number} has empty key, skipping → {line}"
+            )
             continue
 
         # Convert value type
@@ -96,7 +99,9 @@ def parse_properties_to_dict(properties_data: str) -> Dict[str, Any]:
         current_dict = result
         for level in key_levels[:-1]:  # All levels except the last
             # Create empty dict if level doesn't exist or isn't a dict
-            if level not in current_dict or not isinstance(current_dict[level], dict):
+            if level not in current_dict or not isinstance(
+                current_dict[level], dict
+            ):
                 current_dict[level] = {}
             # Move to next level
             current_dict = current_dict[level]
@@ -112,16 +117,18 @@ def split_key_levels(keys_str: str) -> List[str]:
     """Split a dot-separated key string into hierarchical levels.
 
     Segments wrapped in ``[[ ]]`` are treated as atomic: dots inside are
-    preserved as part of the key name. This allows representing flat keys
-    that themselves contain dots (e.g. Kafka's ``log.retention.hours``)
-    under a nested container.
+    preserved as part of the key name. This allows representing flat
+    keys that themselves contain dots (e.g. Kafka's
+    ``log.retention.hours``) under a nested container.
 
     Examples:
         ``a.b.c`` -> ``["a", "b", "c"]``
-        ``overrideConfiguration.[[log.retention.hours]]`` -> ``["overrideConfiguration", "log.retention.hours"]``
+        ``overrideConfiguration.[[log.retention.hours]]`` ->
+        ``["overrideConfiguration", "log.retention.hours"]``
 
     Args:
-        keys_str: Dot-separated key string, optionally containing ``[[ ]]`` escapes.
+        keys_str: Dot-separated key string, optionally containing ``[[
+        ]]`` escapes.
 
     Returns:
         List of non-empty key levels.
@@ -132,11 +139,11 @@ def split_key_levels(keys_str: str) -> List[str]:
     in_escape = False
     while i < len(keys_str):
         # Detect escape boundaries
-        if not in_escape and keys_str[i:i + 2] == "[[":
+        if not in_escape and keys_str[i : i + 2] == "[[":
             in_escape = True
             i += 2
             continue
-        if in_escape and keys_str[i:i + 2] == "]]":
+        if in_escape and keys_str[i : i + 2] == "]]":
             in_escape = False
             i += 2
             continue
@@ -158,31 +165,33 @@ def split_key_levels(keys_str: str) -> List[str]:
 def convert_dot_notation_to_dict(dot_string: str) -> Dict[str, Any]:
     """Convert dot-separated key-value string to nested dictionary.
 
-    Key segments may be wrapped in ``[[ ]]`` to keep internal dots as part of
-    the leaf name (see :func:`split_key_levels`).
+    Key segments may be wrapped in ``[[ ]]`` to keep internal dots as
+    part of the leaf name (see :func:`split_key_levels`).
 
     Args:
-        dot_string: Dot-separated key-value string in format "key.key.key=value".
+        dot_string: Dot-separated key-value string in format
+        "key.key.key=value".
 
     Returns:
         Nested Python dictionary object.
 
     Raises:
-        ValueError: When input string format is invalid (no = or multiple =).
+        ValueError: When input string format is invalid (no = or
+        multiple =).
     """
     # Split key-value pair (ensure exactly one =)
     parts = dot_string.split("=")
     if len(parts) != 2:
         raise ValueError(
-            f"Invalid input format, expected 'key=value': {dot_string}")
+            f"Invalid input format, expected 'key=value': {dot_string}"
+        )
 
     keys_str, value = parts[0].strip(), parts[1].strip()
 
     # Split hierarchical keys, honoring [[ ]] escape segments
     key_levels = split_key_levels(keys_str)
     if not key_levels:
-        raise ValueError(
-            f"Invalid key format, empty key: {dot_string}")
+        raise ValueError(f"Invalid key format, empty key: {dot_string}")
 
     # Build nested dictionary (from innermost to outermost)
     result: Dict[str, Any] = {}
@@ -212,7 +221,8 @@ if __name__ == "__main__":
     # Print result (nested dictionary)
     print("Converted Python object:")
     print(python_object)
-    # Output: {'sentinel': {'resources': {'requests': {'memory': '8Gi'}}}}
+    # Output: {'sentinel': {'resources': {'requests': {'memory':
+    # '8Gi'}}}}
 
     # Access specific value
     memory_value = python_object["sentinel"]["resources"]["requests"]["memory"]

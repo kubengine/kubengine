@@ -72,12 +72,14 @@ include-package-data = true
 "web" = ["static/**/*"]
 
 [tool.black]
-line-length = 88
+line-length = 79
 target-version = ['py311']
 
 [tool.isort]
 profile = "black"
-line_length = 88
+line_length = 79
+src_paths = ["src", "tests"]
+skip_gitignore = true
 
 [tool.mypy]
 python_version = "3.11"

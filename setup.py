@@ -10,12 +10,14 @@ KubeEngine setup.py
 
 from pathlib import Path
 from typing import Any
+
 from setuptools import Extension, find_packages, setup
 from setuptools.command.build_ext import build_ext
 from setuptools.command.develop import develop
 
 try:
     from Cython.Build import cythonize  # type: ignore
+
     CYTHON_INSTALLED = True
 except ImportError:
     CYTHON_INSTALLED = False  # type: ignore
@@ -25,7 +27,9 @@ _METADATA: dict[str, Any] = {
     "name": "kubengine",
     "version": "0.1.0",
     "description": "Kubernetes management platform for Kylin OS",
-    "long_description": open("README.md").read() if Path("README.md").exists() else "",
+    "long_description": (
+        open("README.md").read() if Path("README.md").exists() else ""
+    ),
     "long_description_content_type": "text/markdown",
     "author": "duanzt",
     "author_email": "duanziteng@gmail.com",
@@ -108,21 +112,25 @@ def get_extensions() -> list[Extension]:
             for py_file in py_files:
                 # 跳过 __init__.py 和测试文件
                 if (
-                    py_file.name == "__init__.py" or "_test" in py_file.stem or "test_" in py_file.stem
+                    py_file.name == "__init__.py"
+                    or "_test" in py_file.stem
+                    or "test_" in py_file.stem
                 ):
                     continue
 
                 # 创建 Extension
                 module_path = py_file.relative_to("src")
-                module_name = str(module_path.with_suffix("")
-                                  ).replace("/", ".")
+                module_name = str(module_path.with_suffix("")).replace(
+                    "/", "."
+                )
 
                 ext = Extension(
                     module_name,
                     [str(py_file)],
                     include_dirs=["src"],
                     define_macros=[
-                        ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
+                        ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")
+                    ],
                 )
                 extensions.append(ext)
 

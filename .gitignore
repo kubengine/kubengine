@@ -38,7 +38,7 @@ venv.bak/
 .idea_modules/
 
 # VSCode
-.vscode/
+.vscode/*
 !.vscode/settings.json
 
 # Continue.dev

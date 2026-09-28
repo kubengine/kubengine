@@ -1,15 +1,14 @@
-"""Keep tests and their child processes away from an installed cluster's data."""
+"""Isolate tests and child processes from installed cluster data."""
 
 import ast
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 import yaml
-
 
 _test_root = tempfile.TemporaryDirectory(prefix="kubengine-tests-")
 _root = Path(_test_root.name)
@@ -40,14 +39,18 @@ os.environ["KUBEENGINE_CONFIG"] = str(_config_path)
 
 
 # These modules deliberately exercise the standalone gevent CLI runtime.
-# Importing pyinfra_cli patches threading/socket/subprocess globally, which must
-# not affect the asyncio HTTP and native-thread tests in the main pytest process.
+# Importing pyinfra_cli patches threading/socket/subprocess globally,
+# which must
+# not affect the asyncio HTTP and native-thread tests in the main pytest
+# process.
 _GEVENT_MODULES = {"test_executor_wrapper.py", "test_k8s_lifecycle.py"}
 
 
 def pytest_addoption(parser):
     parser.addoption(
-        "--gevent-test-worker", action="store_true", default=False,
+        "--gevent-test-worker",
+        action="store_true",
+        default=False,
         help="Run a selected gevent CLI test in its isolated worker process.",
     )
 
@@ -56,8 +59,14 @@ class _IsolatedGeventTest(pytest.Item):
     def runtest(self):
         result = subprocess.run(
             [
-                sys.executable, "-m", "pytest", "--gevent-test-worker", "-q",
-                "-o", "faulthandler_timeout=15", f"{self.path}::{self.name}",
+                sys.executable,
+                "-m",
+                "pytest",
+                "--gevent-test-worker",
+                "-q",
+                "-o",
+                "faulthandler_timeout=15",
+                f"{self.path}::{self.name}",
             ],
             cwd=self.config.rootpath,
             env=os.environ.copy(),
@@ -78,12 +87,17 @@ class _IsolatedGeventTest(pytest.Item):
 
 class _IsolatedGeventModule(pytest.Module):
     def collect(self):
-        # Discover names without importing the monkey-patching modules. Each
-        # selected test is still run by ordinary pytest, with its real fixtures,
-        # in the worker. Per-test nodes preserve selection and failure reporting.
+        # Discover names without importing the monkey-patching modules.
+        # Each
+        # selected test is still run by ordinary pytest, with its real
+        # fixtures,
+        # in the worker. Per-test nodes preserve selection and failure
+        # reporting.
         tree = ast.parse(self.path.read_text(encoding="utf-8"))
         for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and node.name.startswith("test_"):
                 item = _IsolatedGeventTest.from_parent(self, name=node.name)
                 item._source_line = node.lineno - 1
                 yield item
@@ -91,6 +105,8 @@ class _IsolatedGeventModule(pytest.Module):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_pycollect_makemodule(module_path, parent):
-    if module_path.name in _GEVENT_MODULES and not parent.config.getoption("--gevent-test-worker"):
+    if module_path.name in _GEVENT_MODULES and not parent.config.getoption(
+        "--gevent-test-worker"
+    ):
         return _IsolatedGeventModule.from_parent(parent, path=module_path)
     return None

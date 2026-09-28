@@ -1,12 +1,13 @@
 """安装kubernetes"""
-from io import StringIO
+
 import os
 import shlex
-from pyinfra.operations import server
-from pyinfra.context import host
+from io import StringIO
 
-from _offline_transfer import YUM_OP_SECONDS, import_seconds, op_timeout, pull
 from _kubernetes_bootstrap import guarded_kubeadm
+from _offline_transfer import YUM_OP_SECONDS, import_seconds, op_timeout, pull
+from pyinfra.context import host
+from pyinfra.operations import server
 
 data = host.data
 
@@ -26,7 +27,7 @@ server.yum.repo(
     name="Add kubengine yum repository",
     src=repo_name,
     baseurl=baseurl,
-    gpgcheck=False
+    gpgcheck=False,
 )
 server.yum.packages(
     name="Install kubelet, kubectl and kubeadm",
@@ -37,36 +38,40 @@ server.yum.packages(
     _retry_delay=10,
 )
 server.yum.repo(
-    name="Remove kubengine yum repository",
-    src=repo_name,
-    present=False
+    name="Remove kubengine yum repository", src=repo_name, present=False
 )
 server.systemd.service(
     name="Ensure kubelet is enabled and running",
     service="kubelet",
     running=True,
-    enabled=True
+    enabled=True,
 )
 
 # 配置crictl
 server.files.put(
     name="Configure crictl.yaml for containerd",
     dest="/etc/crictl.yaml",
-    src=StringIO("""runtime-endpoint: unix:///var/run/containerd/containerd.sock
+    src=StringIO(
+        """runtime-endpoint: unix:///var/run/containerd/containerd.sock
 image-endpoint: unix:///var/run/containerd/containerd.sock
 timeout: 10
 debug: false
-""")
+"""
+    ),
 )
 
 # 加载离线镜像
 images_file = os.path.join(
-    deploy_src, "images", "kubenetes.images.v1.34.0.tar.gz")
+    deploy_src, "images", "kubenetes.images.v1.34.0.tar.gz"
+)
 images_budget = import_seconds(images_file)
 if "master" not in host.groups:
     command, timeout = pull(
-        f"sftp://{master_ip}{images_file}", images_file,
-        "ctr -n k8s.io i import -", extra_seconds=images_budget)
+        f"sftp://{master_ip}{images_file}",
+        images_file,
+        "ctr -n k8s.io i import -",
+        extra_seconds=images_budget,
+    )
 else:
     command = f"ctr -n k8s.io i import {images_file}"
     timeout = op_timeout(images_file, extra_seconds=images_budget)
@@ -94,11 +99,11 @@ server.files.line(
 )
 server.files.file(
     name="Create file /proc/sys/net/ipv4/ip_forward",
-    path="/proc/sys/net/ipv4/ip_forward"
+    path="/proc/sys/net/ipv4/ip_forward",
 )
 server.shell(
     name="Enable IPv4 ip_forward in /proc/sys/net/ipv4/ip_forward",
-    commands="echo 1 > /proc/sys/net/ipv4/ip_forward"
+    commands="echo 1 > /proc/sys/net/ipv4/ip_forward",
 )
 
 if "master" in host.groups:
@@ -106,13 +111,21 @@ if "master" in host.groups:
     cpe = data.control_plane_endpoint or master_ip
     server.shell(
         name="Initialize Kubernetes control plane",
-        commands=guarded_kubeadm(shlex.join(["kubeadm", "init",
-                           f"--apiserver-advertise-address={master_ip}",
-                           f"--control-plane-endpoint={cpe}",
-                           "--kubernetes-version=v1.34.0",
-                           f"--service-cidr={service_cidr}",
-                           f"--pod-network-cidr={pod_cidr}",
-                           "--upload-certs"]), "master")
+        commands=guarded_kubeadm(
+            shlex.join(
+                [
+                    "kubeadm",
+                    "init",
+                    f"--apiserver-advertise-address={master_ip}",
+                    f"--control-plane-endpoint={cpe}",
+                    "--kubernetes-version=v1.34.0",
+                    f"--service-cidr={service_cidr}",
+                    f"--pod-network-cidr={pod_cidr}",
+                    "--upload-certs",
+                ]
+            ),
+            "master",
+        ),
     )
     server.files.line(
         name="Ensure KUBECONFIG is set in /etc/profile for master node",
@@ -121,5 +134,10 @@ if "master" in host.groups:
         present=True,  # 确保行存在（不存在则追加）
     )
     if master_schedule:
-        server.shell(name="Taint master node to prevent scheduling",
-                     commands="KUBECONFIG=/etc/kubernetes/admin.conf kubectl taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule-")
+        server.shell(
+            name="Taint master node to prevent scheduling",
+            commands=(
+                "KUBECONFIG=/etc/kubernetes/admin.conf kubectl taint nodes "
+                "--all node-role.kubernetes.io/control-plane:NoSchedule-"
+            ),
+        )

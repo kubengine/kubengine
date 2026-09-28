@@ -9,8 +9,8 @@ from core.logger import (
     ReadableFormatter,
     bind_log_context,
     get_log_context,
-    log_lifecycle_event,
     log_context_environment,
+    log_lifecycle_event,
     with_log_context,
     with_new_log_context,
 )
@@ -125,7 +125,10 @@ def test_lifecycle_event_exposes_event_fields_and_context(caplog) -> None:
     assert record.component == "containerd"  # type: ignore[attr-defined]
     assert record.status == "success"  # type: ignore[attr-defined]
     assert record.duration_ms == 12  # type: ignore[attr-defined]
-    assert record.funcName == "test_lifecycle_event_exposes_event_fields_and_context"
+    assert (
+        record.funcName
+        == "test_lifecycle_event_exposes_event_fields_and_context"
+    )
     assert record.getMessage() == (
         "event=component_end status=success duration_ms=12"
     )
@@ -160,8 +163,12 @@ def test_readable_formatter_honors_ansi_switch(monkeypatch) -> None:
     assert formatter.format(record) == "\x1b[31mfailed\x1b[0m"
 
 
-def test_lifecycle_event_honors_configured_field_length(monkeypatch, caplog) -> None:
-    monkeypatch.setattr(Application.LOGGER_CONFIG, "MAX_EVENT_FIELD_LENGTH", 60)
+def test_lifecycle_event_honors_configured_field_length(
+    monkeypatch, caplog
+) -> None:
+    monkeypatch.setattr(
+        Application.LOGGER_CONFIG, "MAX_EVENT_FIELD_LENGTH", 60
+    )
     logger = logging.getLogger("test.lifecycle.configured_length")
 
     with caplog.at_level(logging.INFO, logger=logger.name):

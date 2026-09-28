@@ -1,4 +1,6 @@
-"""Persist token revocation across API processes and service restarts."""
+"""Persist token revocation across API processes and service
+restarts.
+"""
 
 import hashlib
 import time
@@ -26,54 +28,93 @@ class AuthSession(Base):
     revoked_at = Column(Integer)
 
 
-def issue_session(session_id: str, username: str, version: str, expires_at: int, *, renew: bool) -> None:
+def issue_session(
+    session_id: str,
+    username: str,
+    version: str,
+    expires_at: int,
+    *,
+    renew: bool,
+) -> None:
     with get_db() as db:
         db.execute(text("BEGIN IMMEDIATE"))
         now = int(time.time())
         row = db.get(AuthSession, session_id)
         if renew:
-            if (row is None or row.revoked_at is not None or row.expires_at <= now
-                    or row.username != username or row.credential_version != version):
+            if (
+                row is None
+                or row.revoked_at is not None
+                or row.expires_at <= now
+                or row.username != username
+                or row.credential_version != version
+            ):
                 raise ValueError("Login session expired or revoked")
             row.expires_at = max(row.expires_at, expires_at)
         else:
-            db.add(AuthSession(session_id=session_id, username=username,
-                               credential_version=version, expires_at=expires_at))
-        db.query(AuthSession).filter(AuthSession.expires_at <= now).delete(synchronize_session=False)
+            db.add(
+                AuthSession(
+                    session_id=session_id,
+                    username=username,
+                    credential_version=version,
+                    expires_at=expires_at,
+                )
+            )
+        db.query(AuthSession).filter(AuthSession.expires_at <= now).delete(
+            synchronize_session=False
+        )
         db.commit()
 
 
 def session_active(session_id: str, username: str, version: str) -> bool:
     with get_db() as db:
-        return db.query(AuthSession.session_id).filter_by(
-            session_id=session_id, username=username, credential_version=version,
-            revoked_at=None,
-        ).filter(AuthSession.expires_at > int(time.time())).first() is not None
+        return (
+            db.query(AuthSession.session_id)
+            .filter_by(
+                session_id=session_id,
+                username=username,
+                credential_version=version,
+                revoked_at=None,
+            )
+            .filter(AuthSession.expires_at > int(time.time()))
+            .first()
+            is not None
+        )
 
 
 def revoke_session(session_id: str) -> None:
     with get_db() as db:
         db.query(AuthSession).filter_by(session_id=session_id).update(
-            {"revoked_at": int(time.time())}, synchronize_session=False,
+            {"revoked_at": int(time.time())},
+            synchronize_session=False,
         )
         db.commit()
 
 
 def revoke_token(token: str, expires_at: int) -> None:
     with get_db() as db:
-        db.query(RevokedToken).filter(RevokedToken.expires_at <= int(time.time())).delete()
+        db.query(RevokedToken).filter(
+            RevokedToken.expires_at <= int(time.time())
+        ).delete()
         db.execute(
-            insert(RevokedToken).values(
+            insert(RevokedToken)
+            .values(
                 token_hash=hashlib.sha256(token.encode()).hexdigest(),
                 expires_at=expires_at,
-            ).on_conflict_do_nothing(index_elements=["token_hash"])
+            )
+            .on_conflict_do_nothing(index_elements=["token_hash"])
         )
         db.commit()
 
 
 def is_token_revoked(token: str) -> bool:
     with get_db() as db:
-        return db.query(RevokedToken.token_hash).filter(
-            RevokedToken.token_hash == hashlib.sha256(token.encode()).hexdigest(),
-            RevokedToken.expires_at > int(time.time()),
-        ).first() is not None
+        return (
+            db.query(RevokedToken.token_hash)
+            .filter(
+                RevokedToken.token_hash
+                == hashlib.sha256(token.encode()).hexdigest(),
+                RevokedToken.expires_at > int(time.time()),
+            )
+            .first()
+            is not None
+        )

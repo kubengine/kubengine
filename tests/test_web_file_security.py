@@ -1,8 +1,8 @@
-"""Exercise real ASGI routes without Helm, remote services or installed secrets."""
+"""Exercise ASGI routes without external services or real secrets."""
 
 import asyncio
-from pathlib import Path
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -31,7 +31,9 @@ def static_tree(tmp_path, monkeypatch):
     (static / "chunks" / "test.js").write_text("test nested asset")
     (tmp_path / "outside.txt").write_text("PRIVATE_TEST_MARKER")
     (static / "escaped.txt").symlink_to(tmp_path / "outside.txt")
-    (static / "escaped-directory").symlink_to(tmp_path, target_is_directory=True)
+    (static / "escaped-directory").symlink_to(
+        tmp_path, target_is_directory=True
+    )
     (static / "internal.js").symlink_to(static / "umi.js")
     monkeypatch.setattr(main, "STATIC_DIR", str(static))
     return static
@@ -47,7 +49,9 @@ def static_tree(tmp_path, monkeypatch):
         ("/internal.js", "test root asset"),
     ],
 )
-def test_root_assets_and_spa_routes_remain_available(static_tree, path, expected):
+def test_root_assets_and_spa_routes_remain_available(
+    static_tree, path, expected
+):
     response = asyncio.run(_request("GET", path))
     assert response.status_code == 200
     assert response.text == expected
@@ -71,7 +75,9 @@ def test_static_paths_cannot_escape_the_root(static_tree, path):
 
 def test_absolute_static_path_is_rejected(static_tree):
     response = asyncio.run(
-        _request("GET", "/%2F" + str(static_tree.parent / "outside.txt").lstrip("/"))
+        _request(
+            "GET", "/%2F" + str(static_tree.parent / "outside.txt").lstrip("/")
+        )
     )
     assert response.status_code == 404
     assert "PRIVATE_TEST_MARKER" not in response.text
@@ -91,14 +97,19 @@ def chart_environment(tmp_path, monkeypatch):
     def private_directory(**kwargs):
         return original_temporary_directory(dir=tmp_path, **kwargs)
 
-    monkeypatch.setattr(artifacts.tempfile, "TemporaryDirectory", private_directory)
+    monkeypatch.setattr(
+        artifacts.tempfile, "TemporaryDirectory", private_directory
+    )
     monkeypatch.setattr(
         artifacts.Application,
         "REGISTRY",
-        SimpleNamespace(USERNAME="configured-user", PASSWORD="configured-test-password"),
+        SimpleNamespace(
+            USERNAME="configured-user", PASSWORD="configured-test-password"
+        ),
     )
     from core.orm.auth import AuthSession, RevokedToken
     from core.orm.engine import engine
+
     AuthSession.__table__.create(engine, checkfirst=True)
     RevokedToken.__table__.create(engine, checkfirst=True)
     token, _ = create_access_token({"sub": "admin"})
@@ -123,7 +134,10 @@ def test_chart_filename_cannot_write_or_execute_outside_owned_temp_directory(
         assert path.read_bytes() == b"uploaded chart"
         assert str(original) not in argv
         assert argv[-4:] == [
-            "--username", "configured-user", "--password", "configured-test-password"
+            "--username",
+            "configured-user",
+            "--password",
+            "configured-test-password",
         ]
         assert env == {"KUBECONFIG": "/etc/kubernetes/admin.conf"}
         assert threading.get_ident() != request_thread
@@ -133,8 +147,12 @@ def test_chart_filename_cannot_write_or_execute_outside_owned_temp_directory(
     monkeypatch.setattr(artifacts, "execute_command", fake_command)
     response = asyncio.run(
         _request(
-            "POST", "/api/v1/artifacts/upload/chart", headers=chart_environment,
-            files={"file": (str(original), b"uploaded chart", "application/gzip")},
+            "POST",
+            "/api/v1/artifacts/upload/chart",
+            headers=chart_environment,
+            files={
+                "file": (str(original), b"uploaded chart", "application/gzip")
+            },
         )
     )
     assert response.status_code == 200
@@ -165,7 +183,9 @@ def test_concurrent_same_name_chart_uploads_keep_separate_files(
         return await asyncio.gather(
             *[
                 _request(
-                    "POST", "/api/v1/artifacts/upload/chart", headers=chart_environment,
+                    "POST",
+                    "/api/v1/artifacts/upload/chart",
+                    headers=chart_environment,
                     files={"file": ("same.tgz", content, "application/gzip")},
                 )
                 for content in (b"first", b"second")
@@ -191,8 +211,12 @@ def test_failed_chart_push_removes_temp_files_without_echoing_command_errors(
     monkeypatch.setattr(artifacts, "execute_command", fake_command)
     response = asyncio.run(
         _request(
-            "POST", "/api/v1/artifacts/upload/chart", headers=chart_environment,
-            files={"file": ("chart.tgz", b"uploaded chart", "application/gzip")},
+            "POST",
+            "/api/v1/artifacts/upload/chart",
+            headers=chart_environment,
+            files={
+                "file": ("chart.tgz", b"uploaded chart", "application/gzip")
+            },
         )
     )
     assert response.status_code == 500
@@ -202,7 +226,10 @@ def test_failed_chart_push_removes_temp_files_without_echoing_command_errors(
 
 @pytest.mark.parametrize(
     ("filename", "content"),
-    [("chart.txt", b"invalid extension"), ("chart.tgz", b"x" * (2 * 1024 * 1024 + 1))],
+    [
+        ("chart.txt", b"invalid extension"),
+        ("chart.tgz", b"x" * (2 * 1024 * 1024 + 1)),
+    ],
     ids=["invalid-extension", "size-limit"],
 )
 def test_invalid_chart_upload_never_runs_helm(
@@ -214,7 +241,9 @@ def test_invalid_chart_upload_never_runs_helm(
     monkeypatch.setattr(artifacts, "execute_command", forbidden_command)
     response = asyncio.run(
         _request(
-            "POST", "/api/v1/artifacts/upload/chart", headers=chart_environment,
+            "POST",
+            "/api/v1/artifacts/upload/chart",
+            headers=chart_environment,
             files={"file": (filename, content, "application/gzip")},
         )
     )
@@ -224,10 +253,16 @@ def test_invalid_chart_upload_never_runs_helm(
 
 def test_validation_errors_do_not_echo_password_inputs(monkeypatch):
     messages = []
-    monkeypatch.setattr(main.logger, "warning", lambda message: messages.append(message))
+    monkeypatch.setattr(
+        main.logger, "warning", lambda message: messages.append(message)
+    )
     marker = "private-validation-test-marker"
     response = asyncio.run(
-        _request("POST", "/api/v1/login", json={"username": "admin", "password": {"secret": marker}})
+        _request(
+            "POST",
+            "/api/v1/login",
+            json={"username": "admin", "password": {"secret": marker}},
+        )
     )
     assert response.status_code == 422
     assert marker not in response.text

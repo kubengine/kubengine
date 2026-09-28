@@ -1,7 +1,8 @@
 """Application ORM models and database operations.
 
-This module defines the application table model and provides database operations
-for creating, reading, updating, and deleting applications with their field configurations.
+This module defines the application table model and provides database
+operations for creating, reading, updating, and deleting applications
+with their field configurations.
 """
 
 from datetime import datetime
@@ -9,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 from sqlalchemy import JSON, Column, DateTime, Integer, String, asc, desc, text
-from sqlalchemy.orm import relationship, joinedload
+from sqlalchemy.orm import joinedload, relationship
 
 from core.logger import get_logger
 from core.orm.app_field_config import AppFieldConfig, AppFieldConfigSchema
@@ -23,23 +24,27 @@ class App(Base):
 
     __tablename__ = "app"
 
-    app_id = Column(Integer, primary_key=True,
-                    index=True, comment="Application ID")
-    name = Column(String, unique=True, nullable=False,
-                  comment="Application name")
+    app_id = Column(
+        Integer, primary_key=True, index=True, comment="Application ID"
+    )
+    name = Column(
+        String, unique=True, nullable=False, comment="Application name"
+    )
     category = Column(JSON, nullable=False, comment="Application category")
     description = Column(String, comment="Application description")
-    helm_chart = Column(String, nullable=False,
-                        comment="Associated Helm chart template")
-    create_time = Column(DateTime, default=datetime.now,
-                         comment="Creation timestamp")
+    helm_chart = Column(
+        String, nullable=False, comment="Associated Helm chart template"
+    )
+    create_time = Column(
+        DateTime, default=datetime.now, comment="Creation timestamp"
+    )
 
     # Relationship with field configurations
     app_field_configs = relationship(
         "AppFieldConfig",
         back_populates="app",
         cascade="all, delete-orphan",
-        passive_deletes=True
+        passive_deletes=True,
     )
 
 
@@ -48,6 +53,7 @@ class AppSchema(BaseModel):
 
     Includes nested field configurations for API responses.
     """
+
     app_id: Optional[int] = None
     name: Optional[str] = None
     category: Optional[List[str]] = None
@@ -66,7 +72,7 @@ def find_applications_paginated(
     page_size: int = 10,
     sort_by: str = "create_time",
     sort_order: str = "desc",
-    filters: Optional[Dict[str, Any]] = None
+    filters: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Find applications with pagination, sorting, and filtering.
 
@@ -78,7 +84,8 @@ def find_applications_paginated(
         filters: Optional filter conditions dictionary
 
     Returns:
-        Dictionary containing total count, paginated data, current page, and page size
+        Dictionary containing total count, paginated data, current page,
+        and page size
     """
     with get_db() as db:
         filter_conditions = filters or {}
@@ -92,8 +99,10 @@ def find_applications_paginated(
         if "category" in filter_conditions and filter_conditions["category"]:
             # category 字段为 JSON 数组，使用 json_each 实现包含匹配
             query = query.filter(
-                text("EXISTS (SELECT 1 FROM json_each(app.category) WHERE json_each.value = :cat)")
-                .bindparams(cat=filter_conditions["category"])
+                text(
+                    "EXISTS (SELECT 1 FROM json_each(app.category) WHERE"
+                    " json_each.value = :cat)"
+                ).bindparams(cat=filter_conditions["category"])
             )
 
         # Validate sort field to prevent SQL injection
@@ -115,14 +124,17 @@ def find_applications_paginated(
 
         return {
             "total": total,
-            "data": [AppSchema.model_validate(item) for item in paginated_items],
+            "data": [
+                AppSchema.model_validate(item) for item in paginated_items
+            ],
             "page": page,
-            "page_size": page_size
+            "page_size": page_size,
         }
 
 
 def remove_application_by_id(app_id: str) -> bool:
-    """Remove an application by ID with cascade deletion of field configs.
+    """
+    Remove an application by ID with cascade deletion of field configs.
 
     Args:
         app_id: Application ID to remove
@@ -137,22 +149,27 @@ def remove_application_by_id(app_id: str) -> bool:
     try:
         with get_db() as db:
             # Find application with related field configs
-            app = db.query(App).filter(App.app_id == app_id).options(
-                joinedload(App.app_field_configs)
-            ).first()
+            app = (
+                db.query(App)
+                .filter(App.app_id == app_id)
+                .options(joinedload(App.app_field_configs))
+                .first()
+            )
 
             if not app:
                 logger.warning(
-                    f"Application not found for deletion: ID {app_id}")
+                    f"Application not found for deletion: ID {app_id}"
+                )
                 return False
 
-            # Delete with cascade (automatically deletes related field configs)
+            # Delete with cascade (automatically deletes related field
+            # configs)
             db.delete(app)
             db.commit()
 
             logger.info(
-                f"Application deleted successfully: {app.name} (ID: {app_id}), "
-                "related field configurations auto-cascaded"
+                f"Application deleted successfully: {app.name} (ID: {app_id}),"
+                " related field configurations auto-cascaded"
             )
             return True
 
@@ -163,7 +180,8 @@ def remove_application_by_id(app_id: str) -> bool:
     except Exception as e:
         # Database error - ensure rollback
         logger.error(
-            f"Database error during app deletion (ID: {app_id}): {str(e)}")
+            f"Database error during app deletion (ID: {app_id}): {str(e)}"
+        )
         raise
 
 
@@ -217,7 +235,7 @@ def create_application(app_schema: AppSchema) -> AppSchema:
                 category=app_schema.category,
                 description=app_schema.description,
                 helm_chart=app_schema.helm_chart,
-                create_time=app_schema.create_time or datetime.now()
+                create_time=app_schema.create_time or datetime.now(),
             )
 
             # Create field configuration records if provided
@@ -235,7 +253,7 @@ def create_application(app_schema: AppSchema) -> AppSchema:
                         initial_value=config.initial_value,
                         rules=config.rules,
                         field_props=config.field_props,
-                        helm_props=config.helm_props
+                        helm_props=config.helm_props,
                     )
                     field_configs.append(field_config)
 
@@ -247,7 +265,9 @@ def create_application(app_schema: AppSchema) -> AppSchema:
             db.refresh(app_orm)  # Refresh to get generated ID
 
             logger.info(
-                f"Application created successfully: {app_orm.name} (ID: {app_orm.app_id})")
+                f"Application created successfully: {app_orm.name} (ID:"
+                f" {app_orm.app_id})"
+            )
             return AppSchema.model_validate(app_orm)
 
     except Exception as e:
@@ -262,7 +282,8 @@ def update_application(app_schema: AppSchema) -> Optional[AppSchema]:
         app_schema: Pydantic model containing updated application data
 
     Returns:
-        Updated application schema if found, None if application doesn't exist
+        Updated application schema if found, None if application doesn't
+        exist
 
     Raises:
         Exception: When database operation fails
@@ -271,20 +292,18 @@ def update_application(app_schema: AppSchema) -> Optional[AppSchema]:
         with get_db() as db:
             # Find existing application
             app_orm = (
-                db.query(App)
-                .filter(App.app_id == app_schema.app_id)
-                .first()
+                db.query(App).filter(App.app_id == app_schema.app_id).first()
             )
 
             if not app_orm:
                 logger.warning(
-                    f"Application not found for update: ID {app_schema.app_id}")
+                    f"Application not found for update: ID {app_schema.app_id}"
+                )
                 return None
 
             # Update main fields (only non-None values)
             update_data = app_schema.model_dump(
-                exclude_unset=True,
-                exclude={"app_id", "app_field_configs"}
+                exclude_unset=True, exclude={"app_id", "app_field_configs"}
             )
             for field_name, field_value in update_data.items():
                 if hasattr(app_orm, field_name):
@@ -292,7 +311,8 @@ def update_application(app_schema: AppSchema) -> Optional[AppSchema]:
 
             # Update field configurations (full replacement strategy)
             if app_schema.app_field_configs is not None:
-                # New field configurations will replace existing ones due to cascade
+                # New field configurations will replace existing ones
+                # due to cascade
                 new_field_configs: list[AppFieldConfig] = []
                 for config in app_schema.app_field_configs:
                     field_config = AppFieldConfig(
@@ -319,10 +339,13 @@ def update_application(app_schema: AppSchema) -> Optional[AppSchema]:
             db.refresh(app_orm)
 
             logger.info(
-                f"Application updated successfully: ID {app_schema.app_id}")
+                f"Application updated successfully: ID {app_schema.app_id}"
+            )
             return AppSchema.model_validate(app_orm)
 
     except Exception as e:
         logger.error(
-            f"Database error updating application (ID: {app_schema.app_id}): {str(e)}")
+            f"Database error updating application (ID: {app_schema.app_id}):"
+            f" {str(e)}"
+        )
         raise

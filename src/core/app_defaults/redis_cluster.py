@@ -27,7 +27,10 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="nodes",
                 label="集群节点数",
-                extra="集群总节点数（含副本），master 数量需 >= 3。总数 = master数 + master数*副本数。例如 6 = 3主3从",
+                extra=(
+                    "集群总节点数（含副本），master 数量需 >= 3。总数 ="
+                    " master数 + master数*副本数。例如 6 = 3主3从"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="select",
@@ -52,7 +55,10 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="replicas",
                 label="每主副本数",
-                extra="每个 master 节点的副本（slave）数量，1 表示每个 master 对应 1 个副本",
+                extra=(
+                    "每个 master 节点的副本（slave）数量，1 表示每个 master"
+                    " 对应 1 个副本"
+                ),
                 order=1,
                 form_item_props={"required": True},
                 type="radio",
@@ -129,7 +135,12 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=8,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 8 - 32", "min": 8, "max": 32},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 8 - 32",
+                        "min": 8,
+                        "max": 32,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -143,7 +154,10 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="service",
                 label="Service服务",
-                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                extra=(
+                    "请选择 K8s Service 类型（ClusterIP 集群内访问、"
+                    "LoadBalancer 公网负载均衡）"
+                ),
                 order=5,
                 form_item_props={"required": True},
                 type="radio",
@@ -166,7 +180,11 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="password",
                 label="密码",
-                extra="Redis 集群访问密码，留空则自动随机生成；自定义需包含大小写字母、数字，最低 6 位",
+                extra=(
+                    "Redis 集群访问密码，"
+                    "留空则自动随机生成；自定义需包含大小写字母、数字，"
+                    "最低 6 位"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="password",
@@ -174,7 +192,9 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -191,7 +211,10 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="maxmemoryPolicy",
                 label="内存淘汰策略",
-                extra="达到 maxmemory 时 Redis 选择的淘汰策略。生产环境建议 allkeys-lru（最近最少使用淘汰）",
+                extra=(
+                    "达到 maxmemory 时 Redis 选择的淘汰策略。生产环境建议"
+                    " allkeys-lru（最近最少使用淘汰）"
+                ),
                 order=1,
                 form_item_props={"required": False},
                 type="select",
@@ -200,14 +223,23 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 field_props={
                     "allowClear": False,
                     "options": [
-                        {"label": "allkeys-lru（推荐生产）", "value": "allkeys-lru"},
+                        {
+                            "label": "allkeys-lru（推荐生产）",
+                            "value": "allkeys-lru",
+                        },
                         {"label": "allkeys-lfu", "value": "allkeys-lfu"},
                         {"label": "volatile-lru", "value": "volatile-lru"},
                         {"label": "volatile-lfu", "value": "volatile-lfu"},
                         {"label": "allkeys-random", "value": "allkeys-random"},
-                        {"label": "volatile-random", "value": "volatile-random"},
+                        {
+                            "label": "volatile-random",
+                            "value": "volatile-random",
+                        },
                         {"label": "volatile-ttl", "value": "volatile-ttl"},
-                        {"label": "noeviction（不淘汰，写入报错）", "value": "noeviction"},
+                        {
+                            "label": "noeviction（不淘汰，写入报错）",
+                            "value": "noeviction",
+                        },
                     ],
                 },
                 helm_props={
@@ -221,7 +253,10 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="appendonly",
                 label="AOF持久化",
-                extra="开启 AOF 日志，每次写操作追加到文件末尾。数据安全优先选 yes，性能优先选 no",
+                extra=(
+                    "开启 AOF 日志，每次写操作追加到文件末尾。数据安全优先选"
+                    " yes，性能优先选 no"
+                ),
                 order=2,
                 form_item_props={"required": False},
                 type="radio",
@@ -250,7 +285,12 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=300,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 0 - 86400", "min": 0, "max": 86400},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 0 - 86400",
+                        "min": 0,
+                        "max": 86400,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -264,13 +304,20 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="maxclients",
                 label="最大连接数",
-                extra="Redis 同时处理的最大客户端连接数。默认 10000，连接数过高时建议适当调低",
+                extra=(
+                    "Redis 同时处理的最大客户端连接数。默认 10000，连接数过高时建议适当调低"
+                ),
                 order=4,
                 form_item_props={"required": False},
                 type="number",
                 initial_value=10000,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 1 - 100000", "min": 1, "max": 100000},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 1 - 100000",
+                        "min": 1,
+                        "max": 100000,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -290,7 +337,12 @@ def get_redis_cluster_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=16,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 1 - 256", "min": 1, "max": 256},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 1 - 256",
+                        "min": 1,
+                        "max": 256,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={

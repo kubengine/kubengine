@@ -1,19 +1,22 @@
 import os
-from pathlib import Path
 import shlex
 import subprocess
+from pathlib import Path
+
 
 def run_postinstall(tmp_path, **flags):
-    # Execute only the extracted scriptlet with fake Python/systemctl binaries.
-    # No pip, application initialization, RPM installation, or service call runs.
+    # Execute only the extracted scriptlet with fake Python/systemctl
+    # binaries.
+    # No pip, application initialization, RPM installation, or service
+    # call runs.
     spec = (Path(__file__).parents[1] / "kubengine.spec").read_text()
     script = spec.split("\n%post\n", 1)[1].split("\n%postun\n", 1)[0]
     fake_python = tmp_path / "fake-python"
-    fake_python.write_text('''#!/bin/sh
+    fake_python.write_text("""#!/bin/sh
 printf '%s\\n' "$*" >> "$FAKE_TRACE"
 if [ "$2" = pip ]; then exit "${FAKE_PIP_EXIT:-0}"; fi
 exit "${FAKE_INIT_EXIT:-0}"
-''')
+""")
     fake_python.chmod(0o755)
     fake_systemctl = tmp_path / "systemctl"
     fake_systemctl.write_text("#!/bin/sh\nexit 0\n")
@@ -21,8 +24,19 @@ exit "${FAKE_INIT_EXIT:-0}"
     script = script.replace("%{python311}", shlex.quote(str(fake_python)))
     script = script.replace("%{kubengine_dir}", str(tmp_path / "installation"))
     trace = tmp_path / "calls"
-    env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"], "FAKE_TRACE": str(trace), **flags}
-    result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=5)
+    env = {
+        **os.environ,
+        "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+        "FAKE_TRACE": str(trace),
+        **flags,
+    }
+    result = subprocess.run(
+        ["bash", "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
     return result, trace.read_text()
 
 

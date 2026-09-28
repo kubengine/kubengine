@@ -27,7 +27,10 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="nodes",
                 label="集群节点数",
-                extra="KRaft 模式下 controller+broker 组合节点数，建议奇数（3 或 5）以保证仲裁多数",
+                extra=(
+                    "KRaft 模式下 controller+broker 组合节点数，建议奇数（3 或"
+                    " 5）以保证仲裁多数"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="radio",
@@ -104,7 +107,12 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=8,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 8 - 64", "min": 8, "max": 64},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 8 - 64",
+                        "min": 8,
+                        "max": 64,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -118,7 +126,10 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="service",
                 label="Service服务",
-                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                extra=(
+                    "请选择 K8s Service 类型（ClusterIP 集群内访问、"
+                    "LoadBalancer 公网负载均衡）"
+                ),
                 order=4,
                 form_item_props={"required": True},
                 type="radio",
@@ -141,13 +152,19 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="clientUser",
                 label="客户端用户名",
-                extra="SASL 客户端认证用户名，多个用户名用逗号分隔（默认 SASL_PLAINTEXT+PLAIN 机制）",
+                extra=(
+                    "SASL 客户端认证用户名，多个用户名用逗号分隔（默认"
+                    " SASL_PLAINTEXT+PLAIN 机制）"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="text",
                 initial_value="user1",
                 rules=[],
-                field_props={"placeholder": "多个用户名用逗号分隔，如 user1,user2", "options": []},
+                field_props={
+                    "placeholder": "多个用户名用逗号分隔，如 user1,user2",
+                    "options": [],
+                },
                 helm_props={
                     "keys": ["sasl.client.users"],
                     "type": "array",
@@ -159,7 +176,11 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="clientPassword",
                 label="客户端密码",
-                extra="SASL 客户端认证密码（默认用户名 user1，SASL_PLAINTEXT+PLAIN）；自定义需包含大小写字母、数字，最低 6 位",
+                extra=(
+                    "SASL 客户端认证密码（默认用户名 user1，"
+                    "SASL_PLAINTEXT+PLAIN）；自定义需包含大小写字母、数字，"
+                    "最低 6 位"
+                ),
                 order=1,
                 form_item_props={"required": True},
                 type="password",
@@ -167,7 +188,9 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -184,13 +207,21 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="logRetentionHours",
                 label="日志保留时间",
-                extra="Kafka 日志保留时间（小时），超过此时间的日志将被清理。生产环境建议 168（7天）",
+                extra=(
+                    "Kafka 日志保留时间（小时），超过此时间的日志将被清理。"
+                    "生产环境建议 168（7天）"
+                ),
                 order=2,
                 form_item_props={"required": False},
                 type="number",
                 initial_value=168,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 1 - 8760", "min": 1, "max": 8760},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 1 - 8760",
+                        "min": 1,
+                        "max": 8760,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -204,7 +235,10 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="autoCreateTopicsEnable",
                 label="自动创建Topic",
-                extra="是否允许 Producer 自动创建不存在的 Topic。生产环境建议关闭（false）以避免误创建",
+                extra=(
+                    "是否允许 Producer 自动创建不存在的 Topic。"
+                    "生产环境建议关闭（false）以避免误创建"
+                ),
                 order=3,
                 form_item_props={"required": False},
                 type="radio",
@@ -227,7 +261,9 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="defaultReplicationFactor",
                 label="默认副本数",
-                extra="Topic 默认副本因子，建议与 Broker 节点数匹配（3节点集群可选 2 或 3）",
+                extra=(
+                    "Topic 默认副本因子，建议与 Broker 节点数匹配（3节点集群可选 2 或 3）"
+                ),
                 order=4,
                 form_item_props={"required": False},
                 type="radio",
@@ -276,7 +312,10 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="maxMessageBytes",
                 label="消息最大字节",
-                extra="单个消息最大字节数（bytes），默认 1048576（1MB）。传输大消息时可适当调大",
+                extra=(
+                    "单个消息最大字节数（bytes），默认 1048576（1MB）。"
+                    "传输大消息时可适当调大"
+                ),
                 order=6,
                 form_item_props={"required": False},
                 type="select",
@@ -302,7 +341,10 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="compressionType",
                 label="消息压缩类型",
-                extra="Producer 端消息压缩算法，producer 表示由 producer 自行决定。压缩可降低网络带宽但增加 CPU 开销",
+                extra=(
+                    "Producer 端消息压缩算法，producer 表示由 producer"
+                    " 自行决定。压缩可降低网络带宽但增加 CPU 开销"
+                ),
                 order=7,
                 form_item_props={"required": False},
                 type="radio",
@@ -310,7 +352,10 @@ def get_kafka_app(create_time: datetime) -> AppSchema:
                 rules=[],
                 field_props={
                     "options": [
-                        {"label": "producer（由客户端决定）", "value": "producer"},
+                        {
+                            "label": "producer（由客户端决定）",
+                            "value": "producer",
+                        },
                         {"label": "gzip", "value": "gzip"},
                         {"label": "snappy", "value": "snappy"},
                         {"label": "lz4", "value": "lz4"},

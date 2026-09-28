@@ -98,7 +98,10 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="service",
                 label="Service服务",
-                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                extra=(
+                    "请选择 K8s Service 类型（ClusterIP 集群内访问、"
+                    "LoadBalancer 公网负载均衡）"
+                ),
                 order=3,
                 form_item_props={"required": True},
                 type="radio",
@@ -122,7 +125,10 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="mysqlEnabled",
                 label="内置MySQL",
-                extra="开启后部署内置 MySQL 作为 XXL-Job-Admin 元数据存储（开箱即用）；关闭后需填写下方外部数据库信息",
+                extra=(
+                    "开启后部署内置 MySQL 作为 XXL-Job-Admin"
+                    " 元数据存储（开箱即用）；关闭后需填写下方外部数据库信息"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="radio",
@@ -151,7 +157,12 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=8,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 8 - 50", "min": 8, "max": 50},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 8 - 50",
+                        "min": 8,
+                        "max": 50,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -173,7 +184,9 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -198,7 +211,9 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -233,13 +248,21 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="externalDatabasePort",
                 label="外部数据库端口",
-                extra="关闭内置 MySQL 时必填，XXL-Job-Admin 元数据库（MySQL）端口（默认 3306，范围 1 - 65535）",
+                extra=(
+                    "关闭内置 MySQL 时必填，XXL-Job-Admin"
+                    " 元数据库（MySQL）端口（默认 3306，范围 1 - 65535）"
+                ),
                 order=5,
                 form_item_props={"required": True},
                 type="number",
                 initial_value=3306,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 1 - 65535", "min": 1, "max": 65535},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 1 - 65535",
+                        "min": 1,
+                        "max": 65535,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -253,7 +276,10 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="externalDatabaseName",
                 label="外部数据库名",
-                extra="关闭内置 MySQL 时必填，需提前在 MySQL 中导入 tables_xxl_job.sql",
+                extra=(
+                    "关闭内置 MySQL 时必填，需提前在 MySQL 中导入"
+                    " tables_xxl_job.sql"
+                ),
                 order=6,
                 form_item_props={"required": True},
                 type="text",
@@ -289,7 +315,9 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="externalDatabasePassword",
                 label="外部数据库密码",
-                extra="关闭内置 MySQL 时必填，XXL-Job-Admin 元数据库（MySQL）业务用户密码",
+                extra=(
+                    "关闭内置 MySQL 时必填，XXL-Job-Admin 元数据库（MySQL）业务用户密码"
+                ),
                 order=8,
                 form_item_props={"required": True},
                 type="password",
@@ -297,7 +325,9 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -322,7 +352,9 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "令牌需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "令牌需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -339,7 +371,11 @@ def get_xxl_job_admin_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="consoleAccount",
                 label="控制台账号",
-                extra="XXL-Job-Admin 控制台默认账号为 admin/123456，部署完成后请登录控制台及时修改密码（此项仅作提示，不会写入 Helm 配置）",
+                extra=(
+                    "XXL-Job-Admin 控制台默认账号为 admin/123456，"
+                    "部署完成后请登录控制台及时修改密码（此项仅作提示，"
+                    "不会写入 Helm 配置）"
+                ),
                 order=10,
                 form_item_props={"required": False},
                 type="text",

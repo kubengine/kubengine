@@ -1,4 +1,4 @@
-"""Pod health checks remain conservative when release resources are absent."""
+"""Pod health checks stay conservative when resources are absent."""
 
 from types import SimpleNamespace
 
@@ -10,10 +10,17 @@ from core.http_api_client import helm_resource_check as health
 
 def pod(phase="Running", *, ready=True, job=False):
     return SimpleNamespace(
-        metadata=SimpleNamespace(name="test-pod", owner_references=[SimpleNamespace(kind="Job")] if job else []),
+        metadata=SimpleNamespace(
+            name="test-pod",
+            owner_references=[SimpleNamespace(kind="Job")] if job else [],
+        ),
         status=SimpleNamespace(
             phase=phase,
-            conditions=[SimpleNamespace(type="Ready", status="True" if ready else "False")],
+            conditions=[
+                SimpleNamespace(
+                    type="Ready", status="True" if ready else "False"
+                )
+            ],
             container_statuses=[],
         ),
     )
@@ -53,7 +60,9 @@ def test_empty_release_remains_unverified_after_polling(make_checker):
     assert len(calls) == 3 and len(sleeps) == 2
 
 
-def test_pods_created_after_initial_empty_response_can_be_healthy(make_checker):
+def test_pods_created_after_initial_empty_response_can_be_healthy(
+    make_checker,
+):
     checker, calls, sleeps = make_checker([[], [pod()]])
     result = checker.check_pods_with_polling()
     assert result["status"] is True
@@ -61,12 +70,16 @@ def test_pods_created_after_initial_empty_response_can_be_healthy(make_checker):
 
 
 def test_completed_job_pod_is_an_explicit_success(make_checker):
-    checker, calls, sleeps = make_checker([[pod("Succeeded", ready=False, job=True)]])
+    checker, calls, sleeps = make_checker(
+        [[pod("Succeeded", ready=False, job=True)]]
+    )
     assert checker.check_pods_with_polling()["status"] is True
     assert len(calls) == 1 and not sleeps
 
 
-def test_disappeared_pending_pods_do_not_turn_the_release_healthy(make_checker):
+def test_disappeared_pending_pods_do_not_turn_the_release_healthy(
+    make_checker,
+):
     checker, _, _ = make_checker([[pod("Pending", ready=False)], []])
     result = checker.check_pods_with_polling()
     assert result["status"] is False
@@ -74,7 +87,9 @@ def test_disappeared_pending_pods_do_not_turn_the_release_healthy(make_checker):
 
 
 def test_kubernetes_query_failure_is_not_a_healthy_empty_release(make_checker):
-    checker, calls, sleeps = make_checker([ApiException(status=403, reason="Forbidden")])
+    checker, calls, sleeps = make_checker(
+        [ApiException(status=403, reason="Forbidden")]
+    )
     result = checker.check_pods_with_polling()
     assert result["status"] is False
     assert "403" in result["details"][0]

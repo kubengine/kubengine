@@ -1,5 +1,4 @@
-"""
-Dashboard API 客户端模块
+"""Dashboard API 客户端模块
 
 提供与 Kubernetes Dashboard API 交互的客户端类，支持命名空间、节点、Pod 等资源的查询和管理。
 """
@@ -10,16 +9,16 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 import yaml
 
-from core.config import Application
 from core.command import execute_command
+from core.config import Application
 from core.http_api_client.basic_client import BasicClient
 from core.logger import get_logger
+
 logger = get_logger(__name__)
 
 
 class DashboardClient(BasicClient):
-    """
-    Dashboard API 客户端类
+    """Dashboard API 客户端类
 
     提供与 Kubernetes Dashboard API 交互的方法，包括：
     - 命名空间管理
@@ -44,8 +43,7 @@ class DashboardClient(BasicClient):
         token_file: Optional[str] = None,
         manifest_dir: Optional[str] = None,
     ) -> None:
-        """
-        初始化 Dashboard 客户端
+        """初始化 Dashboard 客户端
 
         Args:
             base_url: Dashboard 基础 URL，默认从配置获取
@@ -61,15 +59,16 @@ class DashboardClient(BasicClient):
             self.token = self._read_token(
                 token_file
                 if token_file is not None
-                else os.path.join(Application.ROOT_DIR, "config", "admin-user.token")
+                else os.path.join(
+                    Application.ROOT_DIR, "config", "admin-user.token"
+                )
             )
         self.manifest_dir = manifest_dir or os.path.join(
             Application.ROOT_DIR, "config", "manifest"
         )
 
     def _read_token(self, token_file: str) -> str:
-        """
-        从文件中读取访问令牌
+        """从文件中读取访问令牌
 
         Args:
             token_file: 令牌文件路径
@@ -81,8 +80,7 @@ class DashboardClient(BasicClient):
             return f.read().strip()
 
     def get_namespace(self) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取所有命名空间列表
+        """获取所有命名空间列表
 
         Returns:
             标准化响应结果 (code, message, data)
@@ -91,13 +89,15 @@ class DashboardClient(BasicClient):
         response = requests.get(
             url,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
-    def node(self, name: Optional[str] = None) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取节点信息
+    def node(
+        self, name: Optional[str] = None
+    ) -> Tuple[int, str, Dict[str, Any]]:
+        """获取节点信息
 
         Args:
             name: 节点名称，为空则获取所有节点
@@ -113,7 +113,8 @@ class DashboardClient(BasicClient):
         response = requests.get(
             url,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -124,8 +125,7 @@ class DashboardClient(BasicClient):
         page: int = 1,
         sort_by: str = "d,creationTimestamp",
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取指定应用的 Pod 列表
+        """获取指定应用的 Pod 列表
 
         Args:
             name: 应用名称
@@ -152,8 +152,7 @@ class DashboardClient(BasicClient):
         sort_by: str = "d,creationTimestamp",
         filter_by: Optional[str] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Pod 列表
+        """获取 Pod 列表
 
         Args:
             namespace: 命名空间名称
@@ -182,13 +181,13 @@ class DashboardClient(BasicClient):
             url,
             params=params,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
     def get_ip_pool(self) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 IP 池配置信息
+        """获取 IP 池配置信息
 
         Returns:
             标准化响应结果 (code, message, data)
@@ -201,9 +200,10 @@ class DashboardClient(BasicClient):
             ip_pool_data = yaml.safe_load(f)
         return 200, "success", ip_pool_data
 
-    def update_ip_pool(self, ip_pools: List[str]) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        更新 IP 池配置
+    def update_ip_pool(
+        self, ip_pools: List[str]
+    ) -> Tuple[int, str, Dict[str, Any]]:
+        """更新 IP 池配置
 
         Args:
             ip_pools: 新的 IP 池地址列表
@@ -228,10 +228,17 @@ class DashboardClient(BasicClient):
                 allow_unicode=True,
             )
 
-        cmd = f"KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f {manifests}"
+        cmd = (
+            "KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f"
+            f" {manifests}"
+        )
         result = execute_command(cmd)
         if result.is_failure():
-            return 500, f"Failed to update IP pool: {result.get_error_lines()}", {}
+            return (
+                500,
+                f"Failed to update IP pool: {result.get_error_lines()}",
+                {},
+            )
 
         return 200, "success", {}
 
@@ -244,8 +251,7 @@ class DashboardClient(BasicClient):
         sort_by: str = "d,creationTimestamp",
         filter_by: Optional[str] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取资源列表
+        """获取资源列表
 
         Args:
             resource_type: 资源类型
@@ -275,7 +281,8 @@ class DashboardClient(BasicClient):
             url,
             params=params,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -285,8 +292,7 @@ class DashboardClient(BasicClient):
         namespace: str,
         name: str,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取资源详情
+        """获取资源详情
 
         Args:
             resource_type: 资源类型
@@ -298,14 +304,18 @@ class DashboardClient(BasicClient):
         """
         no_namespace_resources = ["persistentvolume"]
         url = (
-            f"{self.base_url}{self.base_uri}/{resource_type}/{namespace}/{name}"
+            (
+                f"{self.base_url}{self.base_uri}/{resource_type}/"
+                f"{namespace}/{name}"
+            )
             if resource_type not in no_namespace_resources
             else f"{self.base_url}{self.base_uri}/{resource_type}/{name}"
         )
         response = requests.get(
             url,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -318,8 +328,7 @@ class DashboardClient(BasicClient):
         page: int = 1,
         sort_by: str = "d,creationTimestamp",
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取资源关联的 Pod 列表
+        """获取资源关联的 Pod 列表
 
         Args:
             resource_type: 资源类型
@@ -333,7 +342,8 @@ class DashboardClient(BasicClient):
             标准化响应结果 (code, message, data)
         """
         url = (
-            f"{self.base_url}{self.base_uri}/{resource_type}/{namespace}/{resource_name}/pod"
+            f"{self.base_url}{self.base_uri}/{resource_type}/{namespace}/"
+            f"{resource_name}/pod"
         )
         params: dict[str, Any] = {
             "itemsPerPage": items_per_page,
@@ -344,6 +354,7 @@ class DashboardClient(BasicClient):
             url,
             params=params,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result(response)

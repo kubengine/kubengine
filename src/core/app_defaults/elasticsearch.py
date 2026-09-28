@@ -28,7 +28,9 @@ def get_elasticsearch_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="dataNodes",
                 label="数据节点数",
-                extra="承载数据读写的 data 节点数量，建议与数据分片数匹配，多节点可提升吞吐与可用性",
+                extra=(
+                    "承载数据读写的 data 节点数量，建议与数据分片数匹配，多节点可提升吞吐与可用性"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="radio",
@@ -53,7 +55,11 @@ def get_elasticsearch_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="cpu",
                 label="cpu",
-                extra="每个节点的核数，所有节点（master/data/coordinating/ingest）统一应用。搜索/聚合密集场景建议 2 核及以上",
+                extra=(
+                    "每个节点的核数，"
+                    "所有节点（master/data/coordinating/ingest）统一应用。"
+                    "搜索/聚合密集场景建议 2 核及以上"
+                ),
                 order=1,
                 form_item_props={"required": True},
                 type="radio",
@@ -85,7 +91,10 @@ def get_elasticsearch_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="memory",
                 label="内存",
-                extra="每个节点的内存大小(单位 Gi)，所有节点统一应用。建议 heap 为内存的 50%，设置 limits 以确保 JVM 正确分配直接内存",
+                extra=(
+                    "每个节点的内存大小(单位 Gi)，所有节点统一应用。建议 heap"
+                    " 为内存的 50%，设置 limits 以确保 JVM 正确分配直接内存"
+                ),
                 order=2,
                 form_item_props={"required": True},
                 type="radio",
@@ -125,7 +134,12 @@ def get_elasticsearch_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=8,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 8 - 200", "min": 8, "max": 200},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 8 - 200",
+                        "min": 8,
+                        "max": 200,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -142,7 +156,10 @@ def get_elasticsearch_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="service",
                 label="Service服务",
-                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                extra=(
+                    "请选择 K8s Service 类型（ClusterIP 集群内访问、"
+                    "LoadBalancer 公网负载均衡）"
+                ),
                 order=4,
                 form_item_props={"required": True},
                 type="radio",
@@ -187,7 +204,10 @@ def get_elasticsearch_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="securityEnabled",
                 label="安全认证",
-                extra="开启 X-Pack Security（含密码认证与 TLS）。开启后自动生成 TLS 证书，需同时配置密码",
+                extra=(
+                    "开启 X-Pack Security（含密码认证与 TLS）。开启后自动生成"
+                    " TLS 证书，需同时配置密码"
+                ),
                 order=1,
                 form_item_props={"required": True},
                 type="radio",
@@ -218,7 +238,9 @@ def get_elasticsearch_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -262,13 +284,18 @@ def get_elasticsearch_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="plugins",
                 label="预装插件",
-                extra="初始化时安装的插件列表，多个插件用逗号分隔，如 analysis-ik,ingest-attachment",
+                extra=(
+                    "初始化时安装的插件列表，多个插件用逗号分隔，如"
+                    " analysis-ik,ingest-attachment"
+                ),
                 order=4,
                 form_item_props={"required": False},
                 type="text",
                 initial_value="",
                 rules=[],
-                field_props={"placeholder": "如 analysis-ik,ingest-attachment"},
+                field_props={
+                    "placeholder": "如 analysis-ik,ingest-attachment"
+                },
                 helm_props={
                     "keys": ["plugins"],
                     "type": "string",

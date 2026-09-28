@@ -142,11 +142,15 @@ async def get_overview(request: Request):
                 for data_point in data_points:
                     timestamp = data_point.get("x", 0)
                     value = data_point.get("y", 0)
-                    cpu_usage_rate.append({
-                        "x": datetime.fromtimestamp(timestamp).strftime("%H:%M"),
-                        "y": round(value / 1000, 2),  # 毫秒 -> 秒
-                        "type": "CPU Usage"
-                    })
+                    cpu_usage_rate.append(
+                        {
+                            "x": datetime.fromtimestamp(timestamp).strftime(
+                                "%H:%M"
+                            ),
+                            "y": round(value / 1000, 2),  # 毫秒 -> 秒
+                            "type": "CPU Usage",
+                        }
+                    )
                 result_data["cpuUsageRate"] = cpu_usage_rate
 
             # 处理内存使用率指标
@@ -155,11 +159,17 @@ async def get_overview(request: Request):
                 for data_point in data_points:
                     timestamp = data_point.get("x", 0)
                     value = data_point.get("y", 0)
-                    memory_usage_rate.append({
-                        "x": datetime.fromtimestamp(timestamp).strftime("%H:%M"),
-                        "y": round(value / 1024 / 1024 / 1024, 2),  # 字节 -> GB
-                        "type": "Memory Usage"
-                    })
+                    memory_usage_rate.append(
+                        {
+                            "x": datetime.fromtimestamp(timestamp).strftime(
+                                "%H:%M"
+                            ),
+                            "y": round(
+                                value / 1024 / 1024 / 1024, 2
+                            ),  # 字节 -> GB
+                            "type": "Memory Usage",
+                        }
+                    )
                 result_data["memoryUsageRate"] = memory_usage_rate
 
         # 获取所有节点列表
@@ -178,15 +188,18 @@ async def get_overview(request: Request):
             total_cpu_requests += allocated_resources.get("cpuRequests", 0)
             total_cpu_capacity += allocated_resources.get("cpuCapacity", 0)
             total_memory_requests += allocated_resources.get(
-                "memoryRequests", 0)
+                "memoryRequests", 0
+            )
             total_memory_capacity += allocated_resources.get(
-                "memoryCapacity", 0)
+                "memoryCapacity", 0
+            )
             total_allocated_pods += allocated_resources.get("allocatedPods", 0)
 
         # Pod 总容量（取最后一个节点的 podCapacity）
         if nodes:
-            total_pod_capacity = nodes[-1].get(
-                "allocatedResources", {}).get("podCapacity", 0)
+            total_pod_capacity = (
+                nodes[-1].get("allocatedResources", {}).get("podCapacity", 0)
+            )
 
         # 转换节点数据格式，提取并重组关键字段
         new_nodes = []
@@ -201,38 +214,52 @@ async def get_overview(request: Request):
                 "ready": node.get("ready", False),
                 # CPU 相关指标
                 "cpuRequests": allocated_resources.get("cpuRequests", 0),
-                "cpuRequestsFraction": round(allocated_resources.get("cpuRequestsFraction", 0), 2),
+                "cpuRequestsFraction": round(
+                    allocated_resources.get("cpuRequestsFraction", 0), 2
+                ),
                 "cpuLimits": allocated_resources.get("cpuLimits", 0),
-                "cpuLimitsFraction": round(allocated_resources.get("cpuLimitsFraction", 0), 2),
+                "cpuLimitsFraction": round(
+                    allocated_resources.get("cpuLimitsFraction", 0), 2
+                ),
                 "cpuCapacity": allocated_resources.get("cpuCapacity", 0),
                 # 内存相关指标
                 "memoryRequests": allocated_resources.get("memoryRequests", 0),
-                "memoryRequestsFraction": round(allocated_resources.get("memoryRequestsFraction", 0), 2),
+                "memoryRequestsFraction": round(
+                    allocated_resources.get("memoryRequestsFraction", 0), 2
+                ),
                 "memoryLimits": allocated_resources.get("memoryLimits", 0),
-                "memoryLimitsFraction": round(allocated_resources.get("memoryLimitsFraction", 0), 2),
+                "memoryLimitsFraction": round(
+                    allocated_resources.get("memoryLimitsFraction", 0), 2
+                ),
                 "memoryCapacity": allocated_resources.get("memoryCapacity", 0),
                 # Pod 相关指标
                 "allocatedPods": allocated_resources.get("allocatedPods", 0),
-                "podFraction": round(allocated_resources.get("podFraction", 0), 2),
+                "podFraction": round(
+                    allocated_resources.get("podFraction", 0), 2
+                ),
             }
             new_nodes.append(new_node)
 
         # 将所有计算结果批量更新到结果字典中
-        result_data.update({
-            "totalCpuRequests": total_cpu_requests,
-            "totalCpuCapacity": total_cpu_capacity,
-            "totalMemoryRequests": total_memory_requests,
-            "totalMemoryCapacity": total_memory_capacity,
-            "totalAllocatedPods": total_allocated_pods,
-            "totalPodCapacity": total_pod_capacity,
-            "nodes": new_nodes
-        })
+        result_data.update(
+            {
+                "totalCpuRequests": total_cpu_requests,
+                "totalCpuCapacity": total_cpu_capacity,
+                "totalMemoryRequests": total_memory_requests,
+                "totalMemoryCapacity": total_memory_capacity,
+                "totalAllocatedPods": total_allocated_pods,
+                "totalPodCapacity": total_pod_capacity,
+                "nodes": new_nodes,
+            }
+        )
 
         return code, msg, result_data
 
     # 使用 asyncio.gather() 并发执行节点数据处理和存储容量获取
     # 提高接口响应速度，避免串行等待
-    node_res, capacity_res = await asyncio.gather(run_in_threadpool(process_node), run_in_threadpool(get_capacity))
+    node_res, capacity_res = await asyncio.gather(
+        run_in_threadpool(process_node), run_in_threadpool(get_capacity)
+    )
 
     # 检查节点数据处理结果，如果失败则直接返回错误
     if node_res[0] != 200:
@@ -260,10 +287,14 @@ async def get_overview(request: Request):
 @auth_with_renew()
 def get_resource_list(
     request: Request,
-    type: str = Path(...,
-                     description="资源类型（如 pod、service、deployment、statefulset 等）"),
+    type: str = Path(
+        ...,
+        description="资源类型（如 pod、service、deployment、statefulset 等）",
+    ),
     pagination: PageParams = Depends(pagination_params),
-    name: str | None = Query(None, description="资源名称过滤（如 StatefulSet 名称）"),
+    name: str | None = Query(
+        None, description="资源名称过滤（如 StatefulSet 名称）"
+    ),
     namespace: str | None = Query(None, description="命名空间过滤"),
 ):
     """
@@ -295,7 +326,7 @@ def get_resource_list(
         namespace=namespace,
         items_per_page=pagination.page_size,
         page=pagination.page,
-        filter_by=filter_by
+        filter_by=filter_by,
     )
 
 
@@ -341,7 +372,9 @@ def get_resource_detail(
 @auth_with_renew()
 def get_resource_pod(
     request: Request,
-    type: str = Path(..., description="父资源类型（如 deployment、statefulset）"),
+    type: str = Path(
+        ..., description="父资源类型（如 deployment、statefulset）"
+    ),
     name: str = Path(..., description="父资源名称"),
     namespace: str = Path(..., description="命名空间"),
     pagination: PageParams = Depends(pagination_params),
@@ -368,5 +401,5 @@ def get_resource_pod(
         namespace=namespace,
         resource_name=name,
         items_per_page=pagination.page_size,
-        page=pagination.page
+        page=pagination.page,
     )

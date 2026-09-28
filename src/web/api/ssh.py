@@ -11,15 +11,14 @@ SSH 远程操作 API 路由模块
 
 import hashlib
 import os
-
-from core.config import Application
-from core.private_files import private_directory, private_file
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from core.config import Application
 from core.logger import get_logger
+from core.private_files import private_directory, private_file
 from core.ssh import AsyncSSHClient
 from web.utils.auth import User, auth_with_renew
 
@@ -37,7 +36,9 @@ class CommandRequest(BaseModel):
     host: str = Field(..., description="目标主机地址")
     command: str = Field(..., description="要执行的命令")
     username: str = Field(..., description="SSH 登录用户名")
-    password: str | None = Field(None, description="SSH 登录密码（与密钥二选一）")
+    password: str | None = Field(
+        None, description="SSH 登录密码（与密钥二选一）"
+    )
     client_keys: list[str] | None = Field(None, description="SSH 私钥内容列表")
 
 
@@ -49,7 +50,9 @@ class MultiCommandRequest(BaseModel):
         description="命令列表，每个元素包含 host 和 command 字段",
     )
     username: str = Field(..., description="SSH 登录用户名")
-    password: str | None = Field(None, description="SSH 登录密码（与密钥二选一）")
+    password: str | None = Field(
+        None, description="SSH 登录密码（与密钥二选一）"
+    )
     client_keys: list[str] | None = Field(None, description="SSH 私钥内容列表")
 
 
@@ -57,10 +60,15 @@ class FileTransferRequest(BaseModel):
     """文件传输请求模型"""
 
     host: str = Field(..., description="目标主机地址")
-    local_path: str = Field(..., description="用户专属传输目录内的文件名（不允许路径或覆盖已有文件）")
+    local_path: str = Field(
+        ...,
+        description="用户专属传输目录内的文件名（不允许路径或覆盖已有文件）",
+    )
     remote_path: str = Field(..., description="远程文件路径")
     username: str = Field(..., description="SSH 登录用户名")
-    password: str | None = Field(None, description="SSH 登录密码（与密钥二选一）")
+    password: str | None = Field(
+        None, description="SSH 登录密码（与密钥二选一）"
+    )
     client_keys: list[str] | None = Field(None, description="SSH 私钥内容列表")
 
 
@@ -106,9 +114,7 @@ async def execute_command(
 
         # 执行命令
         result = await client.execute_command(
-            command_req.host,
-            command_req.command,
-            **kwargs
+            command_req.host, command_req.command, **kwargs
         )
         return result
 
@@ -151,8 +157,7 @@ async def execute_multiple_commands(
 
         # 解析主机和命令列表
         hosts_commands = [
-            (item["host"], item["command"])
-            for item in multi_req.commands
+            (item["host"], item["command"]) for item in multi_req.commands
         ]
 
         # 构建连接参数
@@ -164,8 +169,7 @@ async def execute_multiple_commands(
 
         # 执行多个命令
         results = await client.execute_multiple_commands(
-            hosts_commands,
-            **kwargs
+            hosts_commands, **kwargs
         )
         return results
 
@@ -239,34 +243,65 @@ async def download_file(
     return await _transfer_file(current_user, file_req, download=True)
 
 
-async def _transfer_file(current_user: User, file_req: FileTransferRequest, *, download: bool):
+async def _transfer_file(
+    current_user: User, file_req: FileTransferRequest, *, download: bool
+):
     name = file_req.local_path
-    if (not name or name.startswith(".") or len(name.encode()) > 200
-            or any(c in name for c in ("/", "\\", "\x00"))):
-        raise HTTPException(status_code=400, detail="local_path 必须是用户传输目录内的文件名")
+    if (
+        not name
+        or name.startswith(".")
+        or len(name.encode()) > 200
+        or any(c in name for c in ("/", "\\", "\x00"))
+    ):
+        raise HTTPException(
+            status_code=400, detail="local_path 必须是用户传输目录内的文件名"
+        )
     user_dir = hashlib.sha256(current_user.username.encode()).hexdigest()
     client = AsyncSSHClient()
     try:
-        with private_directory(Application.ROOT_DIR, "tmp", "ssh-transfers", user_dir) as directory:
-            flags = os.O_RDWR | os.O_CREAT | os.O_EXCL if download else os.O_RDONLY
+        with private_directory(
+            Application.ROOT_DIR, "tmp", "ssh-transfers", user_dir
+        ) as directory:
+            flags = (
+                os.O_RDWR | os.O_CREAT | os.O_EXCL if download else os.O_RDONLY
+            )
             with private_file(directory, name, flags) as fd:
                 try:
-                    # The proc path is a trusted descriptor link to an already
-                    # validated inode, not a user-supplied filesystem symlink.
-                    kwargs = {"username": file_req.username, "follow_symlinks": True}
+                    # The proc path is a trusted descriptor link to an
+                    # already
+                    # validated inode, not a user-supplied filesystem
+                    # symlink.
+                    kwargs = {
+                        "username": file_req.username,
+                        "follow_symlinks": True,
+                    }
                     if file_req.password:
                         kwargs["password"] = file_req.password
                     if file_req.client_keys:
                         kwargs["client_keys"] = file_req.client_keys
-                    # Keep the validated inode open across every await; SFTP cannot
-                    # follow a replacement of the caller-visible filename.
+                    # Keep the validated inode open across every await;
+                    # SFTP cannot
+                    # follow a replacement of the caller-visible
+                    # filename.
                     local_path = f"/proc/self/fd/{fd}"
                     if download:
-                        result = await client.download_file(file_req.host, file_req.remote_path, local_path, **kwargs)
+                        result = await client.download_file(
+                            file_req.host,
+                            file_req.remote_path,
+                            local_path,
+                            **kwargs,
+                        )
                     else:
-                        result = await client.upload_file(file_req.host, local_path, file_req.remote_path, **kwargs)
+                        result = await client.upload_file(
+                            file_req.host,
+                            local_path,
+                            file_req.remote_path,
+                            **kwargs,
+                        )
                     if result.get("error"):
-                        raise HTTPException(status_code=502, detail="远程文件传输失败")
+                        raise HTTPException(
+                            status_code=502, detail="远程文件传输失败"
+                        )
                     result["local_path"] = name
                     return result
                 except BaseException:
@@ -276,10 +311,14 @@ async def _transfer_file(current_user: User, file_req: FileTransferRequest, *, d
     except HTTPException:
         raise
     except FileExistsError:
-        raise HTTPException(status_code=409, detail="目标文件已存在，不允许覆盖") from None
+        raise HTTPException(
+            status_code=409, detail="目标文件已存在，不允许覆盖"
+        ) from None
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="传输文件不存在") from None
     except OSError:
-        raise HTTPException(status_code=400, detail="不允许访问该传输文件") from None
+        raise HTTPException(
+            status_code=400, detail="不允许访问该传输文件"
+        ) from None
     finally:
         await client.close_all_connections()

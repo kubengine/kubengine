@@ -1,6 +1,8 @@
 from contextlib import contextmanager
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
+from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
+
 from core.config import Application
 from core.private_files import prepare_database
 
@@ -29,8 +31,7 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
-        # 提交（如果有未提交的事务，也可以放到业务层）
-        # db.commit()
+        # 提交（如果有未提交的事务，也可以放到业务层） db.commit()
     except Exception as e:
         db.rollback()
         raise e

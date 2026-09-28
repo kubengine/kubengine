@@ -1,9 +1,9 @@
 import asyncio
-from datetime import timedelta
 import time
+from datetime import timedelta
 
-from fastapi import WebSocketDisconnect
 import pytest
+from fastapi import WebSocketDisconnect
 
 from core.misc.websocket import ConnectionManager
 from core.orm.auth import RevokedToken, revoke_token
@@ -41,25 +41,31 @@ def session(monkeypatch):
     monkeypatch.setattr(auth, "load_auth_users", lambda: {"admin": record})
     RevokedToken.__table__.create(engine, checkfirst=True)
     token, _ = auth.create_access_token({"sub": "admin"})
-    manager = ConnectionManager(send_timeout=.2)
+    manager = ConnectionManager(send_timeout=0.2)
     monkeypatch.setattr(routes, "connection_manager", manager)
-    monkeypatch.setattr(routes, "SESSION_CHECK_INTERVAL", .02)
+    monkeypatch.setattr(routes, "SESSION_CHECK_INTERVAL", 0.02)
     return record, token, manager
 
 
 async def connected_socket(token, manager):
     socket = Socket()
-    task = asyncio.create_task(routes.websocket_endpoint(socket, token=f"Bearer {token}"))
+    task = asyncio.create_task(
+        routes.websocket_endpoint(socket, token=f"Bearer {token}")
+    )
+
     async def wait_for_connection():
         while socket not in manager.active_connections:
             await asyncio.sleep(0)
+
     await asyncio.wait_for(wait_for_connection(), 1)
     return socket, task
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalidation", ["logout", "rotation"])
-async def test_invalidated_session_cannot_receive_broadcasts_or_replies(session, invalidation):
+async def test_invalidated_session_cannot_receive_broadcasts_or_replies(
+    session, invalidation
+):
     record, token, manager = session
     socket, task = await connected_socket(token, manager)
     try:
@@ -98,7 +104,9 @@ async def test_idle_revoked_session_is_closed(session):
 @pytest.mark.asyncio
 async def test_expired_session_never_joins_connection_pool(session):
     _, _, manager = session
-    token, _ = auth.create_access_token({"sub": "admin"}, timedelta(seconds=-1))
+    token, _ = auth.create_access_token(
+        {"sub": "admin"}, timedelta(seconds=-1)
+    )
     socket = Socket()
     await routes.websocket_endpoint(socket, token=f"Bearer {token}")
     assert socket.closed == 1008

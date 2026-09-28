@@ -1,18 +1,9 @@
 """Command execution utility module.
 
-This module provides utilities for executing shell commands with timeout control,
-real-time output logging, and error handling capabilities.
+This module provides utilities for executing shell commands with timeout
+control, real-time output logging, and error handling capabilities.
 """
 
-from core.logger import (
-    bind_log_context,
-    get_logger,
-    log_context_environment,
-    log_lifecycle_event,
-)
-from typing import BinaryIO, Optional, Literal
-from collections.abc import Mapping, Sequence
-from core.redaction import command_secrets, redact_known_values, redact_text, safe_command
 import logging
 import os
 import signal
@@ -20,14 +11,30 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Mapping, Sequence
+from typing import BinaryIO, Literal, Optional
 from uuid import uuid4
 
+from core.logger import (
+    bind_log_context,
+    get_logger,
+    log_context_environment,
+    log_lifecycle_event,
+)
+from core.redaction import (
+    command_secrets,
+    redact_known_values,
+    redact_text,
+    safe_command,
+)
 
 log = get_logger(__name__)
 
 
 class CommandResult:
-    """Encapsulates result of command execution with convenient access methods."""
+    """Encapsulates result of command execution with convenient access
+    methods.
+    """
 
     def __init__(self, return_code: int, stdout: str, stderr: str) -> None:
         """Initialize command result.
@@ -78,7 +85,7 @@ class CommandResult:
         Returns:
             List of lines from stdout, excluding empty lines.
         """
-        return [line for line in self._stdout.split('\n') if line.strip()]
+        return [line for line in self._stdout.split("\n") if line.strip()]
 
     def get_error_lines(self) -> list[str]:
         """Get stderr as a list of lines.
@@ -86,21 +93,24 @@ class CommandResult:
         Returns:
             List of lines from stderr, excluding empty lines.
         """
-        return [line for line in self._stderr.split('\n') if line.strip()]
+        return [line for line in self._stderr.split("\n") if line.strip()]
 
     def to_dict(self) -> dict[str, str | int]:
-        """Convert result to dictionary format for backward compatibility.
+        """
+        Convert result to dictionary format for backward compatibility.
 
         Returns:
             Dictionary with 'ret', 'out', 'err' keys.
         """
         return {
-            'ret': self._return_code,
-            'out': self._stdout,
-            'err': self._stderr
+            "ret": self._return_code,
+            "out": self._stdout,
+            "err": self._stderr,
         }
 
-    def raise_if_failed(self, error_message: Optional[str] = None) -> 'CommandResult':
+    def raise_if_failed(
+        self, error_message: Optional[str] = None
+    ) -> "CommandResult":
         """Raise exception if command failed.
 
         Args:
@@ -113,7 +123,10 @@ class CommandResult:
             Exception: If command failed
         """
         if self.is_failure():
-            msg = error_message or f"Command failed with return code {self._return_code}"
+            msg = (
+                error_message
+                or f"Command failed with return code {self._return_code}"
+            )
             if self.stderr:
                 msg += f": {self.stderr}"
             raise Exception(msg)
@@ -121,7 +134,7 @@ class CommandResult:
 
     def exit_if_failed(
         self, exit_code: int = 1, error_message: Optional[str] = None
-    ) -> 'CommandResult':
+    ) -> "CommandResult":
         """Exit process if command failed.
 
         Args:
@@ -132,7 +145,10 @@ class CommandResult:
             Self for method chaining
         """
         if self.is_failure():
-            msg = error_message or f"Command failed with return code {self._return_code}"
+            msg = (
+                error_message
+                or f"Command failed with return code {self._return_code}"
+            )
             if self.stderr:
                 msg += f": {self.stderr}"
             log.error(msg)
@@ -146,15 +162,22 @@ class CommandResult:
 
     def __repr__(self) -> str:
         """Detailed string representation of command result."""
-        return (f"CommandResult(return_code={self._return_code}, "
-                f"stdout_length={len(self._stdout)}, "
-                f"stderr_length={len(self._stderr)})")
+        return (
+            f"CommandResult(return_code={self._return_code}, "
+            f"stdout_length={len(self._stdout)}, "
+            f"stderr_length={len(self._stderr)})"
+        )
 
 
 class CommandError(Exception):
     """Exception raised when command execution fails."""
 
-    def __init__(self, command: str | Sequence[str], result: CommandResult, message: Optional[str] = None):
+    def __init__(
+        self,
+        command: str | Sequence[str],
+        result: CommandResult,
+        message: Optional[str] = None,
+    ):
         """Initialize command error.
 
         Args:
@@ -164,7 +187,10 @@ class CommandError(Exception):
         """
         self.command = safe_command(command)
         self.result = result
-        self.message = redact_text(message or f"Command failed: {self.command}", command_secrets(command))
+        self.message = redact_text(
+            message or f"Command failed: {self.command}",
+            command_secrets(command),
+        )
 
         super().__init__(self.message)
 
@@ -175,7 +201,7 @@ def execute_command(
     log_output: bool = True,
     *,
     # 新增的错误处理参数
-    fail_action: Optional[Literal['exit', 'raise', 'none']] = None,
+    fail_action: Optional[Literal["exit", "raise", "none"]] = None,
     exit_code: int = 1,
     error_message: Optional[str] = None,
     # 向后兼容参数
@@ -186,9 +212,11 @@ def execute_command(
     """Execute a shell command with comprehensive error handling.
 
     Args:
-        cmd: Argument list (no shell), or a legacy trusted shell command.
+        cmd: Argument list (no shell), or a legacy trusted shell
+        command.
         env: Environment overrides for the child process.
-        sensitive_values: Additional values to remove from logs and results.
+        sensitive_values: Additional values to remove from logs and
+        results.
         timeout: Timeout in seconds, defaults to 6000.
         log_output: Whether to log output, defaults to True.
         fail_action: How to handle failure:
@@ -197,7 +225,8 @@ def execute_command(
             - 'none': Return result (default)
         exit_code: Exit code when fail_action='exit'
         error_message: Custom error message
-        exit: Backward compatibility - if True, equivalent to fail_action='exit'
+        exit: Backward compatibility - if True, equivalent to
+        fail_action='exit'
 
     Returns:
         CommandResult object containing execution results.
@@ -208,19 +237,32 @@ def execute_command(
     """
     # 向后兼容性处理
     if exit is not None:
-        fail_action = 'exit' if exit else 'none'
+        fail_action = "exit" if exit else "none"
     elif fail_action is None:
-        fail_action = 'none'
+        fail_action = "none"
 
     # 为并发命令分配独立标识，便于关联开始、结束及超时日志。
     command_id = f"local-{uuid4().hex[:12]}"
     with bind_log_context(command_id=command_id):
-        result = _execute_command_core(cmd, timeout, log_output, env, sensitive_values)
+        result = _execute_command_core(
+            cmd, timeout, log_output, env, sensitive_values
+        )
         # 统一的错误处理也保留命令上下文。
-        if result.is_failure() and fail_action != 'none':
+        if result.is_failure() and fail_action != "none":
             _handle_command_failure(
-                safe_command(cmd), result, fail_action, exit_code,
-                redact_text(error_message, (*command_secrets(cmd), *sensitive_values)) if error_message else None)
+                safe_command(cmd),
+                result,
+                fail_action,
+                exit_code,
+                (
+                    redact_text(
+                        error_message,
+                        (*command_secrets(cmd), *sensitive_values),
+                    )
+                    if error_message
+                    else None
+                ),
+            )
         return result
 
 
@@ -231,11 +273,13 @@ def _execute_command_core(
     env: Optional[Mapping[str, str]] = None,
     sensitive_values: Sequence[str] = (),
 ) -> CommandResult:
-    """Execute a command and guarantee that a timeout kills all descendants.
+    """Execute a command and guarantee that a timeout kills all
+    descendants.
 
-    Output is spooled to temporary files instead of unbounded in-memory pipe
-    readers.  ``start_new_session`` gives every command its own process group,
-    allowing a timeout to terminate the shell and all of its children.
+    Output is spooled to temporary files instead of unbounded in-memory
+    pipe readers.  ``start_new_session`` gives every command its own
+    process group, allowing a timeout to terminate the shell and all of
+    its children.
     """
     max_output_bytes = 10 * 1024 * 1024
 
@@ -255,7 +299,9 @@ def _execute_command_core(
             return
         except OSError as exc:
             log.warning(
-                "Failed to signal command process group %s: %s", process.pid, exc
+                "Failed to signal command process group %s: %s",
+                process.pid,
+                exc,
             )
 
     def _group_exists(process: subprocess.Popen[bytes]) -> bool:
@@ -300,7 +346,11 @@ def _execute_command_core(
                 start_new_session=True,
                 env=child_env,
             )
-            log.debug("Executing command in process group %s: %s", process.pid, display_command)
+            log.debug(
+                "Executing command in process group %s: %s",
+                process.pid,
+                display_command,
+            )
             timed_out = False
             try:
                 return_code = process.wait(timeout=timeout)
@@ -317,11 +367,13 @@ def _execute_command_core(
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     pass
-                # The shell may exit while a descendant ignores SIGTERM. Check
-                # the process group itself, not only the group leader.
+                # The shell may exit while a descendant ignores SIGTERM.
+                # Check the process group itself, not only the group
+                # leader.
                 if _group_exists(process):
                     log.warning(
-                        "Command process group %s survived SIGTERM; sending SIGKILL",
+                        "Command process group %s survived SIGTERM; sending"
+                        " SIGKILL",
                         process.pid,
                     )
                     _signal_group(process, signal.SIGKILL)
@@ -347,8 +399,9 @@ def _execute_command_core(
                 stderr = f"{stderr}\n{timeout_message}".strip()
 
             if log_output:
-                # Match multiline secrets (such as generated PEM keys) before
-                # splitting. Keep generated output intact for the caller.
+                # Match multiline secrets (such as generated PEM keys)
+                # before splitting. Keep generated output intact for the
+                # caller.
                 for line in redact_text(stdout).splitlines():
                     log.debug("[STDOUT] %s", line)
                 for line in redact_text(stderr).splitlines():
@@ -371,11 +424,19 @@ def _execute_command_core(
                 process_id=process.pid,
                 stdout_bytes=len(stdout.encode("utf-8")),
                 stderr_bytes=len(stderr.encode("utf-8")),
-                error=_error_summary(redact_text(stderr)) if result.is_failure() else None,
+                error=(
+                    _error_summary(redact_text(stderr))
+                    if result.is_failure()
+                    else None
+                ),
             )
             return result
     except Exception as exc:
-        log.error("Execute command [%s] got exception: %s", display_command, redact_text(str(exc), secrets))
+        log.error(
+            "Execute command [%s] got exception: %s",
+            display_command,
+            redact_text(str(exc), secrets),
+        )
         log_lifecycle_event(
             log,
             "command_end",
@@ -388,28 +449,30 @@ def _execute_command_core(
             timed_out=False,
             error=redact_text(str(exc), secrets),
         )
-        return CommandResult(1, "", f"execute command error: {redact_text(str(exc), secrets)}")
+        return CommandResult(
+            1, "", f"execute command error: {redact_text(str(exc), secrets)}"
+        )
 
 
 def _handle_command_failure(
     cmd: str | Sequence[str],
     result: CommandResult,
-    fail_action: Literal['exit', 'raise'],
+    fail_action: Literal["exit", "raise"],
     exit_code: int,
-    error_message: Optional[str]
+    error_message: Optional[str],
 ) -> None:
     """Handle command failure based on action type."""
 
     if error_message is None:
-        error_message = f'The command [{cmd}] execution failed'
+        error_message = f"The command [{cmd}] execution failed"
         if result.stderr:
-            error_message += f'. Error: [{result.stderr}]'
+            error_message += f". Error: [{result.stderr}]"
 
     log.error(error_message)
 
-    if fail_action == 'exit':
+    if fail_action == "exit":
         sys.exit(exit_code)
-    elif fail_action == 'raise':
+    elif fail_action == "raise":
         raise CommandError(cmd, result, error_message)
 
 
@@ -420,10 +483,10 @@ if __name__ == "__main__":
     result1 = execute_command("ls -l")
     print(f"Result: {result1.is_success()}")
 
-    result2 = execute_command("ls -l", fail_action='exit')
+    result2 = execute_command("ls -l", fail_action="exit")
 
     try:
-        result3 = execute_command("false", fail_action='raise')
+        result3 = execute_command("false", fail_action="raise")
     except CommandError as e:
         print(f"Caught error: {e}")
 

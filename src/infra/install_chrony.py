@@ -8,9 +8,11 @@ K8s 集群对节点时钟一致性敏感（影响证书校验、TLS 握手、etc
 应在 K8s 核心组件部署前最先执行。
 操作系统默认已安装 chrony，无需额外安装。
 """
+
 from io import StringIO
-from pyinfra.operations import server
+
 from pyinfra.context import host
+from pyinfra.operations import server
 
 data = host.data
 master_ip = data.master_ip
@@ -34,7 +36,7 @@ if "master" in host.groups:
     server.files.put(
         name="Write master chrony.conf (NTP server)",
         src=master_conf,
-        dest="/etc/chrony.conf"
+        dest="/etc/chrony.conf",
     )
 else:
     # 其他节点作为客户端，指向 master 同步
@@ -49,7 +51,7 @@ else:
     server.files.put(
         name="Write client chrony.conf",
         src=client_conf,
-        dest="/etc/chrony.conf"
+        dest="/etc/chrony.conf",
     )
 
 # ---- 重启并启用 chronyd，加载新配置 ----
@@ -57,16 +59,13 @@ server.systemd.service(
     name="Restart and enable chronyd",
     service="chronyd",
     enabled=True,
-    restarted=True
+    restarted=True,
 )
 
 # ---- 立即强制同步时钟 ----
 # master 端：直接 makestep；客户端端：重试等待 master 就绪（最多约 60s）
 if "master" in host.groups:
-    server.shell(
-        name="Force master time sync",
-        commands="chronyc makestep"
-    )
+    server.shell(name="Force master time sync", commands="chronyc makestep")
 else:
     server.shell(
         name="Force client time sync (retry until master ready)",
@@ -75,5 +74,5 @@ else:
             "chronyc makestep && break; "
             "sleep 5; "
             "done"
-        )
+        ),
     )

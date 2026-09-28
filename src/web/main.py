@@ -9,33 +9,33 @@ KubEngine FastAPI 应用主入口模块
 - SPA（单页应用）路由支持
 """
 
-import os
 import asyncio
-from contextlib import asynccontextmanager, suppress
-from starlette.concurrency import run_in_threadpool
-from core.orm.cluster import ensure_cluster_schema
-from core.orm.task import ensure_task_schema
-from core.orm.notifications import read_cluster_revision
-from core.misc.websocket import connection_manager
+import os
 import platform
 import re
 import sys
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.logger import bind_log_context, get_logger
+from core.misc.websocket import connection_manager
+from core.orm.cluster import ensure_cluster_schema
 from core.orm.engine import Base, engine
 from core.orm.image_import import ensure_image_import_schema
-from web.api.artifacts import router as artifacts_router
+from core.orm.notifications import read_cluster_revision
+from core.orm.task import ensure_task_schema
 from web.api.app import router as apps_router
+from web.api.artifacts import router as artifacts_router
 from web.api.auth_routes import router as auth_router
 from web.api.health import router as health_router
 from web.api.k8s import router as k8s_router
@@ -58,12 +58,15 @@ def print_kubengine_welcome() -> None:
 
     显示应用版本、运行环境等信息。
     """
-    welcome_info = f"""
-  KubEngine FastAPI 服务启动成功
-  版本信息： KubEngine v1.0.0 | FastAPI 0.104.1
-  运行环境： {platform.system()} {platform.release()} | Python {sys.version.split()[0]}
-  提示： KubEngine 专注于云原生容器平台管理，轻量高效！
-    """
+    welcome_info = (
+        "\n"
+        "  KubEngine FastAPI 服务启动成功\n"
+        "  版本信息： KubEngine v1.0.0 | FastAPI 0.104.1\n"
+        f"  运行环境： {platform.system()} {platform.release()} | Python "
+        f"{sys.version.split()[0]}\n"
+        "  提示： KubEngine 专注于云原生容器平台管理，轻量高效！\n"
+        "    "
+    )
 
     print("=" * 80)
     print(welcome_info)
@@ -103,7 +106,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             try:
                 current = await run_in_threadpool(read_cluster_revision)
                 if current != revision:
-                    await connection_manager.broadcast({"action": "refresh_clusters"})
+                    await connection_manager.broadcast(
+                        {"action": "refresh_clusters"}
+                    )
                     revision = current
             except Exception:
                 logger.exception("集群状态通知同步失败")
@@ -151,6 +156,7 @@ async def request_log_context(
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         return response
+
 
 # 挂载 API 路由
 app.include_router(auth_router, prefix="/api/v1")
@@ -205,7 +211,8 @@ async def validation_exception_handler(
     Returns:
         标准错误响应
     """
-    # Validation errors may contain the complete submitted body in `input`,
+    # Validation errors may contain the complete submitted body in
+    # `input`,
     # including login passwords, SSH keys and application credentials.
     errors = [
         {key: error[key] for key in ("loc", "type", "msg") if key in error}
@@ -298,7 +305,10 @@ async def general_exception_handler(
 
 
 def _resolve_static_path(relative_path: str) -> Path:
-    """Resolve root-level assets without following paths outside the static root."""
+    """
+    Resolve root-level assets without following paths outside the static
+    root.
+    """
     path = Path(relative_path)
     if path.is_absolute() or ".." in path.parts:
         raise HTTPException(status_code=404, detail="Not Found")
@@ -348,8 +358,10 @@ async def spa_fallback(full_path: str):
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
-    # Resolve before deciding whether this is an asset or a client-side route.
-    # This also rejects symlinks which would escape the static directory.
+    # Resolve before deciding whether this is an asset or a client-side
+    # route.
+    # This also rejects symlinks which would escape the static
+    # directory.
     file_path = _resolve_static_path(full_path)
     if "." in full_path:
         if file_path.is_file():

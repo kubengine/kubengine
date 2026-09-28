@@ -71,8 +71,8 @@ def check_password_strength(password: str) -> tuple[bool, list[str]]:
         password: The password to check
 
     Returns:
-        Tuple of (is_strong, weakness_messages)
-        where is_strong is True if password meets all requirements
+        Tuple of (is_strong, weakness_messages) where is_strong is True
+        if password meets all requirements
     """
     weaknesses: list[str] = []
 
@@ -83,18 +83,21 @@ def check_password_strength(password: str) -> tuple[bool, list[str]]:
     # Character variety checks
     if not any(c.islower() for c in password):
         weaknesses.append(
-            "Password must contain at least one lowercase letter")
+            "Password must contain at least one lowercase letter"
+        )
 
     if not any(c.isupper() for c in password):
         weaknesses.append(
-            "Password must contain at least one uppercase letter")
+            "Password must contain at least one uppercase letter"
+        )
 
     if not any(c.isdigit() for c in password):
         weaknesses.append("Password must contain at least one digit")
 
     if not any(c in "!@#$%^&*()_+-=[]{}|;:'\",.<>?/" for c in password):
         weaknesses.append(
-            "Password must contain at least one special character")
+            "Password must contain at least one special character"
+        )
 
     # Common password patterns
     common_patterns = ["password", "123456", "qwerty", "admin", "welcome"]
@@ -119,7 +122,8 @@ def generate_secure_random_password(length: int = 12) -> str:
     """
     if length < 8 or length > 128:
         raise ValueError(
-            "Password length must be between 8 and 128 characters")
+            "Password length must be between 8 and 128 characters"
+        )
 
     # Define character sets
     lowercase = "abcdefghijklmnopqrstuvwxyz"
@@ -129,13 +133,14 @@ def generate_secure_random_password(length: int = 12) -> str:
 
     # Ensure at least one character from each set
     import secrets
+
     all_chars = lowercase + uppercase + digits + special
 
     password = [
         secrets.choice(lowercase),
         secrets.choice(uppercase),
         secrets.choice(digits),
-        secrets.choice(special)
+        secrets.choice(special),
     ]
 
     # Fill remaining length with random characters
@@ -149,14 +154,13 @@ def generate_secure_random_password(length: int = 12) -> str:
 
 
 def is_password_expired(
-    hashed_password: str,
-    max_age_days: int = 90
+    hashed_password: str, max_age_days: int = 90
 ) -> tuple[bool, int]:
     """Check if password needs to be changed based on hash timestamp.
 
-    Note: This requires the bcrypt hash to include timestamp information.
-    This is a simplified version - in production, you might want to
-    store password change timestamps separately.
+    Note: This requires the bcrypt hash to include timestamp
+    information. This is a simplified version - in production, you might
+    want to store password change timestamps separately.
 
     Args:
         hashed_password: The bcrypt hashed password
@@ -165,9 +169,9 @@ def is_password_expired(
     Returns:
         Tuple of (is_expired, days_remaining)
     """
-    # This is a placeholder implementation
-    # In production, you would extract actual timestamp from hash or DB
-    # For now, assume password needs regular changes
+    # This is a placeholder implementation In production, you would
+    # extract actual timestamp from hash or DB For now, assume password
+    # needs regular changes
     return False, max_age_days
 
 
@@ -198,7 +202,9 @@ if __name__ == "__main__":
     # Test invalid password
     is_invalid = verify_password("wrongpassword", hashed)
     print(
-        f"Wrong password verification: {'Success' if is_invalid else 'Failed (expected)'}")
+        "Wrong password verification:"
+        f" {'Success' if is_invalid else 'Failed (expected)'}"
+    )
 
     # Generate random password
     random_pwd = generate_secure_random_password(16)

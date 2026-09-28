@@ -28,7 +28,10 @@ def get_etcd_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="replicaCount",
                 label="集群节点数",
-                extra="etcd 集群节点数，1 为单机模式，生产环境建议 3 或 5（奇数）以保证 Raft 仲裁多数",
+                extra=(
+                    "etcd 集群节点数，1 为单机模式，生产环境建议 3 或"
+                    " 5（奇数）以保证 Raft 仲裁多数"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="radio",
@@ -100,13 +103,21 @@ def get_etcd_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="disk",
                 label="硬盘大小",
-                extra="8Gi - 100Gi, 节点数据持久化存储大小。etcd 对磁盘 IO 敏感，建议使用高性能磁盘",
+                extra=(
+                    "8Gi - 100Gi, 节点数据持久化存储大小。etcd 对磁盘 IO"
+                    " 敏感，建议使用高性能磁盘"
+                ),
                 order=3,
                 form_item_props={"required": True},
                 type="number",
                 initial_value=8,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 8 - 100", "min": 8, "max": 100},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 8 - 100",
+                        "min": 8,
+                        "max": 100,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -120,7 +131,10 @@ def get_etcd_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="service",
                 label="Service服务",
-                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                extra=(
+                    "请选择 K8s Service 类型（ClusterIP 集群内访问、"
+                    "LoadBalancer 公网负载均衡）"
+                ),
                 order=4,
                 form_item_props={"required": True},
                 type="radio",
@@ -152,7 +166,9 @@ def get_etcd_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -178,7 +194,10 @@ def get_etcd_app(create_time: datetime) -> AppSchema:
                 field_props={
                     "options": [
                         {"label": "开启（允许匿名访问）", "value": "true"},
-                        {"label": "关闭（强制认证，推荐生产）", "value": "false"},
+                        {
+                            "label": "关闭（强制认证，推荐生产）",
+                            "value": "false",
+                        },
                     ],
                 },
                 helm_props={
@@ -218,7 +237,9 @@ def get_etcd_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="autoCompactionMode",
                 label="自动压缩模式",
-                extra="历史数据压缩模式：periodic 按时长、revision 按版本号。留空表示不压缩",
+                extra=(
+                    "历史数据压缩模式：periodic 按时长、revision 按版本号。留空表示不压缩"
+                ),
                 order=3,
                 form_item_props={"required": False},
                 type="select",
@@ -243,13 +264,18 @@ def get_etcd_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="autoCompactionRetention",
                 label="自动压缩保留",
-                extra="压缩保留值。periodic 模式下为时长（如 1h），revision 模式下为版本数（如 1000）",
+                extra=(
+                    "压缩保留值。periodic 模式下为时长（如 1h），revision"
+                    " 模式下为版本数（如 1000）"
+                ),
                 order=4,
                 form_item_props={"required": False},
                 type="text",
                 initial_value="1h",
                 rules=[],
-                field_props={"placeholder": "periodic 模式如 1h；revision 模式如 1000"},
+                field_props={
+                    "placeholder": "periodic 模式如 1h；revision 模式如 1000"
+                },
                 helm_props={
                     "keys": ["autoCompactionRetention"],
                     "type": "string",
@@ -307,7 +333,11 @@ def get_etcd_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="snapshotStorageClass",
                 label="快照卷存储类",
-                extra="开启灾难恢复时，快照卷使用的 StorageClass（需支持 ReadWriteMany 多节点读写）。留空则使用集群默认 StorageClass",
+                extra=(
+                    "开启灾难恢复时，快照卷使用的 StorageClass（需支持"
+                    " ReadWriteMany 多节点读写）。留空则使用集群默认"
+                    " StorageClass"
+                ),
                 order=7,
                 form_item_props={"required": True},
                 type="select",

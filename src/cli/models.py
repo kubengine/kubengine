@@ -1,15 +1,16 @@
 """Custom Click parameter types for CLI commands.
 
-This module defines custom parameter types for Click command-line interface,
-including list parsing and validation utilities.
+This module defines custom parameter types for the Click command-line
+interface, including list parsing and validation utilities.
 """
 
 from typing import Any, List, Optional
+
 import click
 
 
 class ListParamType(click.ParamType):
-    """Custom Click parameter type for parsing comma-separated strings into lists.
+    """Parse comma-separated strings into lists for Click.
 
     This type converts comma-separated input strings into Python lists,
     automatically handling whitespace trimming and empty values.
@@ -21,7 +22,7 @@ class ListParamType(click.ParamType):
         """Initialize list parameter type.
 
         Args:
-            separator: Character used to separate list items (default: comma)
+            separator: Character separating list items (default: comma)
             trim: Whether to trim whitespace from items (default: True)
         """
         self.separator = separator
@@ -32,7 +33,7 @@ class ListParamType(click.ParamType):
         self,
         value: Any,
         param: Optional[click.Parameter],
-        ctx: Optional[click.Context]
+        ctx: Optional[click.Context],
     ) -> List[str]:
         """Convert input value to list format.
 
@@ -59,7 +60,7 @@ class ListParamType(click.ParamType):
         if not isinstance(value, str):
             raise click.BadParameter(
                 f"Expected string or list, got {type(value).__name__}",
-                param=param
+                param=param,
             )
 
         # Handle empty string
@@ -68,7 +69,11 @@ class ListParamType(click.ParamType):
 
         # Split by separator and optionally trim whitespace
         if self.trim:
-            return [item.strip() for item in value.split(self.separator) if item.strip()]
+            return [
+                item.strip()
+                for item in value.split(self.separator)
+                if item.strip()
+            ]
         else:
             return [item for item in value.split(self.separator) if item]
 
@@ -86,7 +91,7 @@ class HostListType(ListParamType):
         self,
         value: Any,
         param: Optional[click.Parameter],
-        ctx: Optional[click.Context]
+        ctx: Optional[click.Context],
     ) -> List[str]:
         """Convert input value to validated host list.
 
@@ -109,7 +114,7 @@ class HostListType(ListParamType):
                 raise click.BadParameter(
                     f"Invalid host format: '{host}'. "
                     "Expected IP address or hostname",
-                    param=param
+                    param=param,
                 )
 
         return host_list
@@ -130,19 +135,18 @@ class HostListType(ListParamType):
 
         # Check for valid characters
         valid_chars = (
-            "abcdefghijklmnopqrstuvwxyz"
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "0123456789"
-            ".-_"
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_"
         )
 
         return all(char in valid_chars for char in host)
 
 
 class KeyValueMapType(click.ParamType):
-    """Parameter type for parsing key:value mappings from comma-separated strings.
+    """Parse comma-separated key:value mappings for Click.
 
-    Example: "key1:value1,key2:value2" -> {"key1": "value1", "key2": "value2"}
+    Example:
+        "key1:value1,key2:value2"
+            -> {"key1": "value1", "key2": "value2"}
     """
 
     name = "key_value_map"
@@ -151,7 +155,7 @@ class KeyValueMapType(click.ParamType):
         self,
         value: Any,
         param: Optional[click.Parameter],
-        ctx: Optional[click.Context]
+        ctx: Optional[click.Context],
     ) -> dict[str, str]:
         """Convert input string to key-value mapping.
 
@@ -175,7 +179,7 @@ class KeyValueMapType(click.ParamType):
         if not isinstance(value, str):
             raise click.BadParameter(
                 f"Expected string or dict, got {type(value).__name__}",
-                param=param
+                param=param,
             )
 
         if not value.strip():
@@ -189,7 +193,7 @@ class KeyValueMapType(click.ParamType):
                     raise click.BadParameter(
                         f"Invalid key:value pair: '{pair}'. "
                         "Expected format 'key:value'",
-                        param=param
+                        param=param,
                     )
 
                 key, val = pair.split(":", 1)
@@ -199,8 +203,7 @@ class KeyValueMapType(click.ParamType):
 
         except ValueError as e:
             raise click.BadParameter(
-                f"Failed to parse key-value mapping: {str(e)}",
-                param=param
+                f"Failed to parse key-value mapping: {str(e)}", param=param
             )
 
 

@@ -78,7 +78,10 @@ def _guarded(url_command, local_path, extra_seconds):
         f"timeout --kill-after=5 {budget + KILL_GRACE_SECONDS} "
         f"curl --max-time {budget} {CURL_OPTS} {url_command}"
     )
-    return command, budget + extra_seconds + OP_MARGIN_SECONDS + KILL_GRACE_SECONDS
+    return (
+        command,
+        budget + extra_seconds + OP_MARGIN_SECONDS + KILL_GRACE_SECONDS,
+    )
 
 
 def pull(url, local_path, consumer, extra_seconds=0):

@@ -1,9 +1,10 @@
 """部署Keepalived提供控制面VIP（高可用模式）"""
+
 from io import StringIO
-from pyinfra.operations import server, files
-from pyinfra.context import host
 
 from _offline_transfer import YUM_OP_SECONDS
+from pyinfra.context import host
+from pyinfra.operations import files, server
 
 data = host.data
 
@@ -25,7 +26,7 @@ if is_master and vip:
         name="Add kubengine yum repository",
         src=repo_name,
         baseurl=baseurl,
-        gpgcheck=False
+        gpgcheck=False,
     )
     server.yum.packages(
         name="Install keepalived",
@@ -36,18 +37,19 @@ if is_master and vip:
         _retry_delay=10,
     )
     server.yum.repo(
-        name="Remove kubengine yum repository",
-        src=repo_name,
-        present=False
+        name="Remove kubengine yum repository", src=repo_name, present=False
     )
 
     # 获取网络接口：优先使用配置值，否则自动检测默认路由网卡
     interface = data.master_interface or ""
     if not interface:
         import subprocess
+
         result = subprocess.run(
             ["ip", "route", "get", "1.1.1.1"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             interface = result.stdout.split(" dev ")[1].split()[0]
@@ -98,7 +100,7 @@ vrrp_instance VI_K8S_APISERVER {{
     files.put(
         name="Write keepalived configuration",
         dest="/etc/keepalived/keepalived.conf",
-        src=StringIO(keepalived_conf)
+        src=StringIO(keepalived_conf),
     )
 
     server.systemd.service(
@@ -106,5 +108,5 @@ vrrp_instance VI_K8S_APISERVER {{
         service="keepalived",
         running=True,
         enabled=True,
-        restarted=True
+        restarted=True,
     )

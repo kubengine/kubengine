@@ -29,7 +29,9 @@ class PageParams(BaseModel):
     """
 
     page: int = Field(default=1, ge=1, description="当前页码，从 1 开始")
-    page_size: int = Field(default=10, ge=1, le=100, description="每页数据条数")
+    page_size: int = Field(
+        default=10, ge=1, le=100, description="每页数据条数"
+    )
 
     @property
     def offset(self) -> int:
@@ -75,8 +77,9 @@ class PageParams(BaseModel):
 
 def pagination_params(
     page: int = Query(default=1, ge=1, description="当前页码，从 1 开始"),
-    page_size: int = Query(default=10, ge=1, le=100,
-                           description="每页数据条数，最大 100"),
+    page_size: int = Query(
+        default=10, ge=1, le=100, description="每页数据条数，最大 100"
+    ),
 ) -> PageParams:
     """
     FastAPI 分页依赖函数
@@ -99,7 +102,8 @@ def pagination_params(
         router = APIRouter()
 
         @router.get("/users")
-        async def list_users(params: PageParams = Depends(pagination_params)):
+        async def list_users(params: PageParams =
+        Depends(pagination_params)):
             # params.page = 1
             # params.page_size = 10
             # params.offset = 0
@@ -154,7 +158,8 @@ class PaginatedResponse(BaseModel):
         # 自动计算总页数
         if self.total_pages is None:
             self.total_pages = (
-                self.total + self.page_size - 1) // self.page_size
+                self.total + self.page_size - 1
+            ) // self.page_size
 
         # 自动计算是否有下一页
         if self.has_next is None:
@@ -185,7 +190,8 @@ def create_paginated_response(
 
     Example:
         ```python
-        from src.web.utils.page import PageParams, create_paginated_response
+        from src.web.utils.page import PageParams,
+        create_paginated_response
 
         # 查询数据
         items = query_users(offset=0, limit=10)

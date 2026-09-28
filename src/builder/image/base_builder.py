@@ -6,39 +6,41 @@
 """
 
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple, Union, TypeVar
-from dataclasses import dataclass, field
 
 import datetime
 from abc import ABC, abstractmethod
-from concurrent.futures import ProcessPoolExecutor, as_completed, Future
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
-from core.command import CommandResult
-from core.command import execute_command
+from core.command import CommandResult, execute_command
 from core.config import Application, ConfigDict
 from core.logger import get_logger
 
 logger = get_logger(__name__)
 
 # 类型别名
-T = TypeVar('T')
+T = TypeVar("T")
 VersionResult = Tuple[str, bool]
 SupportedVersions = Tuple[List[str], str]
 
 
 class BuilderError(Exception):
     """构建器异常基类"""
+
     pass
 
 
 class VersionNotSupportedError(BuilderError):
     """版本不支持异常"""
+
     pass
 
 
 class ConfigurationError(BuilderError):
     """配置错误异常"""
+
     pass
 
 
@@ -48,6 +50,7 @@ class BuilderOptions:
 
     统一的配置类，替代原有的 **kwargs，提供类型安全和默认值管理
     """
+
     # 核心构建选项
     export: bool = False
     push: bool = False
@@ -114,13 +117,13 @@ class BuilderOptions:
         # 收集所有标准属性（排除方法）
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
-            if not attr_name.startswith('_') and not callable(attr):
+            if not attr_name.startswith("_") and not callable(attr):
                 result[attr_name] = attr
 
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'BuilderOptions':
+    def from_dict(cls, data: Dict[str, Any]) -> "BuilderOptions":
         """从字典创建选项对象
 
         Args:
@@ -140,7 +143,7 @@ class BuildContext:
         container_id: str,
         mount_dir: str,
         version: str,
-        config: ConfigDict
+        config: ConfigDict,
     ):
         self.container_id = container_id
         self.mount_dir = mount_dir
@@ -170,7 +173,7 @@ class BaseBuilder(ABC):
         name: str,
         config_file: Optional[Union[str, Path]] = None,
         options: Optional[BuilderOptions] = None,
-        **kwargs: Any  # 保持向后兼容
+        **kwargs: Any,  # 保持向后兼容
     ):
         """初始化应用构建器
 
@@ -218,7 +221,8 @@ class BaseBuilder(ABC):
 
         if not self.config_file.exists():
             raise ConfigurationError(
-                f"{self.name}: 配置文件不存在: {self.config_file}")
+                f"{self.name}: 配置文件不存在: {self.config_file}"
+            )
 
     def get_option(self, key: str, default: Any = None) -> Any:
         """获取构建选项值
@@ -250,11 +254,11 @@ class BaseBuilder(ABC):
         self.options.update(**kwargs)
 
         # 更新向后兼容的属性
-        for key in ['export', 'push']:
+        for key in ["export", "push"]:
             if key in kwargs:
                 setattr(self, key, kwargs[key])
-        if 'out' in kwargs:
-            self.out = Path(kwargs['out'])
+        if "out" in kwargs:
+            self.out = Path(kwargs["out"])
 
     @property
     def config(self) -> ConfigDict:
@@ -327,7 +331,8 @@ class BaseBuilder(ABC):
 
             # 3. 创建构建上下文
             container_id = self._create_base_container(
-                config.get("base_image"))
+                config.get("base_image")
+            )
             context = BuildContext(container_id, "", version, config)
             try:
                 context.mount_dir = self._mount_container(container_id)
@@ -359,7 +364,8 @@ class BaseBuilder(ABC):
         versions, _ = self.supported_versions()
         if version not in versions:
             raise VersionNotSupportedError(
-                f"{self.name}: 不支持的版本 {version}，支持版本: {versions}")
+                f"{self.name}: 不支持的版本 {version}，支持版本: {versions}"
+            )
 
     def _execute_build_steps(self, context: BuildContext) -> None:
         """执行构建步骤
@@ -397,9 +403,7 @@ class BaseBuilder(ABC):
                 continue
 
             self._copy_to_container(
-                context.container_id,
-                str(src_path),
-                container_path
+                context.container_id, str(src_path), container_path
             )
 
     def _post_build_steps(self, context: BuildContext) -> None:
@@ -457,7 +461,9 @@ class BaseBuilder(ABC):
 
                     status = "成功" if result[1] else "失败"
                     logger.info(
-                        f"构建进度 {completed_count}/{len(versions)}: {version} {status}")
+                        f"构建进度 {completed_count}/{len(versions)}:"
+                        f" {version} {status}"
+                    )
 
                 except Exception as e:
                     logger.error(f"构建 {version} 时发生异常: {e}")
@@ -611,7 +617,9 @@ class BaseBuilder(ABC):
         if author:
             self._config_container(container_id, "author", author)
 
-    def _config_labels(self, container_id: str, base_labels: dict[str, Any]) -> None:
+    def _config_labels(
+        self, container_id: str, base_labels: dict[str, Any]
+    ) -> None:
         """配置容器标签
 
         Args:
@@ -620,12 +628,14 @@ class BaseBuilder(ABC):
         """
         # 添加构建时间标签
         labels = base_labels.copy()
-        labels.update({
-            "org.opencontainers.image.base.created": datetime.datetime.now(
-                datetime.timezone.utc
-            ).isoformat(),
-            "org.opencontainers.image.created.by": f"{self.name} builder"
-        })
+        labels.update(
+            {
+                "org.opencontainers.image.base.created": (
+                    datetime.datetime.now(datetime.timezone.utc).isoformat()
+                ),
+                "org.opencontainers.image.created.by": f"{self.name} builder",
+            }
+        )
 
         self._config_container(container_id, "label", labels)
 
@@ -633,7 +643,7 @@ class BaseBuilder(ABC):
         self,
         container_id: str,
         config_type: str,
-        config_value: Union[str, List[str], Dict[str, str]]
+        config_value: Union[str, List[str], Dict[str, str]],
     ) -> None:
         """配置容器属性
 
@@ -683,9 +693,15 @@ class BaseBuilder(ABC):
         output_path = self.out / f"{self.name}-{version}.image.tar"
 
         cmd = [
-            "buildah", "push", "--format", "oci", "--compression-level", "9",
+            "buildah",
+            "push",
+            "--format",
+            "oci",
+            "--compression-level",
+            "9",
             f"localhost/{image_name}",
-            f"oci-archive:{output_path}:{Application.DOMAIN}/apps/{image_name}"
+            f"oci-archive:{output_path}:{Application.DOMAIN}/apps/"
+            f"{image_name}",
         ]
 
         logger.info(f"导出镜像到: {output_path}")
@@ -702,15 +718,20 @@ class BaseBuilder(ABC):
 
         # 从配置获取认证信息
         cmd = [
-            "buildah", "push", "--creds", f"{Application.REGISTRY.USERNAME}:{Application.REGISTRY.PASSWORD}",
+            "buildah",
+            "push",
+            "--creds",
+            f"{Application.REGISTRY.USERNAME}:{Application.REGISTRY.PASSWORD}",
             f"localhost/{image_name}",
-            target_image
+            target_image,
         ]
 
         logger.info(f"推送镜像到仓库: {target_image}")
         self._execute_command(" ".join(cmd))
 
-    def _copy_to_container(self, container_id: str, src_path: str, dest_path: str) -> None:
+    def _copy_to_container(
+        self, container_id: str, src_path: str, dest_path: str
+    ) -> None:
         """复制文件到容器
 
         Args:

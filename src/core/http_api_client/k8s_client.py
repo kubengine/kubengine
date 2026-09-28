@@ -1,5 +1,4 @@
-"""
-Kubernetes 客户端模块
+"""Kubernetes 客户端模块
 
 使用官方 Kubernetes Python SDK 直接与 Kubernetes API 集群交互，提供资源管理、监控等功能。
 """
@@ -19,8 +18,7 @@ logger = get_logger(__name__)
 
 
 class K8sClient:
-    """
-    Kubernetes 客户端类
+    """Kubernetes 客户端类
 
     使用官方 Kubernetes Python SDK 与 Kubernetes API 交互，提供：
     - 命名空间管理
@@ -52,8 +50,7 @@ class K8sClient:
         kubeconfig_path: Optional[str] = None,
         manifest_dir: Optional[str] = None,
     ) -> None:
-        """
-        初始化 Kubernetes 客户端
+        """初始化 Kubernetes 客户端
 
         Args:
             kubeconfig_path: kubeconfig 文件路径
@@ -84,7 +81,8 @@ class K8sClient:
                 self._logger.info("Loaded kubeconfig Kubernetes configuration")
             except Exception as e:
                 self._logger.error(
-                    f"Failed to load Kubernetes configuration: {e}")
+                    f"Failed to load Kubernetes configuration: {e}"
+                )
                 raise
 
         # 初始化 Kubernetes API 客户端
@@ -96,8 +94,7 @@ class K8sClient:
     def _api_result(
         self, data: Any, error_msg: str = "Success"
     ) -> Tuple[int, str, Any]:
-        """
-        统一格式化返回结果
+        """统一格式化返回结果
 
         Args:
             data: 返回的数据
@@ -111,8 +108,7 @@ class K8sClient:
     def _handle_exception(
         self, e: ApiException, operation: str
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        处理 Kubernetes API 异常
+        """处理 Kubernetes API 异常
 
         Args:
             e: API 异常对象
@@ -121,13 +117,18 @@ class K8sClient:
         Returns:
             标准化错误响应结果
         """
-        status_code: int = e.status if e.status else 500  # type: ignore[assignment]
+        status_code: int = (
+            e.status if e.status else 500
+        )  # type: ignore[assignment]
         # type: ignore[annotation-unchecked]
         error_msg: str = f"Failed to {operation}: {e.status} - {e.reason}"
         if e.body:
             try:
-                body: dict[str, Any] = e.body if isinstance(  # type: ignore[assignment]
-                    e.body, dict) else {}
+                body: dict[str, Any] = (
+                    e.body
+                    if isinstance(e.body, dict)  # type: ignore[assignment]
+                    else {}
+                )
                 error_detail = body.get("message", "")
                 error_msg = f"Failed to {operation}: {error_detail}"
             except Exception:
@@ -136,25 +137,24 @@ class K8sClient:
         return status_code, error_msg, {}  # type: ignore
 
     def get_namespace(self) -> Tuple[int, str, Dict[str, List[str]]]:
-        """
-        获取所有命名空间列表
+        """获取所有命名空间列表
 
         Returns:
             标准化响应结果 (code, message, data)
         """
         try:
-            namespaces = self.core_v1.list_namespace(_request_timeout=(5, 30))  # type: ignore
+            namespaces = self.core_v1.list_namespace(
+                _request_timeout=(5, 30)
+            )  # type: ignore
             namespace_list = [  # type: ignore
-                ns.metadata.name for ns in namespaces.items]  # type: ignore
+                ns.metadata.name for ns in namespaces.items
+            ]  # type: ignore
             return self._api_result({"namespaces": namespace_list})
         except ApiException as e:
             return self._handle_exception(e, "get namespaces")
 
-    def node(
-        self, name: Optional[str] = None
-    ) -> Tuple[int, str, Any]:
-        """
-        获取节点信息
+    def node(self, name: Optional[str] = None) -> Tuple[int, str, Any]:
+        """获取节点信息
 
         Args:
             name: 节点名称，为空则获取所有节点
@@ -164,10 +164,14 @@ class K8sClient:
         """
         try:
             if name is None:
-                nodes = self.core_v1.list_node(_request_timeout=(5, 30))  # type: ignore
+                nodes = self.core_v1.list_node(
+                    _request_timeout=(5, 30)
+                )  # type: ignore
                 return self._api_result({"nodes": nodes.items})
             else:
-                node = self.core_v1.read_node(name=name, _request_timeout=(5, 30))  # type: ignore
+                node = self.core_v1.read_node(
+                    name=name, _request_timeout=(5, 30)
+                )  # type: ignore
                 return self._api_result(node)
         except ApiException as e:
             return self._handle_exception(e, f"get node {name}")
@@ -179,8 +183,7 @@ class K8sClient:
         page: int = 1,
         sort_by: str = "d,creationTimestamp",
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取指定应用的 Pod 列表（在 apps 命名空间下）
+        """获取指定应用的 Pod 列表（在 apps 命名空间下）
 
         Args:
             name: 应用名称
@@ -207,8 +210,7 @@ class K8sClient:
         sort_by: str = "d,creationTimestamp",
         filter_by: Optional[str] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Pod 列表
+        """获取 Pod 列表
 
         Args:
             namespace: 命名空间名称
@@ -229,18 +231,21 @@ class K8sClient:
                     if filter_parts[0] == "name":
                         field_selector = f"metadata.name={filter_parts[1]}"
                     elif filter_parts[0] == "namespace":
-                        field_selector = f"metadata.namespace={filter_parts[1]}"
+                        field_selector = (
+                            f"metadata.namespace={filter_parts[1]}"
+                        )
 
             # 获取 Pod 列表
             if namespace:
                 pods = self.core_v1.list_namespaced_pod(  # type: ignore
                     namespace=namespace,
-                    field_selector=field_selector, _request_timeout=(5, 30),
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
                 )
             else:
-                pods = self.core_v1.list_pod_for_all_namespaces(  # type: ignore
+                pods = self.core_v1.list_pod_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                )
+                )  # type: ignore
 
             # 实现分页（在内存中分页）
             all_pods = pods.items  # type: ignore
@@ -263,8 +268,7 @@ class K8sClient:
             return self._handle_exception(e, "get pods")
 
     def get_ip_pool(self) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 IP 池配置信息
+        """获取 IP 池配置信息
 
         从本地 manifest 文件读取 MetalLB 的 IP 池配置。
 
@@ -286,8 +290,7 @@ class K8sClient:
     def update_ip_pool(
         self, ip_pools: List[str]
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        更新 IP 池配置
+        """更新 IP 池配置
 
         更新本地 manifest 文件并应用到集群。
 
@@ -305,7 +308,8 @@ class K8sClient:
             # 读取现有配置
             with open(manifests, "r", encoding="utf-8") as f:
                 ip_pool_data: dict[str, Any] = yaml.safe_load(
-                    f)  # type: ignore[assignment]
+                    f
+                )  # type: ignore[assignment]
 
             # 更新 IP 池地址
             if "spec" not in ip_pool_data:
@@ -324,13 +328,17 @@ class K8sClient:
                 )
 
             # 应用到集群
-            cmd = f"KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f {manifests}"
+            cmd = (
+                "KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f"
+                f" {manifests}"
+            )
             result = execute_command(cmd)
             ret_code: int = result.get("ret", 0)  # type: ignore[assignment]
             if ret_code != 0:
                 # type: ignore[assignment]
                 err_msg: str = result.get(  # type: ignore
-                    "err", "Unknown error")
+                    "err", "Unknown error"
+                )
                 return 500, f"Failed to update IP pool: {err_msg}", {}
 
             return self._api_result({})
@@ -347,8 +355,7 @@ class K8sClient:
         sort_by: str = "d,creationTimestamp",
         filter_by: Optional[str] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Kubernetes 资源列表
+        """获取 Kubernetes 资源列表
 
         支持的资源类型：pod, service, deployment, statefulset, daemonset,
         persistentvolume, persistentvolumeclaim, storageclass 等
@@ -406,8 +413,7 @@ class K8sClient:
         namespace: Optional[str],
         field_selector: Optional[str],
     ) -> Tuple[int, str, List[Any]]:
-        """
-        根据资源类型获取列表（内部方法）
+        """根据资源类型获取列表（内部方法）
 
         Args:
             resource_type: 资源类型
@@ -422,27 +428,33 @@ class K8sClient:
         if resource_type == "pod":
             if namespace:
                 items = self.core_v1.list_namespaced_pod(  # type: ignore
-                    namespace, field_selector=field_selector, _request_timeout=(5, 30)
+                    namespace,
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
                 ).items
             else:
-                items = self.core_v1.list_pod_for_all_namespaces(  # type: ignore
+                items = self.core_v1.list_pod_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                ).items  # type: ignore
             return self._api_result(items)
 
         elif resource_type == "service" or resource_type == "svc":
             if namespace:
                 items = self.core_v1.list_namespaced_service(  # type: ignore
-                    namespace, field_selector=field_selector, _request_timeout=(5, 30)
+                    namespace,
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
                 ).items
             else:
-                items = self.core_v1.list_service_for_all_namespaces(  # type: ignore
+                items = self.core_v1.list_service_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                ).items  # type: ignore
             return self._api_result(items)
 
         elif resource_type == "namespace":
-            items = self.core_v1.list_namespace(_request_timeout=(5, 30)).items  # type: ignore
+            items = self.core_v1.list_namespace(
+                _request_timeout=(5, 30)
+            ).items  # type: ignore
             return self._api_result(items)
 
         elif resource_type == "persistentvolume" or resource_type == "pv":
@@ -451,37 +463,46 @@ class K8sClient:
             ).items
             return self._api_result(items)
 
-        elif (resource_type == "persistentvolumeclaim" or resource_type == "pvc"):
+        elif (
+            resource_type == "persistentvolumeclaim" or resource_type == "pvc"
+        ):
             if namespace:
-                items = self.core_v1.list_namespaced_persistent_volume_claim(  # type: ignore
-                    namespace, field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                items = self.core_v1.list_namespaced_persistent_volume_claim(
+                    namespace,
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
+                ).items  # type: ignore
             else:
-                items = self.core_v1.list_persistent_volume_claim_for_all_namespaces(  # type: ignore
+                api = self.core_v1
+                items = api.list_persistent_volume_claim_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                ).items  # type: ignore
             return self._api_result(items)
 
         elif resource_type == "configmap" or resource_type == "cm":
             if namespace:
-                items = self.core_v1.list_namespaced_config_map(  # type: ignore
-                    namespace, field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                items = self.core_v1.list_namespaced_config_map(
+                    namespace,
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
+                ).items  # type: ignore
             else:
-                items = self.core_v1.list_config_map_for_all_namespaces(  # type: ignore
+                items = self.core_v1.list_config_map_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                ).items  # type: ignore
             return self._api_result(items)
 
         elif resource_type == "secret":
             if namespace:
                 items = self.core_v1.list_namespaced_secret(  # type: ignore
-                    namespace, field_selector=field_selector, _request_timeout=(5, 30)
+                    namespace,
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
                 ).items
             else:
-                items = self.core_v1.list_secret_for_all_namespaces(  # type: ignore
+                items = self.core_v1.list_secret_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                ).items  # type: ignore
             return self._api_result(items)
 
         elif resource_type == "node":
@@ -493,46 +514,54 @@ class K8sClient:
         # Apps API 资源
         elif resource_type == "deployment" or resource_type == "deploy":
             if namespace:
-                items = self.apps_v1.list_namespaced_deployment(  # type: ignore
-                    namespace, field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                items = self.apps_v1.list_namespaced_deployment(
+                    namespace,
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
+                ).items  # type: ignore
             else:
-                items = self.apps_v1.list_deployment_for_all_namespaces(  # type: ignore
+                items = self.apps_v1.list_deployment_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                ).items  # type: ignore
             return self._api_result(items)
 
         elif resource_type == "statefulset" or resource_type == "sts":
             if namespace:
-                items = self.apps_v1.list_namespaced_stateful_set(  # type: ignore
-                    namespace, field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                items = self.apps_v1.list_namespaced_stateful_set(
+                    namespace,
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
+                ).items  # type: ignore
             else:
-                items = self.apps_v1.list_stateful_set_for_all_namespaces(  # type: ignore
+                items = self.apps_v1.list_stateful_set_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                ).items  # type: ignore
             return self._api_result(items)
 
         elif resource_type == "daemonset" or resource_type == "ds":
             if namespace:
-                items = self.apps_v1.list_namespaced_daemon_set(  # type: ignore
-                    namespace, field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                items = self.apps_v1.list_namespaced_daemon_set(
+                    namespace,
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
+                ).items  # type: ignore
             else:
-                items = self.apps_v1.list_daemon_set_for_all_namespaces(  # type: ignore
+                items = self.apps_v1.list_daemon_set_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                ).items  # type: ignore
             return self._api_result(items)
 
         elif resource_type == "replicaset" or resource_type == "rs":
             if namespace:
-                items = self.apps_v1.list_namespaced_replica_set(  # type: ignore
-                    namespace, field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                items = self.apps_v1.list_namespaced_replica_set(
+                    namespace,
+                    field_selector=field_selector,
+                    _request_timeout=(5, 30),
+                ).items  # type: ignore
             else:
-                items = self.apps_v1.list_replica_set_for_all_namespaces(  # type: ignore
+                items = self.apps_v1.list_replica_set_for_all_namespaces(
                     field_selector=field_selector, _request_timeout=(5, 30)
-                ).items
+                ).items  # type: ignore
             return self._api_result(items)
 
         # Storage API 资源
@@ -551,8 +580,7 @@ class K8sClient:
         namespace: str,
         name: str,
     ) -> Tuple[int, str, Any]:
-        """
-        获取资源详情
+        """获取资源详情
 
         Args:
             resource_type: 资源类型
@@ -580,8 +608,7 @@ class K8sClient:
     def _get_resource_with_namespace(
         self, resource_type: str, namespace: str, name: str
     ) -> Tuple[int, str, Any]:
-        """
-        获取需要命名空间的资源详情（内部方法）
+        """获取需要命名空间的资源详情（内部方法）
 
         Args:
             resource_type: 资源类型
@@ -594,21 +621,31 @@ class K8sClient:
         # Core API 资源
         if resource_type == "pod":
             return self._api_result(
-                self.core_v1.read_namespaced_pod(name, namespace, _request_timeout=(5, 30))
+                self.core_v1.read_namespaced_pod(
+                    name, namespace, _request_timeout=(5, 30)
+                )
             )
         elif resource_type == "service" or resource_type == "svc":
             return self._api_result(
-                self.core_v1.read_namespaced_service(name, namespace, _request_timeout=(5, 30))
+                self.core_v1.read_namespaced_service(
+                    name, namespace, _request_timeout=(5, 30)
+                )
             )
         elif resource_type == "configmap" or resource_type == "cm":
             return self._api_result(
-                self.core_v1.read_namespaced_config_map(name, namespace, _request_timeout=(5, 30))
+                self.core_v1.read_namespaced_config_map(
+                    name, namespace, _request_timeout=(5, 30)
+                )
             )
         elif resource_type == "secret":
             return self._api_result(
-                self.core_v1.read_namespaced_secret(name, namespace, _request_timeout=(5, 30))
+                self.core_v1.read_namespaced_secret(
+                    name, namespace, _request_timeout=(5, 30)
+                )
             )
-        elif resource_type == "persistentvolumeclaim" or resource_type == "pvc":
+        elif (
+            resource_type == "persistentvolumeclaim" or resource_type == "pvc"
+        ):
             return self._api_result(
                 self.core_v1.read_namespaced_persistent_volume_claim(
                     name, namespace, _request_timeout=(5, 30)
@@ -618,19 +655,27 @@ class K8sClient:
         # Apps API 资源
         elif resource_type == "deployment" or resource_type == "deploy":
             return self._api_result(
-                self.apps_v1.read_namespaced_deployment(name, namespace, _request_timeout=(5, 30))
+                self.apps_v1.read_namespaced_deployment(
+                    name, namespace, _request_timeout=(5, 30)
+                )
             )
         elif resource_type == "statefulset" or resource_type == "sts":
             return self._api_result(
-                self.apps_v1.read_namespaced_stateful_set(name, namespace, _request_timeout=(5, 30))
+                self.apps_v1.read_namespaced_stateful_set(
+                    name, namespace, _request_timeout=(5, 30)
+                )
             )
         elif resource_type == "daemonset" or resource_type == "ds":
             return self._api_result(
-                self.apps_v1.read_namespaced_daemon_set(name, namespace, _request_timeout=(5, 30))
+                self.apps_v1.read_namespaced_daemon_set(
+                    name, namespace, _request_timeout=(5, 30)
+                )
             )
         elif resource_type == "replicaset" or resource_type == "rs":
             return self._api_result(
-                self.apps_v1.read_namespaced_replica_set(name, namespace, _request_timeout=(5, 30))
+                self.apps_v1.read_namespaced_replica_set(
+                    name, namespace, _request_timeout=(5, 30)
+                )
             )
         else:
             return (
@@ -642,8 +687,7 @@ class K8sClient:
     def _get_resource_without_namespace(
         self, resource_type: str, name: str
     ) -> Tuple[int, str, Any]:
-        """
-        获取不需要命名空间的资源详情（内部方法）
+        """获取不需要命名空间的资源详情（内部方法）
 
         Args:
             resource_type: 资源类型
@@ -653,17 +697,32 @@ class K8sClient:
             标准化响应结果 (code, message, data)
         """
         if resource_type == "persistentvolume" or resource_type == "pv":
-            return self._api_result(self.core_v1.read_persistent_volume(name, _request_timeout=(5, 30)))
+            return self._api_result(
+                self.core_v1.read_persistent_volume(
+                    name, _request_timeout=(5, 30)
+                )
+            )
         elif resource_type == "storageclass" or resource_type == "sc":
-            return self._api_result(self.storage_v1.read_storage_class(name, _request_timeout=(5, 30)))
+            return self._api_result(
+                self.storage_v1.read_storage_class(
+                    name, _request_timeout=(5, 30)
+                )
+            )
         elif resource_type == "namespace":
-            return self._api_result(self.core_v1.read_namespace(name, _request_timeout=(5, 30)))
+            return self._api_result(
+                self.core_v1.read_namespace(name, _request_timeout=(5, 30))
+            )
         elif resource_type == "node":
-            return self._api_result(self.core_v1.read_node(name, _request_timeout=(5, 30)))
+            return self._api_result(
+                self.core_v1.read_node(name, _request_timeout=(5, 30))
+            )
         else:
             return (
                 400,
-                f"Unsupported resource type without namespace: {resource_type}",
+                (
+                    "Unsupported resource type without namespace:"
+                    f" {resource_type}"
+                ),
                 {},
             )
 
@@ -676,8 +735,7 @@ class K8sClient:
         page: int = 1,
         sort_by: str = "d,creationTimestamp",
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取资源关联的 Pod 列表
+        """获取资源关联的 Pod 列表
 
         Args:
             resource_type: 资源类型
@@ -710,7 +768,8 @@ class K8sClient:
             # 获取 Pod 列表
             pods = self.core_v1.list_namespaced_pod(  # type: ignore
                 namespace=namespace,
-                label_selector=label_selector, _request_timeout=(5, 30),
+                label_selector=label_selector,
+                _request_timeout=(5, 30),
             )
 
             # 实现分页
@@ -735,8 +794,7 @@ class K8sClient:
             )
 
     def node_taints(self, node_name: str) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取节点污点信息
+        """获取节点污点信息
 
         Args:
             node_name: 节点名称
@@ -745,11 +803,15 @@ class K8sClient:
             标准化响应结果 (code, message, data)
         """
         try:
-            node = self.core_v1.read_node(name=node_name, _request_timeout=(5, 30))  # type: ignore
+            node = self.core_v1.read_node(
+                name=node_name, _request_timeout=(5, 30)
+            )  # type: ignore
             taints = node.spec.taints or []  # type: ignore
             return self._api_result({"taints": taints})
         except ApiException as e:
-            return self._handle_exception(e, f"get taints for node {node_name}")
+            return self._handle_exception(
+                e, f"get taints for node {node_name}"
+            )
 
     def add_node_taint(
         self,
@@ -758,8 +820,7 @@ class K8sClient:
         value: str = "",
         effect: str = "NoSchedule",
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        为节点添加污点
+        """为节点添加污点
 
         Args:
             node_name: 节点名称
@@ -772,7 +833,9 @@ class K8sClient:
         """
         try:
             # 获取当前节点信息
-            node = self.core_v1.read_node(name=node_name, _request_timeout=(5, 30))  # type: ignore
+            node = self.core_v1.read_node(
+                name=node_name, _request_timeout=(5, 30)
+            )  # type: ignore
 
             # 初始化污点列表（如果不存在）
             if node.spec.taints is None:  # type: ignore
@@ -783,7 +846,10 @@ class K8sClient:
                 if taint.key == key and taint.effect == effect:
                     return (
                         400,
-                        f"Taint {key}:{effect} already exists on node {node_name}",
+                        (
+                            f"Taint {key}:{effect} already exists on node"
+                            f" {node_name}"
+                        ),
                         {},
                     )
 
@@ -796,10 +862,13 @@ class K8sClient:
             node.spec.taints.append(new_taint)  # type: ignore
 
             # 更新节点
-            self.core_v1.patch_node(name=node_name, body=node, _request_timeout=(5, 30))
+            self.core_v1.patch_node(
+                name=node_name, body=node, _request_timeout=(5, 30)
+            )
 
             self._logger.info(
-                f"Successfully added taint {key}={value}:{effect} to node {node_name}"
+                f"Successfully added taint {key}={value}:{effect} to node"
+                f" {node_name}"
             )
             return self._api_result({})
         except ApiException as e:
@@ -812,8 +881,7 @@ class K8sClient:
         effect: Optional[str] = None,
         value: Optional[str] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        删除节点污点
+        """删除节点污点
 
         Args:
             node_name: 节点名称
@@ -826,7 +894,9 @@ class K8sClient:
         """
         try:
             # 获取当前节点信息
-            node = self.core_v1.read_node(name=node_name, _request_timeout=(5, 30))  # type: ignore
+            node = self.core_v1.read_node(
+                name=node_name, _request_timeout=(5, 30)
+            )  # type: ignore
 
             if node.spec.taints is None:  # type: ignore
                 return 404, f"No taints found on node {node_name}", {}
@@ -848,7 +918,8 @@ class K8sClient:
                             should_keep = False
                             removed_count += 1
                             removed_taints.append(
-                                taint.to_dict())  # type: ignore
+                                taint.to_dict()
+                            )  # type: ignore
 
                 if should_keep:
                     filtered_taints.append(
@@ -862,7 +933,10 @@ class K8sClient:
             if removed_count == 0:
                 return (
                     404,
-                    f"No matching taint found with key '{key}' on node {node_name}",
+                    (
+                        f"No matching taint found with key '{key}' on node"
+                        f" {node_name}"
+                    ),
                     {},
                 )
 
@@ -874,10 +948,13 @@ class K8sClient:
             }
 
             # 使用 JSON Merge Patch
-            self.core_v1.patch_node(name=node_name, body=patch_body, _request_timeout=(5, 30))
+            self.core_v1.patch_node(
+                name=node_name, body=patch_body, _request_timeout=(5, 30)
+            )
 
             self._logger.info(
-                f"Successfully removed {removed_count} taint(s) with key '{key}' from node {node_name}"
+                f"Successfully removed {removed_count} taint(s) with key"
+                f" '{key}' from node {node_name}"
             )
             return self._api_result(
                 {
@@ -886,13 +963,14 @@ class K8sClient:
                 }
             )
         except ApiException as e:
-            return self._handle_exception(e, f"remove taint from node {node_name}")
+            return self._handle_exception(
+                e, f"remove taint from node {node_name}"
+            )
 
     def update_node_taints(
         self, node_name: str, taints: List[Dict[str, Any]]
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        批量更新节点污点（替换所有污点）
+        """批量更新节点污点（替换所有污点）
 
         Args:
             node_name: 节点名称
@@ -903,7 +981,9 @@ class K8sClient:
         """
         try:
             # 获取当前节点信息
-            node = self.core_v1.read_node(name=node_name, _request_timeout=(5, 30))  # type: ignore
+            node = self.core_v1.read_node(
+                name=node_name, _request_timeout=(5, 30)
+            )  # type: ignore
 
             # 验证污点格式并构建污点对象
             from kubernetes.client import V1Taint
@@ -911,7 +991,9 @@ class K8sClient:
             valid_taints = []
 
             for taint_dict in taints:
-                if not isinstance(taint_dict, dict) or "key" not in taint_dict:  # type: ignore
+                if (
+                    not isinstance(taint_dict, dict) or "key" not in taint_dict
+                ):  # type: ignore
                     return 400, f"Invalid taint format: {taint_dict}", {}
 
                 if "effect" not in taint_dict:
@@ -926,7 +1008,10 @@ class K8sClient:
                 if taint_dict["effect"] not in valid_effects:
                     return (
                         400,
-                        f"Invalid effect '{taint_dict['effect']}', must be one of {valid_effects}",
+                        (
+                            f"Invalid effect '{taint_dict['effect']}', must be"
+                            f" one of {valid_effects}"
+                        ),
                         {},
                     )
 
@@ -938,25 +1023,35 @@ class K8sClient:
                 valid_taints.append(taint)
 
             # 更新污点列表
-            node.spec.taints = valid_taints if valid_taints else None  # type: ignore
+            node.spec.taints = (
+                valid_taints if valid_taints else None
+            )  # type: ignore
 
             # 更新节点
-            self.core_v1.patch_node(name=node_name, body=node, _request_timeout=(5, 30))
+            self.core_v1.patch_node(
+                name=node_name, body=node, _request_timeout=(5, 30)
+            )
 
             self._logger.info(
-                f"Successfully updated taints for node {node_name}, total: {len(valid_taints)}"   # type: ignore
+                (
+                    f"Successfully updated taints for node {node_name}, "
+                    f"total: {len(valid_taints)}"
+                )  # type: ignore
             )
-            return self._api_result({"total_taints": len(valid_taints)})   # type: ignore
+            return self._api_result(
+                {"total_taints": len(valid_taints)}
+            )  # type: ignore
         except ApiException as e:
-            return self._handle_exception(e, f"update taints for node {node_name}")
+            return self._handle_exception(
+                e, f"update taints for node {node_name}"
+            )
 
     def pod_metrics(
         self,
         namespace: Optional[str] = None,
         pod_name: Optional[str] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Pod 的 Metrics 数据（CPU 和内存使用情况）
+        """获取 Pod 的 Metrics 数据（CPU 和内存使用情况）
 
         Args:
             namespace: 命名空间
@@ -968,30 +1063,33 @@ class K8sClient:
         try:
             if namespace and pod_name:
                 # 获取特定 Pod 的 metrics
-                metrics = self.custom_api.get_namespaced_custom_object(  # type: ignore
+                metrics = self.custom_api.get_namespaced_custom_object(
                     group="metrics.k8s.io",
                     version="v1beta1",
                     namespace=namespace,
                     plural="pods",
-                    name=pod_name, _request_timeout=(5, 30),
-                )
+                    name=pod_name,
+                    _request_timeout=(5, 30),
+                )  # type: ignore
                 return self._api_result({"metrics": metrics})
             elif namespace:
                 # 获取命名空间下所有 Pod 的 metrics
-                metrics = self.custom_api.list_namespaced_custom_object(  # type: ignore
+                metrics = self.custom_api.list_namespaced_custom_object(
                     group="metrics.k8s.io",
                     version="v1beta1",
                     namespace=namespace,
-                    plural="pods", _request_timeout=(5, 30),
-                )
+                    plural="pods",
+                    _request_timeout=(5, 30),
+                )  # type: ignore
                 return self._api_result({"metrics": metrics})
             else:
                 # 获取所有命名空间下 Pod 的 metrics
-                metrics = self.custom_api.list_cluster_custom_object(  # type: ignore
+                metrics = self.custom_api.list_cluster_custom_object(
                     group="metrics.k8s.io",
                     version="v1beta1",
-                    plural="pods", _request_timeout=(5, 30),
-                )
+                    plural="pods",
+                    _request_timeout=(5, 30),
+                )  # type: ignore
                 return self._api_result({"metrics": metrics})
         except ApiException as e:
             return self._handle_exception(e, "get pod metrics")
@@ -999,8 +1097,7 @@ class K8sClient:
     def node_metrics(
         self, node_name: Optional[str] = None
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取节点的 Metrics 数据
+        """获取节点的 Metrics 数据
 
         Args:
             node_name: 节点名称
@@ -1011,20 +1108,22 @@ class K8sClient:
         try:
             if node_name:
                 # 获取特定节点的 metrics
-                metrics = self.custom_api.get_cluster_custom_object(  # type: ignore
+                metrics = self.custom_api.get_cluster_custom_object(
                     group="metrics.k8s.io",
                     version="v1beta1",
                     plural="nodes",
-                    name=node_name, _request_timeout=(5, 30),
-                )
+                    name=node_name,
+                    _request_timeout=(5, 30),
+                )  # type: ignore
                 return self._api_result({"metrics": metrics})
             else:
                 # 获取所有节点的 metrics
-                metrics = self.custom_api.list_cluster_custom_object(  # type: ignore
+                metrics = self.custom_api.list_cluster_custom_object(
                     group="metrics.k8s.io",
                     version="v1beta1",
-                    plural="nodes", _request_timeout=(5, 30),
-                )
+                    plural="nodes",
+                    _request_timeout=(5, 30),
+                )  # type: ignore
                 return self._api_result({"metrics": metrics})
         except ApiException as e:
             return self._handle_exception(e, "get node metrics")
@@ -1037,8 +1136,7 @@ class K8sClient:
         page: int = 1,
         filter_by: Optional[str] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Pod 列表及其 Metrics 数据
+        """获取 Pod 列表及其 Metrics 数据
 
         Args:
             namespace: 命名空间名称
@@ -1083,13 +1181,12 @@ class K8sClient:
             # 将 Metrics 数据转换为字典，方便查找
             if metrics_result[0] == 200:
                 metrics_items = (
-                    metrics_result[2]
-                    .get("metrics", {})
-                    .get("items", [])
+                    metrics_result[2].get("metrics", {}).get("items", [])
                 )
                 for item in metrics_items:
                     metadata: dict[str, Any] = item.get(
-                        "metadata", {})  # type: ignore[assignment]
+                        "metadata", {}
+                    )  # type: ignore[assignment]
                     namespace_val: str = metadata.get("namespace", "")
                     name_val: str = metadata.get("name", "")
                     pod_metrics_key = f"{namespace_val}/{name_val}"
@@ -1105,10 +1202,12 @@ class K8sClient:
                     # type: ignore[assignment]
                     metric_item: dict[str, Any] = metrics_data[pod_key]
                     containers: list[dict[str, Any]] = metric_item.get(
-                        "containers", [])  # type: ignore[assignment]
+                        "containers", []
+                    )  # type: ignore[assignment]
                     if containers and len(containers) > 0:
                         usage: dict[str, Any] = containers[0].get(
-                            "usage", {})  # type: ignore[index]
+                            "usage", {}
+                        )  # type: ignore[index]
                         pod_info["metrics"] = {
                             "cpu": usage.get("cpu", ""),
                             "memory": usage.get("memory", ""),
@@ -1135,7 +1234,9 @@ class K8sClient:
                     }
                 )
         except Exception as e:
-            return self._handle_exception(e, "get pods with metrics")  # type: ignore
+            return self._handle_exception(
+                e, "get pods with metrics"
+            )  # type: ignore
 
     def resource_metrics(
         self,
@@ -1143,8 +1244,7 @@ class K8sClient:
         namespace: Optional[str] = None,
         resource_name: Optional[str] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取资源的 Metrics 数据（通用方法）
+        """获取资源的 Metrics 数据（通用方法）
 
         Args:
             resource_type: 资源类型
@@ -1166,4 +1266,6 @@ class K8sClient:
                     {},
                 )
         except Exception as e:
-            return self._handle_exception(e, f"get {resource_type} metrics")  # type: ignore
+            return self._handle_exception(
+                e, f"get {resource_type} metrics"
+            )  # type: ignore

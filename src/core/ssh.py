@@ -1,7 +1,7 @@
 """Asynchronous SSH client wrapper module.
 
-This module provides an asynchronous SSH client wrapper based on asyncssh library,
-supporting connection reuse and cluster operations.
+This module provides an asynchronous SSH client wrapper based on
+asyncssh library, supporting connection reuse and cluster operations.
 """
 
 import asyncio
@@ -10,7 +10,17 @@ import logging
 import shlex
 import time
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union, cast
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 from uuid import uuid4
 
 import asyncssh
@@ -27,16 +37,17 @@ def _output_size(value: object) -> int:
 
 def _error_summary(stderr: object) -> Optional[str]:
     """提取最后一行错误摘要，便于在单行日志中快速定位原因。"""
-    lines = [line.strip() for line in str(stderr or "").splitlines() if line.strip()]
+    lines = [
+        line.strip() for line in str(stderr or "").splitlines() if line.strip()
+    ]
     return lines[-1][:500] if lines else None
 
 
 def _result_error(result: Dict[str, Union[str, int, None]]) -> Optional[str]:
     """把"执行异常"和"退出码非 0"统一成失败原因；成功返回 None。
 
-    ``execute_command`` 只在抛异常时写 ``error``，命令跑失败（退出码非 0）时
-    ``error`` 是空的。互信流程里的命令是 shell 脚本，语法错误、写文件失败
-    都属于后者，只看 error 会把失败当成功，所以这里统一判一次。
+    ``execute_command`` 只在抛异常时写 ``error``，命令跑失败（退出码非 0）时 ``error``
+    是空的。互信流程里的命令是 shell 脚本，语法错误、写文件失败 都属于后者，只看 error 会把失败当成功，所以这里统一判一次。
     """
     if result.get("error"):
         return str(result["error"])
@@ -93,19 +104,35 @@ class AsyncSSHClient:
             SSH client connection object
         """
         if kwargs.get("known_hosts", "default") is None:
-            raise ValueError("known_hosts=None is not permitted; provide a verified known_hosts file")
+            raise ValueError(
+                "known_hosts=None is not permitted; provide a verified"
+                " known_hosts file"
+            )
         if "known_hosts" not in kwargs:
-            paths = [Path(p).expanduser() for p in (
-                "~/.ssh/known_hosts", "~/.ssh/known_hosts2",
-                "/etc/ssh/ssh_known_hosts", "/etc/ssh/ssh_known_hosts2",
-            )]
-            kwargs["known_hosts"] = [str(p) for p in paths if p.is_file()] or b""
-        connection_options = {k: v for k, v in kwargs.items() if k != "connect_timeout"}
+            paths = [
+                Path(p).expanduser()
+                for p in (
+                    "~/.ssh/known_hosts",
+                    "~/.ssh/known_hosts2",
+                    "/etc/ssh/ssh_known_hosts",
+                    "/etc/ssh/ssh_known_hosts2",
+                )
+            ]
+            kwargs["known_hosts"] = [
+                str(p) for p in paths if p.is_file()
+            ] or b""
+        connection_options = {
+            k: v for k, v in kwargs.items() if k != "connect_timeout"
+        }
         host_lock = await self._host_lock(host)
         async with host_lock:
             with bind_log_context(host=host):
                 conn = self._connections.get(host)
-                if conn is not None and self._connection_options.get(host) != connection_options:
+                if (
+                    conn is not None
+                    and self._connection_options.get(host)
+                    != connection_options
+                ):
                     await self._discard_connection(host)
                     conn = None
                 if conn is not None and not conn.is_closed():
@@ -141,20 +168,28 @@ class AsyncSSHClient:
                         "ssh_connection_end",
                         level=logging.WARNING,
                         status="cancelled",
-                        duration_ms=round((time.monotonic() - started_at) * 1000),
+                        duration_ms=round(
+                            (time.monotonic() - started_at) * 1000
+                        ),
                     )
                     raise
                 except asyncssh.HostKeyNotVerifiable as exc:
                     log_lifecycle_event(
-                        logger, "ssh_connection_end", level=logging.ERROR,
+                        logger,
+                        "ssh_connection_end",
+                        level=logging.ERROR,
                         status="failed",
-                        duration_ms=round((time.monotonic() - started_at) * 1000),
+                        duration_ms=round(
+                            (time.monotonic() - started_at) * 1000
+                        ),
                         error="Host key is unknown or changed",
                     )
                     raise RuntimeError(
                         f"SSH 主机 {host} 的密钥未知或已变化，已拒绝连接。"
-                        "请通过主机控制台等可信渠道核对指纹，将确认的公钥写入 ~/.ssh/known_hosts；"
-                        "首次纳管也可使用 cluster config --known-hosts <已核验的文件>。"
+                        "请通过主机控制台等可信渠道核对指纹，将确认的公钥写入"
+                        " ~/.ssh/known_hosts；"
+                        "首次纳管也可使用 cluster config --known-hosts"
+                        " <已核验的文件>。"
                         "不要直接信任未经核验的 ssh-keyscan 输出。"
                     ) from exc
                 except Exception as exc:
@@ -163,7 +198,9 @@ class AsyncSSHClient:
                         "ssh_connection_end",
                         level=logging.ERROR,
                         status="failed",
-                        duration_ms=round((time.monotonic() - started_at) * 1000),
+                        duration_ms=round(
+                            (time.monotonic() - started_at) * 1000
+                        ),
                         error=str(exc),
                     )
                     raise
@@ -225,8 +262,8 @@ class AsyncSSHClient:
                      (username, password, client_keys, etc.)
 
         Returns:
-            Dictionary containing execution result including stdout, stderr,
-            exit_status, and error information
+            Dictionary containing execution result including stdout,
+            stderr, exit_status, and error information
         """
         result: Dict[str, Union[str, int, None]] = {
             "host": host,
@@ -283,9 +320,9 @@ class AsyncSSHClient:
                 await self._discard_connection(host)
 
             exit_status = result["exit_status"]
-            timed_out = isinstance(result["error"], str) and result["error"].startswith(
-                "SSH command timed out"
-            )
+            timed_out = isinstance(result["error"], str) and result[
+                "error"
+            ].startswith("SSH command timed out")
             success = result["error"] is None and exit_status == 0
             error = result["error"] or (
                 _error_summary(result["stderr"])
@@ -298,7 +335,11 @@ class AsyncSSHClient:
                 level=logging.INFO if success else logging.ERROR,
                 executor="ssh",
                 command=command,
-                status=("success" if success else "timeout" if timed_out else "failed"),
+                status=(
+                    "success"
+                    if success
+                    else "timeout" if timed_out else "failed"
+                ),
                 duration_ms=round((time.monotonic() - started_at) * 1000),
                 exit_code=exit_status,
                 timed_out=timed_out,
@@ -318,10 +359,12 @@ class AsyncSSHClient:
             **kwargs: Common parameters passed to asyncssh.connect
 
         Returns:
-            List of execution results, each containing command execution result
+            List of execution results, each containing command execution
+            result
         """
         tasks = [
-            self.execute_command(host, cmd, **kwargs) for host, cmd in hosts_commands
+            self.execute_command(host, cmd, **kwargs)
+            for host, cmd in hosts_commands
         ]
 
         return await asyncio.gather(*tasks)
@@ -362,7 +405,9 @@ class AsyncSSHClient:
             )
             try:
                 async with self._semaphore:
-                    conn = await self._get_connection(host, **connection_options)
+                    conn = await self._get_connection(
+                        host, **connection_options
+                    )
                     await transfer(conn)
             except asyncio.CancelledError:
                 await self._discard_connection(host)
@@ -398,7 +443,9 @@ class AsyncSSHClient:
                 source_path=source_path,
                 target_path=target_path,
                 status=(
-                    "success" if error is None else "timeout" if timed_out else "failed"
+                    "success"
+                    if error is None
+                    else "timeout" if timed_out else "failed"
                 ),
                 duration_ms=round((time.monotonic() - started_at) * 1000),
                 timed_out=timed_out,
@@ -419,7 +466,9 @@ class AsyncSSHClient:
             Tuple of (reachable_hosts, not_reachable_hosts)
         """
         reachability_options = dict(kwargs)
-        reachability_options.setdefault("connect_timeout", min(self.connect_timeout, 3))
+        reachability_options.setdefault(
+            "connect_timeout", min(self.connect_timeout, 3)
+        )
         reachability_options.setdefault("operation_timeout", 5)
         result = await self.execute_multiple_commands(
             [(host, 'echo "ping"') for host in hosts],
@@ -435,14 +484,21 @@ class AsyncSSHClient:
                 reachable_hosts.append(host)
             elif isinstance(host, str):
                 if item.get("error"):
-                    logger.error("SSH connection to %s failed: %s", host, item["error"])
+                    logger.error(
+                        "SSH connection to %s failed: %s", host, item["error"]
+                    )
                 not_reachable_hosts.append(host)
 
         return reachable_hosts, not_reachable_hosts
 
     async def upload_file(
-        self, host: str, local_path: str, remote_path: str,
-        *, follow_symlinks: bool = False, **kwargs: Any,
+        self,
+        host: str,
+        local_path: str,
+        remote_path: str,
+        *,
+        follow_symlinks: bool = False,
+        **kwargs: Any,
     ) -> Dict[str, Union[str, None]]:
         """Upload file to remote host (using connection pool).
 
@@ -467,7 +523,12 @@ class AsyncSSHClient:
         async def transfer(conn: asyncssh.SSHClientConnection) -> None:
             async with conn.start_sftp_client() as sftp:
                 await asyncio.wait_for(
-                    sftp.put(local_path, remote_path, follow_symlinks=follow_symlinks), timeout=timeout
+                    sftp.put(
+                        local_path,
+                        remote_path,
+                        follow_symlinks=follow_symlinks,
+                    ),
+                    timeout=timeout,
                 )
 
         result["error"] = await self._execute_transfer(
@@ -485,8 +546,13 @@ class AsyncSSHClient:
         return result
 
     async def download_file(
-        self, host: str, remote_path: str, local_path: str,
-        *, follow_symlinks: bool = False, **kwargs: Any,
+        self,
+        host: str,
+        remote_path: str,
+        local_path: str,
+        *,
+        follow_symlinks: bool = False,
+        **kwargs: Any,
     ) -> Dict[str, Union[str, None]]:
         """Download file from remote host (using connection pool).
 
@@ -511,7 +577,12 @@ class AsyncSSHClient:
         async def transfer(conn: asyncssh.SSHClientConnection) -> None:
             async with conn.start_sftp_client() as sftp:
                 await asyncio.wait_for(
-                    sftp.get(remote_path, local_path, follow_symlinks=follow_symlinks), timeout=timeout
+                    sftp.get(
+                        remote_path,
+                        local_path,
+                        follow_symlinks=follow_symlinks,
+                    ),
+                    timeout=timeout,
                 )
 
         result["error"] = await self._execute_transfer(
@@ -531,7 +602,8 @@ class AsyncSSHClient:
     async def upload_directory(
         self, host: str, local_dir: str, remote_dir: str, **kwargs: Any
     ) -> Dict[str, Union[str, None]]:
-        """Upload directory to remote host (recursive, using connection pool).
+        """Upload directory to remote host (recursive, using connection
+        pool).
 
         Args:
             host: Target host address
@@ -574,7 +646,9 @@ class AsyncSSHClient:
     async def download_directory(
         self, host: str, remote_dir: str, local_dir: str, **kwargs: Any
     ) -> Dict[str, Union[str, None]]:
-        """Download directory from remote host (recursive, using connection pool).
+        """
+        Download directory from remote host (recursive, using connection
+        pool).
 
         Args:
             host: Target host address
@@ -615,9 +689,7 @@ class AsyncSSHClient:
         return result
 
     async def set_hostnames(
-        self,
-        host_hostname_map: Dict[str, str],
-        **kwargs: Any
+        self, host_hostname_map: Dict[str, str], **kwargs: Any
     ) -> List[Dict[str, Union[str, int, None]]]:
         """Set hostname for cluster nodes.
 
@@ -644,38 +716,44 @@ fi
         results = await asyncio.gather(*tasks)
 
         # Type cast to satisfy strict checking
-        return [cast(Dict[str, Union[str, int, None]], result) for result in results]
+        return [
+            cast(Dict[str, Union[str, int, None]], result)
+            for result in results
+        ]
 
     @staticmethod
     def _strict_check_script(peers: List[str]) -> str:
         """生成"不带任何 host key 跳过参数"的免密连通自检脚本。
 
-        一次失败可能是被 sshd 限流挡掉，隔 2 秒复验，仍失败才带原因上报。
-        原因取 ssh 输出的最后一个非空行。
+        一次失败可能是被 sshd 限流挡掉，隔 2 秒复验，仍失败才带原因上报。 原因取 ssh 输出的最后一个非空行。
         """
         if not peers:
             return "true"
 
         peer_list = " ".join(shlex.quote(peer) for peer in peers)
-        return f"""
-STRICT_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=5"
-fail=""
-for h in {peer_list}; do
-    if ! ssh $STRICT_OPTS "$h" true >/dev/null 2>&1; then
-        fail="$fail $h"
-    fi
-done
-if [ -n "$fail" ]; then
-    sleep 2
-    for h in $fail; do
-        out=$(ssh $STRICT_OPTS "$h" true 2>&1)
-        if [ $? -ne 0 ]; then
-            reason=$(printf '%s\\n' "$out" | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-120)
-            echo "KUBENGINE_SSH_FAIL:$h ${{reason:-exit_nonzero}}"
-        fi
-    done
-fi
-""".strip()
+        return (
+            f"\n"
+            f'STRICT_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=yes -o '
+            f'ConnectTimeout=5"\n'
+            f'fail=""\n'
+            f"for h in {peer_list}; do\n"
+            f'    if ! ssh $STRICT_OPTS "$h" true >/dev/null 2>&1; then\n'
+            f'        fail="$fail $h"\n'
+            f"    fi\n"
+            f"done\n"
+            f'if [ -n "$fail" ]; then\n'
+            f"    sleep 2\n"
+            f"    for h in $fail; do\n"
+            f'        out=$(ssh $STRICT_OPTS "$h" true 2>&1)\n'
+            f"        if [ $? -ne 0 ]; then\n"
+            f"            reason=$(printf '%s\\n' \"$out\" | grep -v '^[[:"
+            f"space:]]*$' | tail -1 | cut -c1-120)\n"
+            f'            echo "KUBENGINE_SSH_FAIL:$h ${{reason:-'
+            f'exit_nonzero}}"\n'
+            f"        fi\n"
+            f"    done\n"
+            f"fi\n"
+        ).strip()
 
     @staticmethod
     def _parse_ssh_fail_lines(stdout: str) -> List[str]:
@@ -692,69 +770,81 @@ fi
 
     @staticmethod
     def _authorized_keys_merge_script(payload: str) -> str:
-        """Merge cluster public keys without removing existing login grants."""
-        return f"""
-set -eu
-umask 077
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-(
-    flock -x 9
-    tmp=$(mktemp ~/.ssh/authorized_keys.XXXXXX)
-    trap 'rm -f "$tmp" "$tmp.merged"' EXIT HUP INT TERM
-    if [ -f ~/.ssh/authorized_keys ]; then cat ~/.ssh/authorized_keys > "$tmp"; fi
-    printf '\n' >> "$tmp"
-    printf '%s' '{payload}' | base64 -d >> "$tmp"
-    awk '!seen[$0]++' "$tmp" > "$tmp.merged"
-    chmod 600 "$tmp.merged"
-    mv -f "$tmp.merged" ~/.ssh/authorized_keys
-    grep -cE '^(ssh-|ecdsa-|sk-)' ~/.ssh/authorized_keys
-) 9> ~/.ssh/kubengine-authorized-keys.lock
-""".strip()
+        """Merge cluster public keys without removing existing login
+        grants.
+        """
+        return (
+            f"\n"
+            f"set -eu\n"
+            f"umask 077\n"
+            f"mkdir -p ~/.ssh\n"
+            f"chmod 700 ~/.ssh\n"
+            f"(\n"
+            f"    flock -x 9\n"
+            f"    tmp=$(mktemp ~/.ssh/authorized_keys.XXXXXX)\n"
+            f'    trap \'rm -f "$tmp" "$tmp.merged"\' EXIT HUP INT TERM\n'
+            f"    if [ -f ~/.ssh/authorized_keys ]; then cat ~/.ssh/"
+            f'authorized_keys > "$tmp"; fi\n'
+            f"    printf '\n' >> \"$tmp\"\n"
+            f"    printf '%s' '{payload}' | base64 -d >> \"$tmp\"\n"
+            f'    awk \'!seen[$0]++\' "$tmp" > "$tmp.merged"\n'
+            f'    chmod 600 "$tmp.merged"\n'
+            f'    mv -f "$tmp.merged" ~/.ssh/authorized_keys\n'
+            f"    grep -cE '^(ssh-|ecdsa-|sk-)' ~/.ssh/authorized_keys\n"
+            f") 9> ~/.ssh/kubengine-authorized-keys.lock\n"
+        ).strip()
 
     @staticmethod
     def _known_hosts_refresh_script(
         self_host: str, hosts: List[str], known_hosts_b64: str
     ) -> str:
-        """Add authenticated host keys, refusing to replace existing trust."""
+        """
+        Add authenticated host keys, refusing to replace existing trust.
+        """
         peers = [h for h in hosts if h != self_host]
-        return f"""
-set -eu
-umask 077
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-(
-    flock -x 9
-    incoming=$(mktemp ~/.ssh/kubengine-host-keys.XXXXXX)
-    merged=$(mktemp ~/.ssh/known_hosts.XXXXXX)
-    trap 'rm -f "$incoming" "$merged"' EXIT HUP INT TERM
-    printf '%s' '{known_hosts_b64}' | base64 -d > "$incoming"
-    while read -r peer algorithm key remainder; do
-        [ -n "$peer" ] || continue
-        for trusted in ~/.ssh/known_hosts /etc/ssh/ssh_known_hosts; do
-            [ -f "$trusted" ] || continue
-            existing=$(ssh-keygen -F "$peer" -f "$trusted" | sed '/^#/d' || true)
-            if [ -n "$existing" ] && ! printf '%s\n' "$existing" | awk -v a="$algorithm" -v k="$key" '$2 == a && $3 == k {{found=1}} END {{exit !found}}'; then
-                echo "Host key conflict for $peer in $trusted; verify and update it explicitly" >&2
-                exit 1
-            fi
-        done
-    done < "$incoming"
-    if [ -f ~/.ssh/known_hosts ]; then cat ~/.ssh/known_hosts > "$merged"; fi
-    printf '\n' >> "$merged"
-    cat "$incoming" >> "$merged"
-    awk '!seen[$0]++' "$merged" > "$incoming"
-    chmod 600 "$incoming"
-    mv -f "$incoming" ~/.ssh/known_hosts
-) 9> ~/.ssh/kubengine-known-hosts.lock
-{AsyncSSHClient._strict_check_script(peers)}
-echo "KUBENGINE_KNOWN_HOSTS_DONE"
-""".strip()
+        return (
+            f"\n"
+            f"set -eu\n"
+            f"umask 077\n"
+            f"mkdir -p ~/.ssh\n"
+            f"chmod 700 ~/.ssh\n"
+            f"(\n"
+            f"    flock -x 9\n"
+            f"    incoming=$(mktemp ~/.ssh/kubengine-host-keys.XXXXXX)\n"
+            f"    merged=$(mktemp ~/.ssh/known_hosts.XXXXXX)\n"
+            f'    trap \'rm -f "$incoming" "$merged"\' EXIT HUP INT TERM\n'
+            f"    printf '%s' '{known_hosts_b64}' | base64 -d > "
+            f'"$incoming"\n'
+            f"    while read -r peer algorithm key remainder; do\n"
+            f'        [ -n "$peer" ] || continue\n'
+            f"        for trusted in ~/.ssh/known_hosts /etc/ssh/"
+            f"ssh_known_hosts; do\n"
+            f'            [ -f "$trusted" ] || continue\n'
+            f'            existing=$(ssh-keygen -F "$peer" -f "$trusted" | '
+            f"sed '/^#/d' || true)\n"
+            f"            if [ -n \"$existing\" ] && ! printf '%s\n' "
+            f'"$existing" | awk -v a="$algorithm" -v k="$key" \'$2 == a && $3 '
+            f"== k {{found=1}} END {{exit !found}}'; then\n"
+            f'                echo "Host key conflict for $peer in $trusted; '
+            f'verify and update it explicitly" >&2\n'
+            f"                exit 1\n"
+            f"            fi\n"
+            f"        done\n"
+            f'    done < "$incoming"\n'
+            f"    if [ -f ~/.ssh/known_hosts ]; then cat ~/.ssh/known_hosts > "
+            f'"$merged"; fi\n'
+            f"    printf '\n' >> \"$merged\"\n"
+            f'    cat "$incoming" >> "$merged"\n'
+            f'    awk \'!seen[$0]++\' "$merged" > "$incoming"\n'
+            f'    chmod 600 "$incoming"\n'
+            f'    mv -f "$incoming" ~/.ssh/known_hosts\n'
+            f") 9> ~/.ssh/kubengine-known-hosts.lock\n"
+            f"{AsyncSSHClient._strict_check_script(peers)}\n"
+            f'echo "KUBENGINE_KNOWN_HOSTS_DONE"\n'
+        ).strip()
 
     async def setup_ssh_mutual_trust(
-        self,
-        hosts: List[str],
-        **kwargs: Any
+        self, hosts: List[str], **kwargs: Any
     ) -> Dict[str, Any]:
         """Configure mutual SSH trust among cluster nodes.
 
@@ -781,14 +871,18 @@ echo "KUBENGINE_KNOWN_HOSTS_DONE"
             #      b) 取 stdout 最后一个非空行作为公钥。
             generate_key_tasks: List[Any] = []
             for host in hosts:
-                cmd = """
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-if [ ! -f ~/.ssh/id_rsa ]; then ssh-keygen -q -t rsa -N "" -f ~/.ssh/id_rsa || exit 1; fi
-cat ~/.ssh/id_rsa.pub || exit 1
-                """
+                cmd = (
+                    "\n"
+                    "mkdir -p ~/.ssh\n"
+                    "chmod 700 ~/.ssh\n"
+                    "if [ ! -f ~/.ssh/id_rsa ]; then ssh-keygen -q -t rsa -N "
+                    '"" -f ~/.ssh/id_rsa || exit 1; fi\n'
+                    "cat ~/.ssh/id_rsa.pub || exit 1\n"
+                    "                "
+                )
                 generate_key_tasks.append(
-                    self.execute_command(host, cmd.strip(), **kwargs))
+                    self.execute_command(host, cmd.strip(), **kwargs)
+                )
 
             key_results = await asyncio.gather(*generate_key_tasks)
 
@@ -798,29 +892,45 @@ cat ~/.ssh/id_rsa.pub || exit 1
                 reason = _result_error(res)
                 if reason:
                     return {
-                        'error': f"节点 {res['host']} 公钥准备失败: {reason}",
-                        'details': cast(List[Dict[str, Union[str, int, None]]], key_results)
+                        "error": f"节点 {res['host']} 公钥准备失败: {reason}",
+                        "details": cast(
+                            List[Dict[str, Union[str, int, None]]], key_results
+                        ),
                     }
 
-                stdout = res['stdout']
+                stdout = res["stdout"]
                 if not isinstance(stdout, str):
                     return {
-                        'error': f"Invalid stdout type from {res['host']}: {type(stdout)}",
-                        'details': cast(List[Dict[str, Union[str, int, None]]], key_results)
+                        "error": (
+                            f"Invalid stdout type from {res['host']}:"
+                            f" {type(stdout)}"
+                        ),
+                        "details": cast(
+                            List[Dict[str, Union[str, int, None]]], key_results
+                        ),
                     }
 
-                key_lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-                pub_key = key_lines[-1] if key_lines else ''
-                if not pub_key.startswith(('ssh-', 'ecdsa-', 'sk-')):
+                key_lines = [
+                    line.strip()
+                    for line in stdout.splitlines()
+                    if line.strip()
+                ]
+                pub_key = key_lines[-1] if key_lines else ""
+                if not pub_key.startswith(("ssh-", "ecdsa-", "sk-")):
                     return {
-                        'error': f"节点 {res['host']} 未能取到公钥（stdout={stdout.strip()[:120]!r}）",
-                        'details': cast(List[Dict[str, Union[str, int, None]]], key_results)
+                        "error": (
+                            f"节点 {res['host']}"
+                            f" 未能取到公钥（stdout={stdout.strip()[:120]!r}）"
+                        ),
+                        "details": cast(
+                            List[Dict[str, Union[str, int, None]]], key_results
+                        ),
                     }
                 asyncssh.import_public_key(pub_key)
-                public_keys[res['host']] = pub_key
+                public_keys[res["host"]] = pub_key
 
             # 2. Merge all public keys for authorized_keys content
-            all_pub_keys = '\n'.join(public_keys.values()) + '\n'
+            all_pub_keys = "\n".join(public_keys.values()) + "\n"
             expected_keys = len(public_keys)
 
             # 3. Distribute all public keys to each node
@@ -832,7 +942,8 @@ cat ~/.ssh/id_rsa.pub || exit 1
             for host in hosts:
                 cmd = self._authorized_keys_merge_script(payload)
                 distribute_tasks.append(
-                    self.execute_command(host, cmd, **kwargs))
+                    self.execute_command(host, cmd, **kwargs)
+                )
 
             distribute_results = await asyncio.gather(*distribute_tasks)
 
@@ -841,27 +952,40 @@ cat ~/.ssh/id_rsa.pub || exit 1
                 reason = _result_error(res)
                 if reason:
                     return {
-                        'error': f"节点 {res['host']} 写入 authorized_keys 失败: {reason}",
-                        'details': cast(List[Dict[str, Union[str, int, None]]], distribute_results)
+                        "error": (
+                            f"节点 {res['host']} 写入 authorized_keys 失败:"
+                            f" {reason}"
+                        ),
+                        "details": cast(
+                            List[Dict[str, Union[str, int, None]]],
+                            distribute_results,
+                        ),
                     }
                 try:
-                    written = int(str(res['stdout'] or '0').strip().splitlines()[-1])
+                    written = int(
+                        str(res["stdout"] or "0").strip().splitlines()[-1]
+                    )
                 except (ValueError, IndexError):
                     written = -1
                 if written < expected_keys:
                     return {
-                        'error': (
-                            f"节点 {res['host']} 的 authorized_keys 只写入 {written} 条，"
-                            f"期望 {expected_keys} 条"
+                        "error": (
+                            f"节点 {res['host']} 的 authorized_keys 只写入"
+                            f" {written} 条，期望 {expected_keys} 条"
                         ),
-                        'details': cast(List[Dict[str, Union[str, int, None]]], distribute_results)
+                        "details": cast(
+                            List[Dict[str, Union[str, int, None]]],
+                            distribute_results,
+                        ),
                     }
 
-            # Only distribute the keys of authenticated SSH connections. A
-            # fresh ssh-keyscan is not evidence of a host's identity.
+            # Only distribute the keys of authenticated SSH connections.
+            # A fresh ssh-keyscan is not evidence of a host's identity.
             trusted_host_keys: List[str] = []
             for node in hosts:
-                if any(character.isspace() for character in node) or node.startswith("-"):
+                if any(
+                    character.isspace() for character in node
+                ) or node.startswith("-"):
                     raise ValueError("Invalid SSH host name")
                 connection = await self._get_connection(node, **kwargs)
                 key = connection.get_server_host_key()
@@ -880,7 +1004,9 @@ cat ~/.ssh/id_rsa.pub || exit 1
                 refresh_tasks.append(
                     self.execute_command(
                         src_host,
-                        self._known_hosts_refresh_script(src_host, hosts, scan_blob),
+                        self._known_hosts_refresh_script(
+                            src_host, hosts, scan_blob
+                        ),
                         **kwargs,
                     )
                 )
@@ -890,56 +1016,63 @@ cat ~/.ssh/id_rsa.pub || exit 1
             known_hosts_failures: Dict[str, List[str]] = {}
             ssh_failures: Dict[str, List[str]] = {}
             for res in refresh_results:
-                host = str(res['host'])
+                host = str(res["host"])
                 reason = _result_error(res)
                 if reason:
                     known_hosts_failures[host] = [f"<刷新命令失败: {reason}>"]
                     continue
-                failures = self._parse_ssh_fail_lines(str(res['stdout'] or ''))
+                failures = self._parse_ssh_fail_lines(str(res["stdout"] or ""))
                 if failures:
                     ssh_failures[host] = failures
 
             for host, peers in known_hosts_failures.items():
                 logger.warning(
-                    "known_hosts refresh failed on %s: %s", host, ", ".join(peers)
+                    "known_hosts refresh failed on %s: %s",
+                    host,
+                    ", ".join(peers),
                 )
             if scan_missing:
                 logger.warning(
-                    "host key not collected for: %s (这些节点上普通 ssh 会要求确认 yes)",
+                    "host key not collected for: %s (这些节点上普通 ssh"
+                    " 会要求确认 yes)",
                     ", ".join(scan_missing),
                 )
             for host, peers in ssh_failures.items():
                 logger.warning(
                     "strict ssh still failing on %s for peers: %s",
-                    host, ", ".join(peers),
+                    host,
+                    ", ".join(peers),
                 )
 
             return {
-                'error': ('SSH host trust verification failed'
-                          if known_hosts_failures or ssh_failures else None),
-                'known_hosts_failures': known_hosts_failures,
-                'scan_missing': scan_missing,
-                'ssh_failures': ssh_failures,
-                'details': cast(List[Dict[str, Union[str, int, None]]], distribute_results)
+                "error": (
+                    "SSH host trust verification failed"
+                    if known_hosts_failures or ssh_failures
+                    else None
+                ),
+                "known_hosts_failures": known_hosts_failures,
+                "scan_missing": scan_missing,
+                "ssh_failures": ssh_failures,
+                "details": cast(
+                    List[Dict[str, Union[str, int, None]]], distribute_results
+                ),
             }
 
         except Exception as e:
             return {
-                'error': f"SSH mutual trust configuration error: {str(e)}",
-                'details': None
+                "error": f"SSH mutual trust configuration error: {str(e)}",
+                "details": None,
             }
 
     async def verify_ssh_trust(
-        self,
-        hosts: List[str],
-        **kwargs: Any
+        self, hosts: List[str], **kwargs: Any
     ) -> Dict[str, List[str]]:
         """校验节点间免密 ssh 是否真的可用（严格模式，接受一次复验）。
 
         刻意不加 ``-o StrictHostKeyChecking=no``：加上它等于替业务侧的 ssh
         "代答 yes"，会掩盖 known_hosts 没刷新的问题。同时**逐台串行**执行，
-        不再把 N×(N-1) 个 ssh 一次性并发出去——那样各节点会被自己的连接风暴
-        打爆，出现大量 ``open failed`` / ``Connection closed`` 的假失败。
+        不再把 N×(N-1) 个 ssh 一次性并发出去——那样各节点会被自己的连接风暴 打爆，出现大量 ``open
+        failed`` / ``Connection closed`` 的假失败。
 
         Args:
             hosts: 集群节点地址列表
@@ -955,19 +1088,21 @@ cat ~/.ssh/id_rsa.pub || exit 1
         for src_host in hosts:
             peers = [h for h in hosts if h != src_host]
             tasks.append(
-                self.execute_command(src_host, self._strict_check_script(peers), **kwargs)
+                self.execute_command(
+                    src_host, self._strict_check_script(peers), **kwargs
+                )
             )
 
         results = await asyncio.gather(*tasks)
 
         failures: Dict[str, List[str]] = {}
         for res in results:
-            host = str(res['host'])
+            host = str(res["host"])
             reason = _result_error(res)
             if reason:
                 failures[host] = [f"<校验命令失败: {reason}>"]
                 continue
-            parsed = self._parse_ssh_fail_lines(str(res['stdout'] or ''))
+            parsed = self._parse_ssh_fail_lines(str(res["stdout"] or ""))
             if parsed:
                 failures[host] = parsed
         return failures
@@ -981,16 +1116,16 @@ async def _main() -> None:
     # 1. Execute command on single host
     print("=== Single Command Execution ===")
     cmd_result = await ssh_client.execute_command(
-        'localhost',
+        "localhost",
         'echo "Hello, AsyncSSH!"',
-        username='root',
+        username="root",
         # password='your_password',  # For password authentication
-        client_keys=['~/.ssh/id_rsa']  # For key authentication
+        client_keys=["~/.ssh/id_rsa"],  # For key authentication
     )
 
     print(f"Host: {cmd_result['host']}")
     print(f"Command: {cmd_result['command']}")
-    if cmd_result['error']:
+    if cmd_result["error"]:
         print(f"Error: {cmd_result['error']}")
     else:
         print(f"Output: {cmd_result['stdout']}")
@@ -998,21 +1133,19 @@ async def _main() -> None:
     # 2. Execute commands on multiple hosts asynchronously
     print("\n=== Multiple Commands Execution ===")
     hosts_commands: List[Tuple[str, str]] = [
-        ('172.31.65.150', 'uname -a'),
-        ('localhost', 'ls /'),
+        ("172.31.65.150", "uname -a"),
+        ("localhost", "ls /"),
         # ('host3.example.com', 'uptime')
     ]
 
     multi_results = await ssh_client.execute_multiple_commands(
-        hosts_commands,
-        username='root',
-        client_keys=['~/.ssh/id_rsa']
+        hosts_commands, username="root", client_keys=["~/.ssh/id_rsa"]
     )
 
     for res in multi_results:
         print(f"\nHost: {res['host']}")
         print(f"Command: {res['command']}")
-        if res['error']:
+        if res["error"]:
             print(f"Error: {res['error']}")
         else:
             print(f"Output: {res['stdout']}")
@@ -1020,13 +1153,10 @@ async def _main() -> None:
     # 3. Upload file
     print("\n=== File Upload ===")
     upload_result = await ssh_client.upload_file(
-        '172.31.65.150',
-        '/tmp/111',
-        '/tmp/222',
-        username='root'
+        "172.31.65.150", "/tmp/111", "/tmp/222", username="root"
     )
 
-    if upload_result['error']:
+    if upload_result["error"]:
         print(f"Upload failed: {upload_result['error']}")
     else:
         print(
@@ -1037,13 +1167,10 @@ async def _main() -> None:
     # 4. Download file
     print("\n=== File Download ===")
     download_result = await ssh_client.download_file(
-        '172.31.65.150',
-        '/tmp/222',
-        '/tmp/333',
-        username='root'
+        "172.31.65.150", "/tmp/222", "/tmp/333", username="root"
     )
 
-    if download_result['error']:
+    if download_result["error"]:
         print(f"Download failed: {download_result['error']}")
     else:
         print(

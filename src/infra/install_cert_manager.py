@@ -7,9 +7,11 @@
   - 镜像: {deploy_src}/images/cert-manager.images.v1.16.3.tar.gz
   - Chart: {deploy_src}/charts/cert-manager/  （解压后的 helm chart 目录）
 """
+
 import os
-from pyinfra.operations import server
+
 from pyinfra.context import host
+from pyinfra.operations import server
 
 data = host.data
 deploy_src = data.deploy_src
@@ -21,19 +23,29 @@ if "master" in host.groups:
         name="Install cert-manager",
         commands=" ".join(
             [
-                "KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
+                "KUBECONFIG=/etc/kubernetes/admin.conf helm",
+                "upgrade",
+                "--install",
+                "--wait",
+                "--timeout",
+                "5m",
                 "cert-manager",
                 helm_charts_dir,
-                "-n", "cert-manager",
+                "-n",
+                "cert-manager",
                 "--create-namespace",
-                "--set", "installCRDs=true",
-                "--set", "global.leaderElection.namespace=cert-manager",
+                "--set",
+                "installCRDs=true",
+                "--set",
+                "global.leaderElection.namespace=cert-manager",
                 # 关闭安装后自检 Job（Helm post-install hook）。
                 # 该 Job 仅做 webhook 健康校验，非功能组件；
                 # 离线环境中常因 webhook 就绪晚于 Job 首次执行而反复重试，
                 # 导致 helm install 阻塞不返回。
-                "--set", "startupapicheck.enabled=false",
-                "-f", f"{helm_charts_dir}/values.yaml",
+                "--set",
+                "startupapicheck.enabled=false",
+                "-f",
+                f"{helm_charts_dir}/values.yaml",
             ]
-        )
+        ),
     )

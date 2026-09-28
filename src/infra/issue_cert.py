@@ -1,8 +1,8 @@
 """创建证书"""
-from pyinfra.context import host
-from pyinfra.operations import server
 
 from _offline_transfer import pull_to_file
+from pyinfra.context import host
+from pyinfra.operations import server
 
 data = host.data
 master_ip = data.master_ip
@@ -15,12 +15,14 @@ if "master" in host.groups:
     server.files.put(
         name="Copy client cert file",
         dest=f"/usr/share/pki/ca-trust-source/anchors/{domain}.client.crt",
-        src=ca_crt_file
+        src=ca_crt_file,
     )
 if "master" not in host.groups:
     cert_pull, cert_timeout = pull_to_file(
-        f"sftp://{master_ip}{ca_crt_file}", ca_crt_file,
-        f"/usr/share/pki/ca-trust-source/anchors/{domain}.client.crt")
+        f"sftp://{master_ip}{ca_crt_file}",
+        ca_crt_file,
+        f"/usr/share/pki/ca-trust-source/anchors/{domain}.client.crt",
+    )
     server.shell(
         name="Copy client cert file",
         commands=cert_pull,

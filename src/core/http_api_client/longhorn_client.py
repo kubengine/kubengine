@@ -1,5 +1,4 @@
-"""
-Longhorn 存储 API 客户端模块
+"""Longhorn 存储 API 客户端模块
 
 提供与 Longhorn 存储系统 API 交互的客户端类，支持节点、卷和存储容量的管理。
 """
@@ -16,8 +15,7 @@ logger = get_logger(__name__)
 
 
 class LonghornClient(BasicClient):
-    """
-    Longhorn API 客户端类
+    """Longhorn API 客户端类
 
     提供与 Longhorn 存储系统 API 交互的方法，包括：
     - 节点管理
@@ -32,8 +30,7 @@ class LonghornClient(BasicClient):
     _logger = logger
 
     def __init__(self, base_url: str | None = None) -> None:
-        """
-        初始化 Longhorn 客户端
+        """初始化 Longhorn 客户端
 
         Args:
             base_url: Longhorn API 的基础 URL，如果未提供则使用默认域名
@@ -43,8 +40,7 @@ class LonghornClient(BasicClient):
         self.base_uri = "/v1"
 
     def nodes(self) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Longhorn 节点列表
+        """获取 Longhorn 节点列表
 
         Returns:
             标准化响应结果 (code, message, data)
@@ -54,8 +50,7 @@ class LonghornClient(BasicClient):
         return self.api_result(response)
 
     def capacity(self) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Longhorn 存储容量信息
+        """获取 Longhorn 存储容量信息
 
         计算所有节点上所有磁盘的总容量和可用容量。
 
@@ -78,14 +73,17 @@ class LonghornClient(BasicClient):
                     total += disk_info.get("storageMaximum", 0)
                     available += disk_info.get("storageAvailable", 0)
 
-        return 200, "success", {
-            "total": round(total / (1024**3), 1),  # 转换为GB
-            "available": round(available / (1024**3), 1)  # 转换为GB
-        }
+        return (
+            200,
+            "success",
+            {
+                "total": round(total / (1024**3), 1),  # 转换为GB
+                "available": round(available / (1024**3), 1),  # 转换为GB
+            },
+        )
 
     def volumes(self) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Longhorn 卷列表
+        """获取 Longhorn 卷列表
 
         Returns:
             标准化响应结果 (code, message, data)
@@ -95,8 +93,7 @@ class LonghornClient(BasicClient):
         return self.api_result(response)
 
     def delete_volume(self, name: str) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        删除指定名称的 Longhorn 卷
+        """删除指定名称的 Longhorn 卷
 
         Args:
             name: 要删除的卷的名称
@@ -105,5 +102,7 @@ class LonghornClient(BasicClient):
             标准化响应结果 (code, message, data)
         """
         url = f"{self.base_url}{self.base_uri}/volumes/{name}"
-        response = requests.delete(url, verify=self.verify_file, timeout=(5, 30))
+        response = requests.delete(
+            url, verify=self.verify_file, timeout=(5, 30)
+        )
         return self.api_result(response)

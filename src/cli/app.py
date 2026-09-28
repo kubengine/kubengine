@@ -21,22 +21,22 @@ KubeEngine 统一命令行工具
     kubengine image list-apps
 
     # K8s 部署
-    请使用 kubengine-k8s 命令，例如：kubengine-k8s deploy --deploy-src /root/offline-deploy
+    请使用 kubengine-k8s 命令，例如：
+        kubengine-k8s deploy --deploy-src /root/offline-deploy
 """
 
-import os
 import click
-
 from sqlalchemy import text
+
+# 导入子命令
+from cli.cluster import cli as cluster_cli
+from cli.image import cli as image_cli
+from core.app_defaults import get_default_apps
 from core.config import Application, ConfigDict
 from core.logger import get_logger, setup_cli_logging
 from core.orm.app import App, create_application
 from core.orm.engine import Base, engine, get_db
-from core.app_defaults import get_default_apps
 from web.utils.auth import get_password_hash
-# 导入子命令
-from cli.cluster import cli as cluster_cli
-from cli.image import cli as image_cli
 
 # 初始化日志
 setup_cli_logging(
@@ -124,8 +124,9 @@ def run(host: str, port: int, workers: int, reload: bool) -> None:
         workers: 工作进程数
         reload: 是否启用热重载（仅开发环境）
     """
-    import uvicorn
     import sys
+
+    import uvicorn
 
     # 热重载模式下强制workers=1（Uvicorn不支持reload+多workers）
     if reload:
@@ -151,12 +152,19 @@ def run(host: str, port: int, workers: int, reload: bool) -> None:
 
 
 @app.command("task-worker")
-@click.option("--concurrency", default=1, show_default=True, type=click.IntRange(1, 8))
+@click.option(
+    "--concurrency", default=1, show_default=True, type=click.IntRange(1, 8)
+)
 @click.option("--poll-interval", default=2.0, show_default=True, type=float)
-@click.option("--lease-seconds", default=90, show_default=True, type=click.IntRange(30))
-def image_worker(concurrency: int, poll_interval: float, lease_seconds: int) -> None:
+@click.option(
+    "--lease-seconds", default=90, show_default=True, type=click.IntRange(30)
+)
+def image_worker(
+    concurrency: int, poll_interval: float, lease_seconds: int
+) -> None:
     """统一运行应用与镜像任务，持续恢复中断执行（由 systemd 独立托管）。"""
     from core.image_import_worker import run_image_import_worker
+
     run_image_import_worker(concurrency, poll_interval, lease_seconds)
 
 
@@ -198,7 +206,10 @@ def set_password(password: str) -> None:
     _print_separator()
     click.echo()
 
-    click.echo("旧登录会话已失效，请重新登录。旧 AK/SK 签名认证已停用，请使用 Bearer Token。")
+    click.echo(
+        "旧登录会话已失效，请重新登录。旧 AK/SK 签名认证已停用，请使用 Bearer"
+        " Token。"
+    )
 
 
 @app.command()
@@ -308,7 +319,9 @@ def init_data(force: bool) -> None:
     else:
         click.echo(click.style("没有新增应用", fg="yellow"))
     if skipped_count > 0:
-        click.echo(f"跳过已存在的应用: {skipped_count} (使用 --force 强制覆盖)")
+        click.echo(
+            f"跳过已存在的应用: {skipped_count} (使用 --force 强制覆盖)"
+        )
     _print_separator()
 
     logger.info(

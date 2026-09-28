@@ -9,11 +9,19 @@ WebSocket 实时通信 API 路由模块
 """
 
 import asyncio
-from json import JSONDecodeError
 import uuid
+from json import JSONDecodeError
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
 
 from core.logger import get_logger, with_log_context, with_new_log_context
@@ -41,14 +49,18 @@ class ResourceCreateRequest(BaseModel):
     """创建资源的请求参数模型"""
 
     resource_name: str = Field(..., description="资源名称")
-    resource_type: str = Field(..., description="资源类型（如 redis、mysql、cluster）")
+    resource_type: str = Field(
+        ..., description="资源类型（如 redis、mysql、cluster）"
+    )
     config: dict[str, Any] | None = Field(None, description="资源配置")
 
 
 # ============================ 任务状态管理 ============================
 
 
-async def update_task_status(task_id: str, status: TaskStatus, message: str) -> None:
+async def update_task_status(
+    task_id: str, status: TaskStatus, message: str
+) -> None:
     """
     更新任务状态到全局存储
 
@@ -110,7 +122,9 @@ async def create_resource_task(
 
     try:
         # 步骤1：推送「任务开始」状态
-        await update_task_status(task_id, TaskStatus.running, "开始创建资源...")
+        await update_task_status(
+            task_id, TaskStatus.running, "开始创建资源..."
+        )
 
         # 模拟步骤1：校验配置（耗时1秒）
         await asyncio.sleep(1)
@@ -184,7 +198,9 @@ async def trigger_resource_create(
     task_id = str(uuid.uuid4())
 
     # 初始化任务状态
-    await update_task_status(task_id, TaskStatus.pending, "任务已接收，等待执行")
+    await update_task_status(
+        task_id, TaskStatus.pending, "任务已接收，等待执行"
+    )
 
     # 添加后台任务（FastAPI 自动异步执行）
     background_tasks.add_task(
@@ -195,7 +211,9 @@ async def trigger_resource_create(
         config=request.config,
     )
 
-    logger.info(f"创建资源任务已提交: {task_id}, 资源: {request.resource_name}")
+    logger.info(
+        f"创建资源任务已提交: {task_id}, 资源: {request.resource_name}"
+    )
 
     # 立即返回，不阻塞
     result: dict[str, Any] = {
@@ -265,7 +283,8 @@ async def websocket_endpoint(
         except HTTPException:
             return False
 
-    # Validate before each outbound message, including broadcasts and replies.
+    # Validate before each outbound message, including broadcasts and
+    # replies.
     await connection_manager.connect(websocket, validator=session_valid)
     logger.info("WebSocket 连接已加入连接池")
 
@@ -295,31 +314,42 @@ async def websocket_endpoint(
 
                 # 处理 ping 指令
                 if req.get("action") == "ping":
-                    await connection_manager.send_message(websocket, {"status": "ok"})
+                    await connection_manager.send_message(
+                        websocket, {"status": "ok"}
+                    )
                     logger.debug("响应 ping 消息")
 
                 else:
                     # 未知指令，返回提示
-                    await connection_manager.send_message(websocket, {
-                        "status": "error",
-                        "message": f"未知指令: {req.get('action')}",
-                    })
+                    await connection_manager.send_message(
+                        websocket,
+                        {
+                            "status": "error",
+                            "message": f"未知指令: {req.get('action')}",
+                        },
+                    )
                     logger.warning(f"收到未知指令: {req.get('action')}")
 
             except JSONDecodeError as e:
                 # JSON 解析失败
-                await connection_manager.send_message(websocket, {
-                    "status": "error",
-                    "message": f"指令格式错误：{str(e)}",
-                })
+                await connection_manager.send_message(
+                    websocket,
+                    {
+                        "status": "error",
+                        "message": f"指令格式错误：{str(e)}",
+                    },
+                )
                 logger.warning(f"JSON 解析失败: {e}")
 
             except Exception as e:
                 # 其他处理错误
-                await connection_manager.send_message(websocket, {
-                    "status": "error",
-                    "message": f"处理指令失败：{str(e)}",
-                })
+                await connection_manager.send_message(
+                    websocket,
+                    {
+                        "status": "error",
+                        "message": f"处理指令失败：{str(e)}",
+                    },
+                )
                 logger.error(f"处理 WebSocket 消息失败: {e}")
 
     except WebSocketDisconnect:

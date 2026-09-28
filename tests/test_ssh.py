@@ -57,7 +57,9 @@ async def test_connection_to_one_host_does_not_lock_other_hosts(
     monkeypatch.setattr("core.ssh.asyncssh.connect", fake_connect)
     client = AsyncSSHClient(connect_timeout=1)
 
-    slow_task = asyncio.create_task(client.execute_command("slow", "slow-command"))
+    slow_task = asyncio.create_task(
+        client.execute_command("slow", "slow-command")
+    )
     await slow_started.wait()
     fast_result = await asyncio.wait_for(
         client.execute_command("fast", "fast-command"), timeout=0.2
@@ -91,7 +93,8 @@ async def test_ssh_command_lifecycle_records_success_and_connection_reuse(
     command_records = [
         record
         for record in caplog.records
-        if getattr(record, "event", None) in {"ssh_command_start", "ssh_command_end"}
+        if getattr(record, "event", None)
+        in {"ssh_command_start", "ssh_command_end"}
     ]
 
     assert first["exit_status"] == 0
@@ -104,7 +107,9 @@ async def test_ssh_command_lifecycle_records_success_and_connection_reuse(
     assert command_records[2].command_id == command_records[3].command_id
     assert command_records[0].command_id != command_records[2].command_id
     assert all(record.host == "node-1" for record in command_records)
-    assert all(record.operation == "validate_node" for record in command_records)
+    assert all(
+        record.operation == "validate_node" for record in command_records
+    )
     assert command_records[1].levelno == logging.INFO
     assert command_records[1].status == "success"
     assert command_records[1].stdout_bytes == len("printf hello")
@@ -202,7 +207,8 @@ async def test_ssh_transfer_lifecycle_records_paths_and_status(
     records = [
         record
         for record in caplog.records
-        if getattr(record, "event", None) in {"ssh_transfer_start", "ssh_transfer_end"}
+        if getattr(record, "event", None)
+        in {"ssh_transfer_start", "ssh_transfer_end"}
     ]
     assert error is None
     assert len(records) == 2

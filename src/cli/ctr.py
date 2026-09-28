@@ -6,37 +6,37 @@
 
 from __future__ import annotations
 
-from functools import wraps
 import sys
 import traceback
+from functools import wraps
 from pathlib import Path
-from typing import Any, Optional, Callable, TypeVar, ParamSpec
+from typing import Any, Callable, Optional, ParamSpec, TypeVar
 
 import click
 from rich.console import Console
 
 from core.command import execute_command
+from core.config.application import Application
 from core.containerd.certs import ContainerdCertsConfig
 from core.logger import get_logger
-from core.config.application import Application
 
 # 初始化日志
 logger = get_logger(__name__)
 console: Console = Console()
 
 # 泛型类型定义
-P = ParamSpec('P')
-T = TypeVar('T')
+P = ParamSpec("P")
+T = TypeVar("T")
 
 
 class CtrCLIError(Exception):
     """Ctr CLI异常"""
+
     pass
 
 
 def handle_errors(
-    exit_on_error: bool = True,
-    show_traceback: bool = False
+    exit_on_error: bool = True, show_traceback: bool = False
 ) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """错误处理装饰器
 
@@ -47,6 +47,7 @@ def handle_errors(
     Returns:
         装饰器函数
     """
+
     def decorator(func: Callable[P, T]) -> Callable[P, T]:
         @wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
@@ -89,26 +90,32 @@ def handle_errors(
                 raise
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"执行失败: {error_msg}\n{traceback.format_exc()}")
+                logger.error(
+                    f"执行失败: {error_msg}\n{traceback.format_exc()}"
+                )
 
                 if isinstance(e, (OSError, IOError)):
                     console.print(f"[red]系统错误: {error_msg}[/red]")
                 elif isinstance(e, ValueError):
                     console.print(f"[red]值错误: {error_msg}[/red]")
                 elif isinstance(e, KeyError):
-                    console.print(f"[red]配置错误: 缺少必要的配置项 {error_msg}[/red]")
+                    console.print(
+                        f"[red]配置错误: 缺少必要的配置项 {error_msg}[/red]"
+                    )
                 else:
                     console.print(f"[red]未知错误: {error_msg}[/red]")
 
                 if show_traceback:
                     console.print(
-                        f"[dim]详细错误信息:\n{traceback.format_exc()}[/dim]")
+                        f"[dim]详细错误信息:\n{traceback.format_exc()}[/dim]"
+                    )
 
                 if exit_on_error:
                     sys.exit(1)
                 raise
 
         return wrapper
+
     return decorator
 
 
@@ -133,12 +140,19 @@ def cli(ctx: click.Context) -> None:
 
 @cli.command()
 @click.option(
-    '-i', '--image', required=True,
-    help='待拉取的镜像完整名称（含仓库/标签），例：harbor.example.com/myapp:1.0.0'
+    "-i",
+    "--image",
+    required=True,
+    help=(
+        "待拉取的镜像完整名称（含仓库/标签），"
+        "例：harbor.example.com/myapp:1.0.0"
+    ),
 )
-@click.option('-u', '--username', help='私有仓库用户名，公共仓库无需填写')
-@click.option('-p', '--password', help='私有仓库密码/令牌，公共仓库无需填写')
-@click.option('--timeout', type=int, default=300, help='拉取超时时间（秒），默认300秒')
+@click.option("-u", "--username", help="私有仓库用户名，公共仓库无需填写")
+@click.option("-p", "--password", help="私有仓库密码/令牌，公共仓库无需填写")
+@click.option(
+    "--timeout", type=int, default=300, help="拉取超时时间（秒），默认300秒"
+)
 @click.pass_context
 @cli_command
 def pull(
@@ -146,7 +160,7 @@ def pull(
     image: str,
     username: Optional[str],
     password: Optional[str],
-    timeout: int
+    timeout: int,
 ) -> None:
     """从容器仓库拉取镜像（pull）
 
@@ -157,13 +171,16 @@ def pull(
         # 拉取公共仓库镜像
         kubengine image ctr pull -i nginx:1.25.3
         # 拉取私有Harbor仓库镜像
-        kubengine image ctr pull -i harbor.example.com/myapp:1.0.0 -u admin -p Harbor12345
+        kubengine image ctr pull -i harbor.example.com/myapp:1.0.0 \\
+            -u admin -p Harbor12345
         # 拉取并设置超时时间
         kubengine image ctr pull -i redis:7.2 --timeout 600
     """
     console.print(f"[blue]📥 开始从仓库拉取镜像: {image}[/blue]")
     logger.info(
-        f"执行镜像拉取操作 | 镜像: {image} | 超时: {timeout}秒 | 私有仓库: {True if username else False}")
+        f"执行镜像拉取操作 | 镜像: {image} | 超时: {timeout}秒 | 私有仓库:"
+        f" {True if username else False}"
+    )
 
     try:
         # 构建拉取命令
@@ -178,19 +195,32 @@ def pull(
         logger.info(f"镜像拉取成功 | 镜像: {image}")
 
     except Exception as e:
-        logger.error(f"镜像拉取失败 | 镜像: {image} | 错误: {str(e)}", exc_info=True)
+        logger.error(
+            f"镜像拉取失败 | 镜像: {image} | 错误: {str(e)}", exc_info=True
+        )
         raise CtrCLIError(f"拉取镜像 {image} 失败: {str(e)}")
 
 
 @cli.command()
 @click.option(
-    '-i', '--image', required=True,
-    help='待推送的镜像完整名称（含仓库/标签），例：harbor.example.com/myapp:1.0.0'
+    "-i",
+    "--image",
+    required=True,
+    help=(
+        "待推送的镜像完整名称（含仓库/标签），"
+        "例：harbor.example.com/myapp:1.0.0"
+    ),
 )
-@click.option('-u', '--username', help='私有仓库用户名，公共仓库无需填写')
-@click.option('-p', '--password', help='私有仓库密码/令牌，公共仓库无需填写')
-@click.option('--timeout', type=int, default=300, help='推送超时时间（秒），默认300秒')
-@click.option('--skip-exists', is_flag=True, help='若仓库已存在该镜像，跳过推送（避免覆盖）')
+@click.option("-u", "--username", help="私有仓库用户名，公共仓库无需填写")
+@click.option("-p", "--password", help="私有仓库密码/令牌，公共仓库无需填写")
+@click.option(
+    "--timeout", type=int, default=300, help="推送超时时间（秒），默认300秒"
+)
+@click.option(
+    "--skip-exists",
+    is_flag=True,
+    help="若仓库已存在该镜像，跳过推送（避免覆盖）",
+)
 @click.pass_context
 @cli_command
 def push(
@@ -199,7 +229,7 @@ def push(
     username: Optional[str],
     password: Optional[str],
     timeout: int,
-    skip_exists: bool
+    skip_exists: bool,
 ) -> None:
     """将本地镜像推送到容器仓库（push）
 
@@ -210,13 +240,17 @@ def push(
         # 推送公共仓库镜像
         kubengine image ctr push -i myapp:1.0.0
         # 推送私有Harbor仓库镜像
-        kubengine image ctr push -i harbor.example.com/myapp:1.0.0 -u admin -p Harbor12345
+        kubengine image ctr push -i harbor.example.com/myapp:1.0.0 \\
+            -u admin -p Harbor12345
         # 推送并跳过已存在镜像
-        kubengine image ctr push -i redis:7.2 -u admin -p 123456 --skip-exists
+        kubengine image ctr push -i redis:7.2 -u admin -p 123456 \\
+            --skip-exists
     """
     console.print(f"[blue]📤 开始推送本地镜像到仓库: {image}[/blue]")
     logger.info(
-        f"执行镜像推送操作 | 镜像: {image} | 超时: {timeout}秒 | 跳过已存在: {skip_exists}")
+        f"执行镜像推送操作 | 镜像: {image} | 超时: {timeout}秒 | 跳过已存在:"
+        f" {skip_exists}"
+    )
 
     try:
         # 构建推送命令
@@ -231,31 +265,36 @@ def push(
         logger.info(f"镜像推送成功 | 镜像: {image}")
 
     except Exception as e:
-        logger.error(f"镜像推送失败 | 镜像: {image} | 错误: {str(e)}", exc_info=True)
+        logger.error(
+            f"镜像推送失败 | 镜像: {image} | 错误: {str(e)}", exc_info=True
+        )
         raise CtrCLIError(f"推送镜像 {image} 失败: {str(e)}")
 
 
 @cli.command()
-@click.argument('registrys', required=True, nargs=-1)
-@click.option('--yes', '-y', is_flag=True, help='跳过确认')
+@click.argument("registrys", required=True, nargs=-1)
+@click.option("--yes", "-y", is_flag=True, help="跳过确认")
 @click.option(
-    '--no-restart', is_flag=True,
-    help='仅写入配置，不重启 containerd（默认写入后自动重启）'
+    "--no-restart",
+    is_flag=True,
+    help="仅写入配置，不重启 containerd（默认写入后自动重启）",
 )
 @click.option(
-    '--no-sync', is_flag=True,
-    help='不同步到集群其他节点（默认自动同步到所有 worker/master 节点）'
+    "--no-sync",
+    is_flag=True,
+    help="不同步到集群其他节点（默认自动同步到所有 worker/master 节点）",
 )
 @click.option(
-    '--ssh-user', default='root', show_default=True,
-    help='远程节点 SSH 用户名'
+    "--ssh-user", default="root", show_default=True, help="远程节点 SSH 用户名"
 )
 @click.option(
-    '--ssh-password', help='远程节点 SSH 密码（与 --ssh-key 二选一）'
+    "--ssh-password", help="远程节点 SSH 密码（与 --ssh-key 二选一）"
 )
 @click.option(
-    '--ssh-key', default='~/.ssh/id_rsa', show_default=True,
-    help='远程节点 SSH 私钥路径（默认使用互信密钥）'
+    "--ssh-key",
+    default="~/.ssh/id_rsa",
+    show_default=True,
+    help="远程节点 SSH 私钥路径（默认使用互信密钥）",
 )
 @cli_command
 def add_proxy(
@@ -265,12 +304,13 @@ def add_proxy(
     no_sync: bool,
     ssh_user: str,
     ssh_password: Optional[str],
-    ssh_key: str
+    ssh_key: str,
 ) -> None:
     """添加镜像仓库代理（写入 containerd hosts.toml）
 
     将指定上游仓库的镜像拉取请求透明转发到本地 Harbor。
-    配置写入 /etc/containerd/certs.d/<registry>/hosts.toml，并重启 containerd 生效。
+    配置写入 /etc/containerd/certs.d/<registry>/hosts.toml，并重启 containerd
+    生效。
     默认同步到集群所有节点（worker + master）并重启各自 containerd。
 
     若镜像仓库代理已存在，则会覆盖当前配置。
@@ -303,7 +343,10 @@ def add_proxy(
 
     console.print(table)
 
-    if not (yes or click.confirm("确认写入以上配置并重启 containerd？", default=True)):
+    if not (
+        yes
+        or click.confirm("确认写入以上配置并重启 containerd？", default=True)
+    ):
         console.print("[yellow]已取消[/yellow]")
         return
 
@@ -318,46 +361,53 @@ def add_proxy(
         # 标准 containerd hosts.toml 格式（嵌套 [host."..."] 段）
         content = (
             f'server = "{proxy_url}"\n'
-            f'\n'
+            "\n"
             f'[host."{proxy_url}"]\n'
-            f'  capabilities = ["pull", "push", "resolve"]\n'
-            f'  override_path = true\n'
+            '  capabilities = ["pull", "push", "resolve"]\n'
+            "  override_path = true\n"
         )
         # CA 证书存在则附加，启用 TLS 校验
         if Path(ca_crt).exists():
             content += f'  ca = "{ca_crt}"\n'
         else:
-            content += '  skip_verify = true\n'
+            content += "  skip_verify = true\n"
 
         hosts_toml_path.write_text(content, encoding="utf-8")
         written.append(registry)
         logger.info(f"写入 hosts.toml: {hosts_toml_path}")
 
     console.print(
-        f"[green]✅ 已写入 {len(written)} 个仓库代理配置: {', '.join(written)}[/green]"
+        f"[green]✅ 已写入 {len(written)} 个仓库代理配置:"
+        f" {', '.join(written)}[/green]"
     )
 
     # 在 Harbor 中创建对应的公开项目（与 registry 同名）
     try:
         from core.http_api_client.harbor_client import HarborClient
+
         harbor = HarborClient()
         console.print(
-            f"[blue]📋 在 Harbor 中创建对应公开项目: {', '.join(written)}[/blue]")
+            "[blue]📋 在 Harbor 中创建对应公开项目:"
+            f" {', '.join(written)}[/blue]"
+        )
         for project in written:
             if harbor.create_project(project, public=True):
                 console.print(f"[green]  ✅ Harbor 项目: {project}[/green]")
             else:
                 console.print(
-                    f"[yellow]  ⚠ Harbor 项目 '{project}' 创建失败（可能已存在或 Harbor 未就绪）[/yellow]")
+                    f"[yellow]  ⚠ Harbor 项目 '{project}'"
+                    " 创建失败（可能已存在或 Harbor 未就绪）[/yellow]"
+                )
     except Exception as e:
-        console.print(
-            f"[yellow]⚠ Harbor 项目创建跳过: {e}[/yellow]")
+        console.print(f"[yellow]⚠ Harbor 项目创建跳过: {e}[/yellow]")
 
     # 重启本机 containerd 使配置生效
     if not no_restart:
         console.print("[blue]🔄 重启本机 containerd 使配置生效...[/blue]")
         try:
-            result = execute_command("systemctl restart containerd", timeout=120)
+            result = execute_command(
+                "systemctl restart containerd", timeout=120
+            )
             if result.is_success():
                 console.print("[green]✅ 本机 containerd 重启成功[/green]")
             else:
@@ -379,16 +429,25 @@ def add_proxy(
 
     # 收集集群节点（排除本机）
     from core.config.application import Application as App
-    additional_masters = getattr(App.K8S_CONFIG, 'ADDITIONAL_MASTER_IPS', []) or []
-    workers = getattr(App.K8S_CONFIG, 'WORKER_IPS', []) or []
+
+    additional_masters = (
+        getattr(App.K8S_CONFIG, "ADDITIONAL_MASTER_IPS", []) or []
+    )
+    workers = getattr(App.K8S_CONFIG, "WORKER_IPS", []) or []
     remote_nodes = list(additional_masters) + list(workers)
 
     if not remote_nodes:
-        console.print("[yellow]⚠ 未配置其他集群节点（WORKER_IPS/ADDITIONAL_MASTER_IPS），跳过同步[/yellow]")
+        console.print(
+            "[yellow]⚠"
+            " 未配置其他集群节点（WORKER_IPS/ADDITIONAL_MASTER_IPS），"
+            "跳过同步[/yellow]"
+        )
         return
 
     console.print(
-        f"[blue]📡 同步代理配置到 {len(remote_nodes)} 个集群节点: {', '.join(remote_nodes)}[/blue]")
+        f"[blue]📡 同步代理配置到 {len(remote_nodes)} 个集群节点:"
+        f" {', '.join(remote_nodes)}[/blue]"
+    )
 
     # 构建 SSH 参数
     ssh_kwargs: dict = {"username": ssh_user}
@@ -396,10 +455,12 @@ def add_proxy(
         ssh_kwargs["password"] = ssh_password
     else:
         import os
+
         ssh_kwargs["client_keys"] = [os.path.expanduser(ssh_key)]
 
     # 同步文件 + 远程重启
     import asyncio
+
     from core.ssh import AsyncSSHClient
 
     async def _sync_to_nodes() -> None:
@@ -438,7 +499,8 @@ def add_proxy(
                 )
                 if upload_result.get("error"):
                     node_errors.append(
-                        f"上传 {registry}/hosts.toml 失败: {upload_result['error']}"
+                        f"上传 {registry}/hosts.toml 失败:"
+                        f" {upload_result['error']}"
                     )
 
             if Path(ca_crt).exists():
@@ -454,7 +516,9 @@ def add_proxy(
                         node, ca_crt, ca_crt, **ssh_kwargs
                     )
                     if upload_result.get("error"):
-                        node_errors.append(f"上传 CA 证书失败: {upload_result['error']}")
+                        node_errors.append(
+                            f"上传 CA 证书失败: {upload_result['error']}"
+                        )
 
             if node_errors:
                 failures[node] = node_errors
@@ -471,14 +535,17 @@ def add_proxy(
                 failures[node] = ["SSH 预检失败"]
             if unreachable:
                 console.print(
-                    f"[yellow]⚠ 跳过 SSH 不可达节点: {', '.join(unreachable)}[/yellow]"
+                    "[yellow]⚠ 跳过 SSH 不可达节点:"
+                    f" {', '.join(unreachable)}[/yellow]"
                 )
 
             sync_results = await asyncio.gather(
                 *(sync_node(node) for node in reachable)
             )
             ready_nodes = [
-                node for node, success in zip(reachable, sync_results) if success
+                node
+                for node, success in zip(reachable, sync_results)
+                if success
             ]
 
             # 配置可以有限并发上传，运行时重启必须逐节点滚动执行。
@@ -543,11 +610,11 @@ def list_proxy() -> None:
                 key,
                 hkey,
                 ",".join(hvalue.get("capabilities", [])),
-                str(hvalue.get("override_path", False))
+                str(hvalue.get("override_path", False)),
             )
 
     console.print(table)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

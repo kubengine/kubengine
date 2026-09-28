@@ -1,6 +1,6 @@
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-import threading
 from types import SimpleNamespace
 
 import pytest
@@ -39,7 +39,8 @@ def image_queue(monkeypatch, tmp_path):
     archive.write_bytes(b"isolated archive fixture")
     monkeypatch.setattr(artifacts, "_inspect_image_archive", lambda path: {})
     monkeypatch.setattr(
-        artifacts, "HarborClient",
+        artifacts,
+        "HarborClient",
         lambda: SimpleNamespace(create_project=lambda *args, **kwargs: True),
     )
     yield test_engine, archive
@@ -48,7 +49,9 @@ def image_queue(monkeypatch, tmp_path):
 
 
 def queue_task(archive):
-    task = create_image_import_task(archive.name, "application/x-tar", str(archive))
+    task = create_image_import_task(
+        archive.name, "application/x-tar", str(archive)
+    )
     task_id = int(task["task_id"])
     update_image_import_task(task_id, status="pending")
     return task_id
@@ -63,9 +66,9 @@ def claim(owner="worker-a"):
 def expire(test_engine, task_id):
     with test_engine.begin() as connection:
         connection.execute(
-            update(ImageImportTask).where(ImageImportTask.task_id == task_id).values(
-                lease_expires_at=datetime.now() - timedelta(seconds=1)
-            )
+            update(ImageImportTask)
+            .where(ImageImportTask.task_id == task_id)
+            .values(lease_expires_at=datetime.now() - timedelta(seconds=1))
         )
 
 
@@ -94,7 +97,9 @@ def mock_commands(monkeypatch, refs, on_push=None):
 
 def test_expired_image_task_lease_can_be_reclaimed(image_queue):
     test_engine, archive = image_queue
-    task = create_image_import_task(archive.name, "application/x-tar", str(archive))
+    task = create_image_import_task(
+        archive.name, "application/x-tar", str(archive)
+    )
     assert claim_next_image_import_task("worker-a", 60) is None
     task_id = int(task["task_id"])
     update_image_import_task(task_id, status="pending")
@@ -102,7 +107,9 @@ def test_expired_image_task_lease_can_be_reclaimed(image_queue):
     assert claimed["attempt_count"] == 1
     assert not renew_image_import_lease(task_id, "worker-b", 60, lease.attempt)
     expire(test_engine, task_id)
-    assert not renew_image_import_lease(task_id, lease.owner, 60, lease.attempt)
+    assert not renew_image_import_lease(
+        task_id, lease.owner, 60, lease.attempt
+    )
     reclaimed, _ = claim("worker-b")
     assert reclaimed["task_id"] == task_id
     assert reclaimed["attempt_count"] == 2
@@ -134,11 +141,17 @@ def test_stale_attempt_cannot_modify_new_owner_or_items(image_queue):
     expire(test_engine, task_id)
     _, current = claim("same-worker")
     assert current.attempt == old.attempt + 1
-    update_image_import_item(task_id, ref, "success", "completed", lease=current)
+    update_image_import_item(
+        task_id, ref, "success", "completed", lease=current
+    )
     assert not renew_image_import_lease(task_id, old.owner, 60, old.attempt)
     for mutation in (
-        lambda: update_image_import_task(task_id, lease=old, status="success", lease_owner=None),
-        lambda: update_image_import_item(task_id, ref, "failed", "stale", lease=old),
+        lambda: update_image_import_task(
+            task_id, lease=old, status="success", lease_owner=None
+        ),
+        lambda: update_image_import_item(
+            task_id, ref, "failed", "stale", lease=old
+        ),
         lambda: replace_image_import_items(task_id, [], lease=old),
         lambda: update_image_import_task(task_id, status="failed"),
     ):
@@ -148,7 +161,9 @@ def test_stale_attempt_cannot_modify_new_owner_or_items(image_queue):
     assert record["status"] == "processing"
     assert record["attempt_count"] == current.attempt
     assert record["items"][0]["status"] == "success"
-    update_image_import_task(task_id, lease=current, status="success", lease_owner=None)
+    update_image_import_task(
+        task_id, lease=current, status="success", lease_owner=None
+    )
     with pytest.raises(ImageImportLeaseLost):
         update_image_import_item(task_id, ref, "failed", "stale", lease=old)
     assert find_image_import_task(task_id)["status"] == "success"
@@ -164,17 +179,25 @@ def test_expired_attempt_cannot_write_even_before_reclaim(image_queue):
     with pytest.raises(ImageImportLeaseLost):
         update_image_import_task(task_id, lease=lease, status="success")
     with pytest.raises(ImageImportLeaseLost):
-        update_image_import_item(task_id, ref, "success", "completed", lease=lease)
+        update_image_import_item(
+            task_id, ref, "success", "completed", lease=lease
+        )
 
 
-def test_interrupted_retry_resumes_processing_item_and_preserves_success(image_queue, monkeypatch):
+def test_interrupted_retry_resumes_processing_item_and_preserves_success(
+    image_queue, monkeypatch
+):
     test_engine, archive = image_queue
     task_id = queue_task(archive)
     _, initial = claim()
     complete, unfinished = "example.test/app:done", "example.test/app:retry"
     seed_items(task_id, initial, [complete, unfinished])
-    update_image_import_item(task_id, complete, "success", "completed", lease=initial)
-    update_image_import_item(task_id, unfinished, "failed", "push", lease=initial)
+    update_image_import_item(
+        task_id, complete, "success", "completed", lease=initial
+    )
+    update_image_import_item(
+        task_id, unfinished, "failed", "push", lease=initial
+    )
     artifacts._finish_image_import_task(task_id, lease=initial)
     assert requeue_image_import_task(task_id)
     task, interrupted = claim("retry-worker")
@@ -185,14 +208,20 @@ def test_interrupted_retry_resumes_processing_item_and_preserves_success(image_q
 
     mock_commands(monkeypatch, [complete, unfinished], crash)
     with pytest.raises(KeyboardInterrupt):
-        artifacts.process_image_import_task(task_id, retry_failed=True, lease=interrupted)
-    assert find_image_import_task(task_id)["items"][1]["status"] == "processing"
+        artifacts.process_image_import_task(
+            task_id, retry_failed=True, lease=interrupted
+        )
+    assert (
+        find_image_import_task(task_id)["items"][1]["status"] == "processing"
+    )
     expire(test_engine, task_id)
     reclaimed, recovered = claim("recovery-worker")
     assert reclaimed["retry_failed"]
     assert find_image_import_task(task_id)["items"][1]["status"] == "pending"
     pushed = mock_commands(monkeypatch, [complete, unfinished])
-    artifacts.process_image_import_task(task_id, retry_failed=True, lease=recovered)
+    artifacts.process_image_import_task(
+        task_id, retry_failed=True, lease=recovered
+    )
     final = find_image_import_task(task_id)
     assert pushed == [unfinished]
     assert final["status"] == "success"
@@ -206,9 +235,13 @@ def test_missing_unfinished_image_finishes_as_failed(image_queue, monkeypatch):
     _, lease = claim()
     existing, missing = "example.test/app:existing", "example.test/app:missing"
     seed_items(task_id, lease, [existing, missing])
-    update_image_import_item(task_id, existing, "success", "completed", lease=lease)
+    update_image_import_item(
+        task_id, existing, "success", "completed", lease=lease
+    )
     pushed = mock_commands(monkeypatch, [existing])
-    artifacts.process_image_import_task(task_id, retry_failed=True, lease=lease)
+    artifacts.process_image_import_task(
+        task_id, retry_failed=True, lease=lease
+    )
     final = find_image_import_task(task_id)
     assert pushed == []
     assert final["status"] == "partial_success"
@@ -216,18 +249,26 @@ def test_missing_unfinished_image_finishes_as_failed(image_queue, monkeypatch):
     assert final["failed_count"] == 1
 
 
-def test_old_and_new_attempts_never_overlap_namespace_or_cleanup(image_queue, monkeypatch):
+def test_old_and_new_attempts_never_overlap_namespace_or_cleanup(
+    image_queue, monkeypatch
+):
     test_engine, archive = image_queue
     task_id = queue_task(archive)
     _, old = claim("old")
     ref = "example.test/app:one"
-    entered_push, release_push, new_command = (threading.Event() for _ in range(3))
+    entered_push, release_push, new_command = (
+        threading.Event() for _ in range(3)
+    )
     local = threading.local()
     operations = []
 
     def run(argv, **kwargs):
         actor = local.actor
-        action = (argv[4] if argv[1] == "-n" else "namespace-" + argv[2]) if argv[0] == "ctr" else "proxy"
+        action = (
+            (argv[4] if argv[1] == "-n" else "namespace-" + argv[2])
+            if argv[0] == "ctr"
+            else "proxy"
+        )
         operations.append((actor, action))
         if actor == "new":
             new_command.set()
@@ -251,13 +292,15 @@ def test_old_and_new_attempts_never_overlap_namespace_or_cleanup(image_queue, mo
             expire(test_engine, task_id)
             _, new = claim("new")
             second = pool.submit(execute, "new", new)
-            assert not new_command.wait(.1)
+            assert not new_command.wait(0.1)
         finally:
             release_push.set()
         with pytest.raises(ImageImportLeaseLost):
             first.result(timeout=5)
         second.result(timeout=5)
-    first_new = next(index for index, entry in enumerate(operations) if entry[0] == "new")
+    first_new = next(
+        index for index, entry in enumerate(operations) if entry[0] == "new"
+    )
     assert ("old", "prune") in operations[:first_new]
     assert operations[first_new - 1][0] == "old"
     assert all(actor == "new" for actor, _ in operations[first_new:])
@@ -267,7 +310,9 @@ def test_old_and_new_attempts_never_overlap_namespace_or_cleanup(image_queue, mo
     assert final["items"][0]["status"] == "success"
 
 
-def test_worker_failure_cannot_overwrite_reclaimed_attempt(image_queue, monkeypatch):
+def test_worker_failure_cannot_overwrite_reclaimed_attempt(
+    image_queue, monkeypatch
+):
     from core.image_import_worker import ImageImportWorker
 
     test_engine, archive = image_queue
@@ -277,10 +322,14 @@ def test_worker_failure_cannot_overwrite_reclaimed_attempt(image_queue, monkeypa
     def lose_lease_then_fail(*args, **kwargs):
         expire(test_engine, task_id)
         _, new = claim("new-worker")
-        update_image_import_task(task_id, lease=new, status="success", lease_owner=None)
+        update_image_import_task(
+            task_id, lease=new, status="success", lease_owner=None
+        )
         raise RuntimeError("late failure from old worker")
 
-    monkeypatch.setattr(artifacts, "process_image_import_task", lose_lease_then_fail)
+    monkeypatch.setattr(
+        artifacts, "process_image_import_task", lose_lease_then_fail
+    )
     worker = ImageImportWorker()
     try:
         worker._run_task(task_id, False, old)
@@ -300,7 +349,9 @@ def test_worker_interruption_keeps_items_recoverable(image_queue, monkeypatch):
     _, interrupted = claim()
     ref = "example.test/app:interrupted"
     seed_items(task_id, interrupted, [ref])
-    update_image_import_item(task_id, ref, "processing", "push", lease=interrupted)
+    update_image_import_item(
+        task_id, ref, "processing", "push", lease=interrupted
+    )
 
     def interrupt(*args, **kwargs):
         raise KeyboardInterrupt("simulated process interruption")

@@ -1,4 +1,6 @@
-"""Flink Kubernetes Operator 应用默认配置（基于 apache/flink-kubernetes-operator chart）。"""
+"""Flink Kubernetes Operator 应用默认配置（基于 apache/flink-kubernetes-operator
+chart）。
+"""
 
 from datetime import datetime
 
@@ -18,7 +20,10 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
     return AppSchema(
         name="flink_operator",
         category=["消息与集成"],
-        description="Apache Flink Kubernetes Operator，用于在 Kubernetes 上自动化管理 Flink 应用生命周期",
+        description=(
+            "Apache Flink Kubernetes Operator，用于在 Kubernetes 上自动化管理"
+            " Flink 应用生命周期"
+        ),
         helm_chart="flink-kubernetes-operator",
         create_time=create_time,
         app_field_configs=[
@@ -28,7 +33,10 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="replicas",
                 label="Operator副本数",
-                extra="Operator 实例数，默认 1。开启 Leader Election 后可设置为多副本实现高可用",
+                extra=(
+                    "Operator 实例数，默认 1。开启 Leader Election"
+                    " 后可设置为多副本实现高可用"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="radio",
@@ -169,13 +177,19 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="watchNamespaces",
                 label="监听命名空间",
-                extra="Operator 监听 FlinkDeployment 变更的命名空间列表，多个用逗号分隔。留空表示监听所有命名空间（集群级别）",
+                extra=(
+                    "Operator 监听 FlinkDeployment 变更的命名空间列表，"
+                    "多个用逗号分隔。留空表示监听所有命名空间（集群级别）"
+                ),
                 order=0,
                 form_item_props={"required": False},
                 type="text",
                 initial_value="",
                 rules=[],
-                field_props={"placeholder": "如 flink,flink-jobs；留空监听所有命名空间", "options": []},
+                field_props={
+                    "placeholder": "如 flink,flink-jobs；留空监听所有命名空间",
+                    "options": [],
+                },
                 helm_props={
                     "keys": ["watchNamespaces"],
                     "type": "array",
@@ -187,7 +201,10 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="webhookCreate",
                 label="Webhook 校验",
-                extra="是否启用 Admission Webhook（对 FlinkDeployment 资源进行校验和变更）。生产环境建议开启",
+                extra=(
+                    "是否启用 Admission Webhook（对 FlinkDeployment"
+                    " 资源进行校验和变更）。生产环境建议开启"
+                ),
                 order=1,
                 form_item_props={"required": True},
                 type="radio",
@@ -233,7 +250,10 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="defaultConfigurationCreate",
                 label="创建默认配置",
-                extra="是否创建 Flink 默认配置 ConfigMap。关闭后下方 Flink 配置覆盖项将不生效",
+                extra=(
+                    "是否创建 Flink 默认配置 ConfigMap。关闭后下方 Flink"
+                    " 配置覆盖项将不生效"
+                ),
                 order=3,
                 form_item_props={"required": True},
                 type="radio",
@@ -256,7 +276,10 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="reconcileInterval",
                 label="协调间隔",
-                extra="Operator 协调 FlinkDeployment 状态的间隔。值越小响应越快但开销越大，生产环境建议 15s",
+                extra=(
+                    "Operator 协调 FlinkDeployment 状态的间隔。"
+                    "值越小响应越快但开销越大，生产环境建议 15s"
+                ),
                 order=4,
                 form_item_props={"required": False},
                 type="select",
@@ -272,7 +295,12 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                     ],
                 },
                 helm_props={
-                    "keys": ["defaultConfiguration.flink-conf.yaml.[[kubernetes.operator.reconcile.interval]]"],
+                    "keys": [
+                        (
+                            "defaultConfiguration.flink-conf.yaml."
+                            "[[kubernetes.operator.reconcile.interval]]"
+                        )
+                    ],
                     "type": "string",
                     "unit": "",
                 },
@@ -282,7 +310,10 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="observerProgressCheckInterval",
                 label="观测进度检查间隔",
-                extra="Operator 检查作业部署进度的间隔。值越小状态更新越及时但增加 API Server 负载",
+                extra=(
+                    "Operator 检查作业部署进度的间隔。"
+                    "值越小状态更新越及时但增加 API Server 负载"
+                ),
                 order=5,
                 form_item_props={"required": False},
                 type="select",
@@ -297,7 +328,13 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                     ],
                 },
                 helm_props={
-                    "keys": ["defaultConfiguration.flink-conf.yaml.[[kubernetes.operator.observer.progress-check.interval]]"],
+                    "keys": [
+                        (
+                            "defaultConfiguration.flink-conf.yaml."
+                            "[[kubernetes.operator.observer.progress-"
+                            "check.interval]]"
+                        )
+                    ],
                     "type": "string",
                     "unit": "",
                 },
@@ -307,15 +344,26 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="metricsPort",
                 label="Metrics 端口",
-                extra="Operator 暴露 Metrics 指标的端口，留空则不暴露。对接监控系统时建议设置为 9999",
+                extra=(
+                    "Operator 暴露 Metrics 指标的端口，留空则不暴露。"
+                    "对接监控系统时建议设置为 9999"
+                ),
                 order=6,
                 form_item_props={"required": False},
                 type="number",
                 initial_value="",
                 rules=[
-                    {"type": "number", "message": "仅允许设置 1024 - 65535", "min": 1024, "max": 65535},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 1024 - 65535",
+                        "min": 1024,
+                        "max": 65535,
+                    },
                 ],
-                field_props={"placeholder": "如 9999；留空不暴露", "options": []},
+                field_props={
+                    "placeholder": "如 9999；留空不暴露",
+                    "options": [],
+                },
                 helm_props={
                     "keys": ["metrics.port"],
                     "type": "number",
@@ -333,7 +381,12 @@ def get_flink_operator_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=8085,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 1024 - 65535", "min": 1024, "max": 65535},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 1024 - 65535",
+                        "min": 1024,
+                        "max": 65535,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={

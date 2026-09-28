@@ -15,11 +15,12 @@ kubectl镜像构建器
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Any, Optional, Union
+from typing import Any, List, Optional, Union
 
 from builder.image.base_builder import BuilderOptions
 from builder.image.os.kylin import Builder as KylinBuilder
 from core.logger import get_logger
+
 logger = get_logger(__name__)
 
 
@@ -46,7 +47,7 @@ class Builder(KylinBuilder):
             "kubectl_cli",
             "multi_version_support",
             "kubernetes_tools",
-            "cli_optimization"
+            "cli_optimization",
         ]
         return parent_features + kubectl_features
 
@@ -55,7 +56,7 @@ class Builder(KylinBuilder):
         name: str,
         config_file: Optional[Union[str, Path]] = None,
         options: Optional[BuilderOptions] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """初始化kubectl镜像构建器
 

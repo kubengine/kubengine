@@ -1,5 +1,4 @@
-"""
-Harbor 镜像仓库 API 客户端模块
+"""Harbor 镜像仓库 API 客户端模块
 
 提供与 Harbor Registry API 交互的客户端类，支持项目、仓库、制品和标签的管理。
 """
@@ -19,8 +18,7 @@ logger = get_logger(__name__)
 
 
 class HarborClient(BasicClient):
-    """
-    Harbor API 客户端类
+    """Harbor API 客户端类
 
     提供与 Harbor 镜像仓库 API 交互的方法，包括：
     - 项目管理
@@ -44,8 +42,7 @@ class HarborClient(BasicClient):
         username: Optional[str] = None,
         password: Optional[str] = None,
     ) -> None:
-        """
-        初始化 Harbor 客户端
+        """初始化 Harbor 客户端
 
         Args:
             base_url: Harbor 服务的基础 URL
@@ -54,15 +51,18 @@ class HarborClient(BasicClient):
         """
         super().__init__()
         self.base_url = base_url or f"https://{Application.DOMAIN}"
-        self.username = Application.REGISTRY.USERNAME if username is None else username
-        self.password = Application.REGISTRY.PASSWORD if password is None else password
+        self.username = (
+            Application.REGISTRY.USERNAME if username is None else username
+        )
+        self.password = (
+            Application.REGISTRY.PASSWORD if password is None else password
+        )
         self.base_uri = "/api/v2.0"
 
     def get_projects(
         self, project_id_or_name: Optional[str] = None
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Harbor 中的所有项目列表或指定项目信息
+        """获取 Harbor 中的所有项目列表或指定项目信息
 
         Args:
             project_id_or_name: 项目 ID 或名称
@@ -78,7 +78,8 @@ class HarborClient(BasicClient):
         response = requests.get(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file, timeout=(5, 30)
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -88,8 +89,7 @@ class HarborClient(BasicClient):
         query: Optional[str] = None,
         page_params: Optional[PageParams] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取指定项目下的所有仓库列表
+        """获取指定项目下的所有仓库列表
 
         Args:
             project_name: 项目名称
@@ -105,20 +105,23 @@ class HarborClient(BasicClient):
         if query:
             params["q"] = query
 
-        url = f"{self.base_url}{self.base_uri}/projects/{project_name}/repositories"
+        url = (
+            f"{self.base_url}{self.base_uri}/projects/{project_name}/"
+            f"repositories"
+        )
         response = requests.get(
             url,
             auth=(self.username, self.password),
             verify=self.verify_file,
-            params=params, timeout=(5, 30),
+            params=params,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
     def delete_repository(
         self, project_name: str, repository_name: str
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        删除指定项目下的仓库
+        """删除指定项目下的仓库
 
         Args:
             project_name: 项目名称
@@ -127,11 +130,15 @@ class HarborClient(BasicClient):
         Returns:
             标准化响应结果 (code, message, data)
         """
-        url = f"{self.base_url}{self.base_uri}/projects/{project_name}/repositories/{quote(repository_name)}"
+        url = (
+            f"{self.base_url}{self.base_uri}/projects/{project_name}/"
+            f"repositories/{quote(repository_name)}"
+        )
         response = requests.delete(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return response.status_code, "", {}
 
@@ -142,8 +149,7 @@ class HarborClient(BasicClient):
         query: Optional[str] = None,
         page_params: Optional[PageParams] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取指定仓库下的所有制品列表
+        """获取指定仓库下的所有制品列表
 
         Args:
             project_name: 项目名称
@@ -160,20 +166,23 @@ class HarborClient(BasicClient):
         if query:
             params["q"] = query
 
-        url = f"{self.base_url}{self.base_uri}/projects/{project_name}/repositories/{repository_name}/artifacts"
+        url = (
+            f"{self.base_url}{self.base_uri}/projects/{project_name}/"
+            f"repositories/{repository_name}/artifacts"
+        )
         response = requests.get(
             url,
             auth=(self.username, self.password),
             verify=self.verify_file,
-            params=params, timeout=(5, 30),
+            params=params,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
     def get_artifact(
         self, project_name: str, repository_name: str, digest: str
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取指定制品详情
+        """获取指定制品详情
 
         Args:
             project_name: 项目名称
@@ -183,19 +192,22 @@ class HarborClient(BasicClient):
         Returns:
             标准化响应结果 (code, message, data)
         """
-        url = f"{self.base_url}{self.base_uri}/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}"
+        url = (
+            f"{self.base_url}{self.base_uri}/projects/{project_name}/"
+            f"repositories/{repository_name}/artifacts/{digest}"
+        )
         response = requests.get(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
     def delete_artifact(
         self, project_name: str, repository_name: str, digest: str
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        删除制品
+        """删除制品
 
         Args:
             project_name: 项目名称
@@ -205,21 +217,28 @@ class HarborClient(BasicClient):
         Returns:
             标准化响应结果 (code, message, data)
         """
-        url = f"{self.base_url}{self.base_uri}/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}"
+        url = (
+            f"{self.base_url}{self.base_uri}/projects/{project_name}/"
+            f"repositories/{repository_name}/artifacts/{digest}"
+        )
         response = requests.delete(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         if response.status_code == 200:
             return 200, "success", {}
-        return response.status_code, f"Failed: {response.status_code} - {response.text}", {}
+        return (
+            response.status_code,
+            f"Failed: {response.status_code} - {response.text}",
+            {},
+        )
 
     def get_chart_values(
         self, project_name: str, repository_name: str, digest: str
     ) -> Tuple[int, str, str]:
-        """
-        获取 Chart 制品的 values.yaml 内容
+        """获取 Chart 制品的 values.yaml 内容
 
         Args:
             project_name: 项目名称
@@ -229,11 +248,16 @@ class HarborClient(BasicClient):
         Returns:
             标准化响应结果 (code, message, data)，data 为文本内容
         """
-        url = f"{self.base_url}{self.base_uri}/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}/additions/values.yaml"
+        url = (
+            f"{self.base_url}{self.base_uri}/projects/{project_name}/"
+            f"repositories/{repository_name}/artifacts/{digest}/additions/"
+            f"values.yaml"
+        )
         response = requests.get(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result_text(response)
 
@@ -244,8 +268,7 @@ class HarborClient(BasicClient):
         digest: str,
         page_params: Optional[PageParams] = None,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取制品标签列表
+        """获取制品标签列表
 
         Args:
             project_name: 项目名称
@@ -260,20 +283,27 @@ class HarborClient(BasicClient):
         if page_params:
             params.update(page_params.model_dump())
 
-        url = f"{self.base_url}{self.base_uri}/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}/tags"
+        url = (
+            f"{self.base_url}{self.base_uri}/projects/{project_name}/"
+            f"repositories/{repository_name}/artifacts/{digest}/tags"
+        )
         response = requests.get(
             url,
             auth=(self.username, self.password),
             verify=self.verify_file,
-            params=params, timeout=(5, 30),
+            params=params,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
     def add_tag(
-        self, project_name: str, repository_name: str, digest: str, tag_name: str
+        self,
+        project_name: str,
+        repository_name: str,
+        digest: str,
+        tag_name: str,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        为制品添加标签
+        """为制品添加标签
 
         Args:
             project_name: 项目名称
@@ -284,22 +314,33 @@ class HarborClient(BasicClient):
         Returns:
             标准化响应结果 (code, message, data)
         """
-        url = f"{self.base_url}{self.base_uri}/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}/tags"
+        url = (
+            f"{self.base_url}{self.base_uri}/projects/{project_name}/"
+            f"repositories/{repository_name}/artifacts/{digest}/tags"
+        )
         response = requests.post(
             url,
             auth=(self.username, self.password),
             verify=self.verify_file,
-            json={"name": tag_name}, timeout=(5, 30),
+            json={"name": tag_name},
+            timeout=(5, 30),
         )
         if response.status_code == 201:
             return 200, "success", {}
-        return response.status_code, f"Failed: {response.status_code} - {response.text}", {}
+        return (
+            response.status_code,
+            f"Failed: {response.status_code} - {response.text}",
+            {},
+        )
 
     def delete_tag(
-        self, project_name: str, repository_name: str, digest: str, tag_name: str
+        self,
+        project_name: str,
+        repository_name: str,
+        digest: str,
+        tag_name: str,
     ) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        删除制品标签
+        """删除制品标签
 
         Args:
             project_name: 项目名称
@@ -310,19 +351,27 @@ class HarborClient(BasicClient):
         Returns:
             标准化响应结果 (code, message, data)
         """
-        url = f"{self.base_url}{self.base_uri}/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}/tags/{tag_name}"
+        url = (
+            f"{self.base_url}{self.base_uri}/projects/{project_name}/"
+            f"repositories/{repository_name}/artifacts/{digest}/tags/"
+            f"{tag_name}"
+        )
         response = requests.delete(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         if response.status_code == 200:
             return 200, "success", {}
-        return response.status_code, f"Failed: {response.status_code} - {response.text}", {}
+        return (
+            response.status_code,
+            f"Failed: {response.status_code} - {response.text}",
+            {},
+        )
 
     def get_statistics(self) -> Tuple[int, str, Dict[str, Any]]:
-        """
-        获取 Harbor 统计信息
+        """获取 Harbor 统计信息
 
         Returns:
             标准化响应结果 (code, message, data)
@@ -331,15 +380,13 @@ class HarborClient(BasicClient):
         response = requests.get(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         return self.api_result(response)
 
-    def create_project(
-        self, project_name: str, public: bool = True
-    ) -> bool:
-        """
-        在 Harbor 中创建新项目
+    def create_project(self, project_name: str, public: bool = True) -> bool:
+        """在 Harbor 中创建新项目
 
         Args:
             project_name: 要创建的项目名称
@@ -358,7 +405,8 @@ class HarborClient(BasicClient):
             url,
             json=payload,
             auth=(self.username, self.password),
-            verify=self.verify_file, timeout=(5, 30),
+            verify=self.verify_file,
+            timeout=(5, 30),
         )
         if response.status_code == 201:
             return True
@@ -366,14 +414,13 @@ class HarborClient(BasicClient):
         if response.status_code == 409:
             self._logger.info(f"项目 '{project_name}' 已存在，跳过创建")
             return True
-        self._logger.error(f"创建项目失败: {response.status_code} - {response.text}")
+        self._logger.error(
+            f"创建项目失败: {response.status_code} - {response.text}"
+        )
         return False
 
-    def wait_for_ready(
-        self, timeout: int = 600, interval: int = 10
-    ) -> bool:
-        """
-        等待 Harbor 服务就绪
+    def wait_for_ready(self, timeout: int = 600, interval: int = 10) -> bool:
+        """等待 Harbor 服务就绪
 
         通过轮询健康检查端点判断 Harbor 是否可用。
 

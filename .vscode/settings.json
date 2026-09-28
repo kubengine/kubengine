@@ -1,0 +1,22 @@
+{
+  "python.analysis.autoImportCompletions": true,
+  "python.analysis.typeCheckingMode": "strict",
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportMissingTypeStubs": "none",
+    "reportUnknownMemberType": "none",
+    "reportCallIssue": "none"
+  },
+  "python.analysis.ignore": [
+    // 1. 忽略虚拟环境中所有第三方库（推荐，覆盖99%场景）
+    "**/env/**/*",
+    "**/site-packages/pyinfra/**/*", // 仅忽略pyinfra
+    "**/site-packages/pyinfra_cli/**/*" // 仅忽略pyinfra_cli
+  ],
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  }
+}

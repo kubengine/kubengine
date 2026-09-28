@@ -1,20 +1,28 @@
 """Persistent records for offline image import tasks."""
 
-from datetime import datetime, timedelta
 import fcntl
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, desc, inspect, text
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    desc,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import Query, Session, relationship
 
 from core.orm.engine import Base, get_db
-from core.runtime_files import private_runtime_file
-
-
-from core.task_runtime import TaskLease as ImageImportLease, TaskLeaseLost
 from core.orm.task_lease import owned_query, renew_lease
+from core.runtime_files import private_runtime_file
+from core.task_runtime import TaskLease as ImageImportLease
+from core.task_runtime import TaskLeaseLost
 
 
 class ImageImportLeaseLost(TaskLeaseLost):
@@ -50,7 +58,6 @@ class ImageImportTask(Base):
     cleanup_error = Column(Text)
     cleanup_retry_at = Column(DateTime)
     namespace = Column(String)
-
 
     items = relationship(
         "ImageImportItem",
@@ -144,8 +151,9 @@ def create_image_import_task(
             filename=filename,
             content_type=content_type,
             file_path=file_path,
-            # The durable worker must not claim the row until the potentially
-            # large archive has been copied into its final path.
+            # The durable worker must not claim the row until the
+            # potentially large archive has been copied into its final
+            # path.
             status="uploading",
         )
         db.add(task)
@@ -157,7 +165,9 @@ def create_image_import_task(
 
 
 def ensure_image_import_schema() -> None:
-    """Add worker lease columns when upgrading an existing SQLite database."""
+    """
+    Add worker lease columns when upgrading an existing SQLite database.
+    """
     from core.orm.engine import engine
 
     additions = {
@@ -171,8 +181,8 @@ def ensure_image_import_schema() -> None:
         "cleanup_retry_at": "DATETIME",
         "namespace": "VARCHAR",
     }
-    # Multiple Uvicorn workers start concurrently. Serialize the lightweight
-    # SQLite compatibility migration across processes.
+    # Multiple Uvicorn workers start concurrently. Serialize the
+    # lightweight SQLite compatibility migration across processes.
     with private_runtime_file("image-import-schema.lock") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         existing = {
@@ -184,7 +194,8 @@ def ensure_image_import_schema() -> None:
                 if name not in existing:
                     connection.execute(
                         text(
-                            f"ALTER TABLE image_import_task ADD COLUMN {name} {sql_type}"
+                            f"ALTER TABLE image_import_task ADD COLUMN {name}"
+                            f" {sql_type}"
                         )
                     )
             connection.execute(
@@ -199,7 +210,9 @@ def ensure_image_import_schema() -> None:
 def claim_next_image_import_task(
     worker_id: str, lease_seconds: int
 ) -> Optional[Dict[str, Any]]:
-    """Atomically claim one pending task or a task whose worker lease expired."""
+    """Atomically claim one pending task or a task whose worker lease
+    expired.
+    """
     with get_db() as db:
         db.execute(text("BEGIN IMMEDIATE"))
         now = datetime.now()
@@ -228,15 +241,18 @@ def claim_next_image_import_task(
         task.heartbeat_at = now
         task.attempt_count = int(task.attempt_count or 0) + 1
         task.updated_at = now
-        # A crashed attempt may leave items at the push stage. They are work to
-        # resume, not successful items and not permanently in-progress results.
+        # A crashed attempt may leave items at the push stage. They are
+        # work to resume, not successful items and not permanently
+        # in-progress results.
         db.query(ImageImportItem).filter(
             ImageImportItem.task_id == task.task_id,
             ImageImportItem.status == "processing",
         ).update({"status": "pending", "stage": "recover", "updated_at": now})
         db.commit()
         db.refresh(task)
-        result = _task_to_dict(task, include_items=False, include_file_path=True)
+        result = _task_to_dict(
+            task, include_items=False, include_file_path=True
+        )
         result["retry_failed"] = bool(task.retry_failed)
         result["lease_owner"] = worker_id
         return result
@@ -246,19 +262,29 @@ def renew_image_import_lease(
     task_id: int, worker_id: str, lease_seconds: int, attempt_count: int
 ) -> bool:
     """Renew a task lease if it is still owned by this worker."""
-    return renew_lease(ImageImportTask, task_id, ImageImportLease(worker_id, attempt_count),
-                       "processing", lease_seconds, "updated_at")
+    return renew_lease(
+        ImageImportTask,
+        task_id,
+        ImageImportLease(worker_id, attempt_count),
+        "processing",
+        lease_seconds,
+        "updated_at",
+    )
 
 
 def requeue_image_import_task(task_id: int) -> bool:
-    """Atomically queue a completed task for retry without duplicate scheduling."""
+    """Atomically queue a completed task for retry without duplicate
+    scheduling.
+    """
     with get_db() as db:
         updated = (
             db.query(ImageImportTask)
             .filter(
                 ImageImportTask.task_id == task_id,
-                ImageImportTask.status.in_(["failed", "success", "partial_success"]),
-                ImageImportTask.cleanup_pending == False,
+                ImageImportTask.status.in_(
+                    ["failed", "success", "partial_success"]
+                ),
+                ImageImportTask.cleanup_pending.is_(False),
                 ImageImportTask.file_path != "",
             )
             .update(
@@ -282,38 +308,67 @@ def requeue_image_import_task(task_id: int) -> bool:
 def request_cleanup_retry(task_id: int) -> None:
     with get_db() as db:
         db.query(ImageImportTask).filter(
-            ImageImportTask.task_id == task_id, ImageImportTask.cleanup_pending == True,
-            ImageImportTask.status.in_(["failed", "partial_success", "success"]),
-        ).update({"cleanup_retry_at": datetime.now()}, synchronize_session=False)
+            ImageImportTask.task_id == task_id,
+            ImageImportTask.cleanup_pending.is_(True),
+            ImageImportTask.status.in_(
+                ["failed", "partial_success", "success"]
+            ),
+        ).update(
+            {"cleanup_retry_at": datetime.now()}, synchronize_session=False
+        )
         db.commit()
 
 
 def pending_cleanup_tasks():
     with get_db() as db:
-        return [_task_to_dict(task, include_file_path=True) for task in db.query(ImageImportTask).filter(
-            ImageImportTask.cleanup_pending == True,
-            ImageImportTask.status.in_(["failed", "partial_success", "success"]),
-            ImageImportTask.cleanup_retry_at <= datetime.now(),
-        ).order_by(ImageImportTask.cleanup_retry_at, ImageImportTask.task_id).limit(1).all()]
+        return [
+            _task_to_dict(task, include_file_path=True)
+            for task in (
+                db.query(ImageImportTask)
+                .filter(
+                    ImageImportTask.cleanup_pending.is_(True),
+                    ImageImportTask.status.in_(
+                        ["failed", "partial_success", "success"]
+                    ),
+                    ImageImportTask.cleanup_retry_at <= datetime.now(),
+                )
+                .order_by(
+                    ImageImportTask.cleanup_retry_at, ImageImportTask.task_id
+                )
+                .limit(1)
+                .all()
+            )
+        ]
 
 
 def record_cleanup_result(task_id: int, attempt: int, error: Optional[str]):
     with get_db() as db:
         db.execute(text("BEGIN IMMEDIATE"))
-        task = db.query(ImageImportTask).filter(
-            ImageImportTask.task_id == task_id, ImageImportTask.attempt_count == attempt,
-            ImageImportTask.cleanup_pending == True,
-            ImageImportTask.status.in_(["failed", "partial_success", "success"]),
-        ).first()
+        task = (
+            db.query(ImageImportTask)
+            .filter(
+                ImageImportTask.task_id == task_id,
+                ImageImportTask.attempt_count == attempt,
+                ImageImportTask.cleanup_pending.is_(True),
+                ImageImportTask.status.in_(
+                    ["failed", "partial_success", "success"]
+                ),
+            )
+            .first()
+        )
         if task is None:
             return
         if not error and task.error_message == task.cleanup_error:
             task.error_message = None
         task.cleanup_pending = bool(error)
         task.cleanup_error = error
-        task.cleanup_retry_at = datetime.now() + timedelta(seconds=60) if error else None
+        task.cleanup_retry_at = (
+            datetime.now() + timedelta(seconds=60) if error else None
+        )
         if not error:
-            if task.items and all(item.status == "success" for item in task.items):
+            if task.items and all(
+                item.status == "success" for item in task.items
+            ):
                 task.status = "success"
             elif any(item.status == "success" for item in task.items):
                 task.status = "partial_success"
@@ -330,10 +385,14 @@ def _owned_task_query(
 
 
 def assert_image_import_lease(task_id: int, lease: ImageImportLease) -> None:
-    """Fail before another external step if this attempt has expired or moved."""
+    """Fail before another external step if this attempt has expired or
+    moved.
+    """
     with get_db() as db:
         if _owned_task_query(db, task_id, lease).first() is None:
-            raise ImageImportLeaseLost(f"Image-import task {task_id} lease was lost")
+            raise ImageImportLeaseLost(
+                f"Image-import task {task_id} lease was lost"
+            )
 
 
 def update_image_import_task(
@@ -341,17 +400,23 @@ def update_image_import_task(
 ) -> None:
     with get_db() as db:
         db.execute(text("BEGIN IMMEDIATE"))
-        # Only an unfinished upload may be written without a worker identity.
-        # A late upload/error callback must never overwrite a claimed task.
+        # Only an unfinished upload may be written without a worker
+        # identity. A late upload/error callback must never overwrite a
+        # claimed task.
         query = (
-            _owned_task_query(db, task_id, lease) if lease is not None
-            else db.query(ImageImportTask).filter_by(task_id=task_id, status="uploading")
+            _owned_task_query(db, task_id, lease)
+            if lease is not None
+            else db.query(ImageImportTask).filter_by(
+                task_id=task_id, status="uploading"
+            )
         )
         updated = query.update(
             {**values, "updated_at": datetime.now()}, synchronize_session=False
         )
         if updated != 1:
-            raise ImageImportLeaseLost(f"Image-import task {task_id} is no longer owned")
+            raise ImageImportLeaseLost(
+                f"Image-import task {task_id} is no longer owned"
+            )
         db.commit()
 
 
@@ -362,12 +427,18 @@ def find_image_import_task(
 ) -> Optional[Dict[str, Any]]:
     with get_db() as db:
         task = db.query(ImageImportTask).filter_by(task_id=task_id).first()
-        return _task_to_dict(task, include_items, include_file_path) if task else None
+        return (
+            _task_to_dict(task, include_items, include_file_path)
+            if task
+            else None
+        )
 
 
 def find_image_import_tasks(page: int, page_size: int) -> Dict[str, Any]:
     with get_db() as db:
-        query = db.query(ImageImportTask).order_by(desc(ImageImportTask.created_at))
+        query = db.query(ImageImportTask).order_by(
+            desc(ImageImportTask.created_at)
+        )
         total = query.count()
         tasks = query.offset((page - 1) * page_size).limit(page_size).all()
         return {
@@ -384,7 +455,9 @@ def replace_image_import_items(
     with get_db() as db:
         db.execute(text("BEGIN IMMEDIATE"))
         if _owned_task_query(db, task_id, lease).first() is None:
-            raise ImageImportLeaseLost(f"Image-import task {task_id} lease was lost")
+            raise ImageImportLeaseLost(
+                f"Image-import task {task_id} lease was lost"
+            )
         db.query(ImageImportItem).filter_by(task_id=task_id).delete()
         for image in image_refs:
             db.add(ImageImportItem(task_id=task_id, **image))
@@ -403,7 +476,9 @@ def update_image_import_item(
     with get_db() as db:
         db.execute(text("BEGIN IMMEDIATE"))
         if _owned_task_query(db, task_id, lease).first() is None:
-            raise ImageImportLeaseLost(f"Image-import task {task_id} lease was lost")
+            raise ImageImportLeaseLost(
+                f"Image-import task {task_id} lease was lost"
+            )
         item = (
             db.query(ImageImportItem)
             .filter_by(task_id=task_id, image_ref=image_ref)

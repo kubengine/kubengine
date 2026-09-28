@@ -1,4 +1,6 @@
-"""Validated limits shared by ingress, archive storage and maintenance."""
+"""Validated limits shared by ingress, archive storage and
+maintenance.
+"""
 
 from core.config import ConfigDict
 

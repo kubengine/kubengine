@@ -27,7 +27,10 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="jobmanagerReplicaCount",
                 label="JobManager副本数",
-                extra="JobManager 为集群协调节点，默认 1。多副本需额外配置高可用（如 Zookeeper）",
+                extra=(
+                    "JobManager 为集群协调节点，默认 1。"
+                    "多副本需额外配置高可用（如 Zookeeper）"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="radio",
@@ -76,7 +79,10 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="cpu",
                 label="cpu",
-                extra="每个节点的核数，JobManager 负责协调调度，TaskManager 执行实际计算，生产环境建议 2 核及以上",
+                extra=(
+                    "每个节点的核数，JobManager 负责协调调度，TaskManager"
+                    " 执行实际计算，生产环境建议 2 核及以上"
+                ),
                 order=2,
                 form_item_props={"required": True},
                 type="radio",
@@ -103,7 +109,10 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="memory",
                 label="内存",
-                extra="内存大小(单位 Gi)，Flink 对内存敏感，TaskManager 建议不低于 2Gi",
+                extra=(
+                    "内存大小(单位 Gi)，Flink 对内存敏感，TaskManager"
+                    " 建议不低于 2Gi"
+                ),
                 order=3,
                 form_item_props={"required": True},
                 type="radio",
@@ -131,7 +140,10 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="service",
                 label="Service服务",
-                extra="请选择 K8s Service 类型（ClusterIP 集群内用、LoadBalancer 公网负载均衡）",
+                extra=(
+                    "请选择 K8s Service 类型（ClusterIP 集群内用、LoadBalancer"
+                    " 公网负载均衡）"
+                ),
                 order=4,
                 form_item_props={"required": True},
                 type="radio",
@@ -179,7 +191,10 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.env,
                 name="diagnosticMode",
                 label="诊断模式",
-                extra="开启后所有探针将被禁用并覆盖容器启动命令，用于排查容器启动问题。正常部署时请关闭",
+                extra=(
+                    "开启后所有探针将被禁用并覆盖容器启动命令，"
+                    "用于排查容器启动问题。正常部署时请关闭"
+                ),
                 order=1,
                 form_item_props={"required": False},
                 type="switch",

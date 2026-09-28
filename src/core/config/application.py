@@ -1,10 +1,12 @@
 """Application configuration constants class.
 
-This module defines the Application class which holds global configuration
-constants injected from configuration files using the map_config_to_class decorator.
+This module defines the Application class which holds global
+configuration constants injected from configuration files using the
+map_config_to_class decorator.
 """
 
 from typing import ClassVar, List
+
 from .inject import config_class, map_config_to_class
 
 
@@ -18,13 +20,14 @@ from .inject import config_class, map_config_to_class
     CA_EMAIL_ADDRESS="tls.ca_email_address",
     CA_PASSWORD="tls.ca_password",
     CA_VALID_DAYS="tls.ca_valid_days",
-    CA_KEY_LENGTH="tls.ca_key_length"
+    CA_KEY_LENGTH="tls.ca_key_length",
 )
 class TLSConfig:
     """TLS 证书配置类
 
     包含TLS证书相关的所有配置参数，包括证书路径、CA信息和生成参数。
     """
+
     # 证书路径配置
     ROOT_DIR: ClassVar[str] = "/opt/kubengine/config/certs"
     # 动态计算的路径，通过属性方法实现
@@ -73,9 +76,13 @@ class TLSConfig:
 )
 class LoggerConfig:
     """日志配置数据类，默认值适配大多数场景"""
+
     LEVEL: ClassVar[str] = "INFO"
     CONSOLE_OUTPUT: ClassVar[bool] = True
-    FORMAT: ClassVar[str] = "%(asctime)s - %(name)s - %(levelname)s - %(process)d - %(filename)s:%(lineno)d - %(message)s%(context_suffix)s"
+    FORMAT: ClassVar[str] = (
+        "%(asctime)s - %(name)s - %(levelname)s - %(process)d -"
+        " %(filename)s:%(lineno)d - %(message)s%(context_suffix)s"
+    )
     DATE_FORMAT: ClassVar[str] = "%Y-%m-%d %H:%M:%S"
     # 日志轮转配置
     ROTATE_ENABLE: ClassVar[bool] = True  # 是否开启日志轮转
@@ -112,13 +119,14 @@ class LoggerConfig:
     SERVICE_CIDR="kubernetes.cidr.service",
     POD_CIDR="kubernetes.cidr.pod",
     LOADBALANCER_IP_POOLS="kubernetes.loadbalancer.ip-pools",
-    NAMESERVER="kubernetes.nameserver"
+    NAMESERVER="kubernetes.nameserver",
 )
 class KubernetesConfig:
     """Kubernetes 配置类
 
     包含Kubernetes集群相关的配置参数。
     """
+
     MASTER_SCHEDULABLE: ClassVar[bool] = False
     MASTER_IP: ClassVar[str] = ""
     ADDITIONAL_MASTER_IPS: ClassVar[List[str]] = []
@@ -138,13 +146,14 @@ class KubernetesConfig:
     TOKEN_RENEW_THRESHOLD_MINUTES="auth.jwt.token.renew_threshold_minutes",
     USERS_ADMIN_PASSWORD_HASH="auth.users.admin.password_hash",
     USERS_ADMIN_AK="auth.users.admin.ak",
-    USERS_ADMIN_SK_HASH="auth.users.admin.sk_hash"
+    USERS_ADMIN_SK_HASH="auth.users.admin.sk_hash",
 )
 class AuthenticationConfig:
     """认证配置类
 
     包含JWT令牌、用户认证相关的配置参数。
     """
+
     # JWT配置
     ALGORITHM: ClassVar[str] = "HS256"
 
@@ -153,9 +162,13 @@ class AuthenticationConfig:
     TOKEN_RENEW_THRESHOLD_MINUTES: ClassVar[int] = 5
 
     # 管理员用户配置
-    USERS_ADMIN_PASSWORD_HASH: ClassVar[str] = "$2b$12$TofW8liw7vV/1cR7QkauvOceZN4syUvwYPrKsR5BezGzKkiRykYK."
+    USERS_ADMIN_PASSWORD_HASH: ClassVar[str] = (
+        "$2b$12$TofW8liw7vV/1cR7QkauvOceZN4syUvwYPrKsR5BezGzKkiRykYK."
+    )
     USERS_ADMIN_AK: ClassVar[str] = "AK2A085428"
-    USERS_ADMIN_SK_HASH: ClassVar[str] = "$2b$12$XnH3EqjMQ1Kc8.qEoPtoueT8pT3/cdbf.IxvYpZHtt2NdHBu881iW"
+    USERS_ADMIN_SK_HASH: ClassVar[str] = (
+        "$2b$12$XnH3EqjMQ1Kc8.qEoPtoueT8pT3/cdbf.IxvYpZHtt2NdHBu881iW"
+    )
 
 
 @config_class(
@@ -167,6 +180,7 @@ class RegistryConfig:
 
     包含镜像仓库用户名、密码等相关的配置参数。
     """
+
     USERNAME: ClassVar[str] = "admin"
     PASSWORD: ClassVar[str] = ""
 
@@ -178,7 +192,7 @@ class RegistryConfig:
     K8S_CONFIG="kubernetes",
     LOGGER_CONFIG="logger",
     AUTH="auth",
-    REGISTRY="registry"
+    REGISTRY="registry",
 )
 class Application:
     """Global constants class with configuration injection.

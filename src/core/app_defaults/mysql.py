@@ -28,7 +28,10 @@ def get_mysql_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="architecture",
                 label="部署模式",
-                extra="MySQL 部署模式。单机模式为单节点；主从复制模式建议 2 个及以上副本以保证高可用",
+                extra=(
+                    "MySQL 部署模式。单机模式为单节点；主从复制模式建议 2"
+                    " 个及以上副本以保证高可用"
+                ),
                 order=0,
                 form_item_props={"required": True},
                 type="select",
@@ -128,7 +131,12 @@ def get_mysql_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=8,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 8 - 100", "min": 8, "max": 100},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 8 - 100",
+                        "min": 8,
+                        "max": 100,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -142,7 +150,10 @@ def get_mysql_app(create_time: datetime) -> AppSchema:
                 config_type=ConfigTypeEnum.cluster,
                 name="service",
                 label="Service服务",
-                extra="请选择 K8s Service 类型（ClusterIP 集群内访问、LoadBalancer 公网负载均衡）",
+                extra=(
+                    "请选择 K8s Service 类型（ClusterIP 集群内访问、"
+                    "LoadBalancer 公网负载均衡）"
+                ),
                 order=5,
                 form_item_props={"required": True},
                 type="radio",
@@ -171,7 +182,12 @@ def get_mysql_app(create_time: datetime) -> AppSchema:
                 type="number",
                 initial_value=3306,
                 rules=[
-                    {"type": "number", "message": "仅允许设置 1 - 65535", "min": 1, "max": 65535},
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 1 - 65535",
+                        "min": 1,
+                        "max": 65535,
+                    },
                 ],
                 field_props={"options": []},
                 helm_props={
@@ -194,7 +210,9 @@ def get_mysql_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },
@@ -255,7 +273,9 @@ def get_mysql_app(create_time: datetime) -> AppSchema:
                 rules=[
                     {
                         "type": "string",
-                        "message": "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位",
+                        "message": (
+                            "密码需包含大小写字母、数字和特殊字符，最低 6 位，最高 20 位"
+                        ),
                         "min": 6,
                         "max": 20,
                     },

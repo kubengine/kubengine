@@ -7,6 +7,7 @@ KubeEngine 安装脚本
 import os
 import sys
 from pathlib import Path
+
 from setuptools import find_packages, setup
 
 # 确保我们在正确的目录
@@ -73,7 +74,7 @@ setup(
     entry_points={
         "console_scripts": [
             "kubengine=cli.app:cli",
-            "kubengine-k8s=cli.k8s:cli"
+            "kubengine-k8s=cli.k8s:cli",
         ],
     },
     python_requires=">=3.11",

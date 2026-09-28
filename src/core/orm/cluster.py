@@ -1,7 +1,8 @@
 """Cluster ORM models and database operations.
 
-This module defines the cluster table model and provides database operations
-for creating, reading, updating, and deleting application clusters.
+This module defines the cluster table model and provides database
+operations for creating, reading, updating, and deleting application
+clusters.
 """
 
 import enum
@@ -11,13 +12,24 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 from pydantic import BaseModel, field_serializer
-from sqlalchemy import JSON, Column, DateTime, Enum, Integer, String, asc, desc, inspect, text
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Enum,
+    Integer,
+    String,
+    asc,
+    desc,
+    inspect,
+    text,
+)
 from sqlalchemy.orm import Session
 
+from core.logger import get_logger
 from core.misc.properties import convert_dot_notation_to_dict, split_key_levels
 from core.orm.app import App, find_application_by_id
 from core.orm.engine import Base, get_db
-from core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -25,50 +37,51 @@ logger = get_logger(__name__)
 class ClusterStatus(enum.Enum):
     """Enumeration for cluster status values."""
 
-    pending = "pending"        # Pending creation
-    creating = "creating"       # Creating resources
-    checking = "checking"        # Health checking
-    cleaning = "cleaning"        # Resource cleanup in progress
-    healthy = "healthy"          # Running healthy
-    unhealthy = "unhealthy"      # Unhealthy state
-    anomaly = "anomaly"          # Anomaly state
+    pending = "pending"  # Pending creation
+    creating = "creating"  # Creating resources
+    checking = "checking"  # Health checking
+    cleaning = "cleaning"  # Resource cleanup in progress
+    healthy = "healthy"  # Running healthy
+    unhealthy = "unhealthy"  # Unhealthy state
+    anomaly = "anomaly"  # Anomaly state
 
 
 class Cluster(Base):
-    """Cluster table model representing application deployment clusters."""
+    """Cluster table model representing application deployment
+    clusters.
+    """
 
     __tablename__ = "cluster"
 
-    cluster_id = Column(Integer, primary_key=True,
-                        index=True, comment="Cluster ID")
-    resource_uid = Column(String(32), nullable=False, default=lambda: uuid.uuid4().hex)
+    cluster_id = Column(
+        Integer, primary_key=True, index=True, comment="Cluster ID"
+    )
+    resource_uid = Column(
+        String(32), nullable=False, default=lambda: uuid.uuid4().hex
+    )
     operation_version = Column(Integer, nullable=False, default=0)
     name = Column(String, nullable=False, comment="Cluster name")
     helm_chart = Column(String, nullable=False, comment="Helm chart template")
     helm_chart_version = Column(
         String, nullable=False, comment="Helm chart template version"
     )
-    helm_name = Column(
-        String, nullable=False, comment="Helm install name"
-    )
+    helm_name = Column(String, nullable=False, comment="Helm install name")
     config = Column(JSON, nullable=True, comment="Submitted form data")
     helm_config = Column(JSON, nullable=True, comment="Helm values data")
     status = Column(
         Enum(ClusterStatus),
         default=ClusterStatus.pending,
         nullable=False,
-        comment="Cluster status"
+        comment="Cluster status",
     )
     create_time = Column(
-        DateTime,
-        default=datetime.now,
-        comment="Creation timestamp"
+        DateTime, default=datetime.now, comment="Creation timestamp"
     )
     updated_time = Column(
         DateTime,
         default=datetime.now,
         onupdate=datetime.now,
-        comment="Last update timestamp"
+        comment="Last update timestamp",
     )
 
 
@@ -101,7 +114,9 @@ class ClusterSchema(BaseModel):
         return dt.isoformat() if dt else ""
 
 
-def _merge_configurations(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+def _merge_configurations(
+    target: Dict[str, Any], source: Dict[str, Any]
+) -> None:
     """Recursively merge source configuration into target.
 
     Args:
@@ -109,7 +124,11 @@ def _merge_configurations(target: Dict[str, Any], source: Dict[str, Any]) -> Non
         source: Source dictionary to merge from
     """
     for key, value in source.items():
-        if (key in target and isinstance(target[key], dict) and isinstance(value, dict)):
+        if (
+            key in target
+            and isinstance(target[key], dict)
+            and isinstance(value, dict)
+        ):
             # Recursively merge nested configurations
             _merge_configurations(target[key], value)  # type: ignore
         else:
@@ -145,7 +164,9 @@ def _format_helm_value(helm_type: str, helm_unit: str, value: Any) -> Any:
         return value
 
 
-def build_helm_config(cluster_schema: ClusterSchema, *, db: Optional[Session] = None) -> Dict[str, Any]:
+def build_helm_config(
+    cluster_schema: ClusterSchema, *, db: Optional[Session] = None
+) -> Dict[str, Any]:
     """Build Helm configuration from application field configurations.
 
     Args:
@@ -159,41 +180,56 @@ def build_helm_config(cluster_schema: ClusterSchema, *, db: Optional[Session] = 
     if cluster_schema.app_id is None:
         return helm_config
 
-    app = db.get(App, cluster_schema.app_id) if db is not None else find_application_by_id(cluster_schema.app_id)
+    app = (
+        db.get(App, cluster_schema.app_id)
+        if db is not None
+        else find_application_by_id(cluster_schema.app_id)
+    )
     if not app:
         return helm_config
 
     # Build Helm config from app field configurations
     for field in app.app_field_configs or []:
-        if (field.name and cluster_schema.config and field.name in cluster_schema.config and field.helm_props is not None):
+        if (
+            field.name
+            and cluster_schema.config
+            and field.name in cluster_schema.config
+            and field.helm_props is not None
+        ):
 
             helm_keys = field.helm_props.get("keys", [])
             for helm_key in helm_keys:
                 value = _format_helm_value(
                     field.helm_props.get("type", "string"),
                     field.helm_props.get("unit", ""),
-                    cluster_schema.config[field.name]
+                    cluster_schema.config[field.name],
                 )
 
-                # Handle array values (list) vs scalar values (string/number/boolean)
+                # Handle array values (list) vs scalar values
+                # (string/number/boolean)
                 if isinstance(value, list):
-                    # Array type: traverse dot notation and assign list directly.
-                    # Honor [[ ]] escapes so flat keys with dots are preserved.
+                    # Array type: traverse dot notation and assign list
+                    # directly. Honor [[ ]] escapes so flat keys with
+                    # dots are preserved.
                     sub = helm_config
                     keys = split_key_levels(helm_key)
                     for k in keys[:-1]:
                         sub = sub.setdefault(k, {})
                     sub[keys[-1]] = value
                 else:
-                    # Scalar: convert dot notation string to nested dict and merge
+                    # Scalar: convert dot notation string to nested dict
+                    # and merge
                     key_config = convert_dot_notation_to_dict(
-                        f"{helm_key}={value}")
+                        f"{helm_key}={value}"
+                    )
                     _merge_configurations(helm_config, key_config)
 
     return helm_config
 
 
-def create_cluster(cluster_schema: ClusterSchema, *, db: Optional[Session] = None) -> ClusterSchema:
+def create_cluster(
+    cluster_schema: ClusterSchema, *, db: Optional[Session] = None
+) -> ClusterSchema:
     """Create a new cluster record.
 
     Args:
@@ -211,11 +247,11 @@ def create_cluster(cluster_schema: ClusterSchema, *, db: Optional[Session] = Non
             session.commit()
             return result
     try:
-        # Generate unique Helm name
-        # 限制在12字符以内，避免与 chart 资源名拼接后超过 K8s 63 字符 label 限制
-        # （如 elasticsearch: {name}-elasticsearch-coordinating-{hash}）
-        # 首字符必须为字母：K8s 资源名遵循 DNS-1035 规范（如 8d22297b-etcd 会因
-        # 以数字开头被拒绝），把首位的 0-9 映射成 a-j，既保留随机性又满足规范
+        # Generate unique Helm name 限制在12字符以内，避免与 chart 资源名拼接后超过 K8s 63
+        # 字符 label 限制 （如 elasticsearch:
+        # {name}-elasticsearch-coordinating-{hash}） 首字符必须为字母：K8s 资源名遵循
+        # DNS-1035 规范（如 8d22297b-etcd 会因 以数字开头被拒绝），把首位的 0-9 映射成
+        # a-j，既保留随机性又满足规范
         raw = uuid.uuid4().hex[:12]
         if raw[0].isdigit():
             raw = chr(ord("a") + int(raw[0])) + raw[1:]
@@ -232,7 +268,7 @@ def create_cluster(cluster_schema: ClusterSchema, *, db: Optional[Session] = Non
             helm_name=helm_name,
             config=cluster_schema.config,
             helm_config=helm_config,
-            create_time=cluster_schema.create_time or datetime.now()
+            create_time=cluster_schema.create_time or datetime.now(),
         )
 
         db.add(cluster_orm)
@@ -247,23 +283,56 @@ def create_cluster(cluster_schema: ClusterSchema, *, db: Optional[Session] = Non
 
 
 def ensure_cluster_schema() -> None:
-    """Assign identities to existing resources, without binding old tasks to them."""
+    """
+    Assign identities to existing resources, without binding old tasks
+    to them.
+    """
     import fcntl
+
     from core.orm.engine import engine
     from core.runtime_files import private_runtime_file
 
     with private_runtime_file("cluster-schema.lock") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         with engine.begin() as connection:
-            if "resource_uid" not in {c["name"] for c in inspect(connection).get_columns("cluster")}:
-                connection.execute(text("ALTER TABLE cluster ADD COLUMN resource_uid VARCHAR(32)"))
-            if "operation_version" not in {c["name"] for c in inspect(connection).get_columns("cluster")}:
-                connection.execute(text("ALTER TABLE cluster ADD COLUMN operation_version INTEGER NOT NULL DEFAULT 0"))
-            rows = connection.execute(text("SELECT cluster_id FROM cluster WHERE resource_uid IS NULL OR resource_uid = ''"))
+            if "resource_uid" not in {
+                c["name"] for c in inspect(connection).get_columns("cluster")
+            }:
+                connection.execute(
+                    text(
+                        "ALTER TABLE cluster ADD COLUMN resource_uid"
+                        " VARCHAR(32)"
+                    )
+                )
+            if "operation_version" not in {
+                c["name"] for c in inspect(connection).get_columns("cluster")
+            }:
+                connection.execute(
+                    text(
+                        "ALTER TABLE cluster ADD COLUMN operation_version"
+                        " INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
+            rows = connection.execute(
+                text(
+                    "SELECT cluster_id FROM cluster WHERE resource_uid IS NULL"
+                    " OR resource_uid = ''"
+                )
+            )
             for row in rows.fetchall():
-                connection.execute(text("UPDATE cluster SET resource_uid = :uid WHERE cluster_id = :id"),
-                                   {"uid": uuid.uuid4().hex, "id": row[0]})
-            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_cluster_resource_uid ON cluster(resource_uid)"))
+                connection.execute(
+                    text(
+                        "UPDATE cluster SET resource_uid = :uid WHERE"
+                        " cluster_id = :id"
+                    ),
+                    {"uid": uuid.uuid4().hex, "id": row[0]},
+                )
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_cluster_resource_uid"
+                    " ON cluster(resource_uid)"
+                )
+            )
 
 
 def find_clusters_paginated(
@@ -271,7 +340,7 @@ def find_clusters_paginated(
     page_size: int = 10,
     sort_by: str = "create_time",
     sort_order: str = "desc",
-    filters: Optional[Dict[str, Any]] = None
+    filters: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Find clusters with pagination, sorting, and filtering.
 
@@ -283,7 +352,8 @@ def find_clusters_paginated(
         filters: Optional filter conditions dictionary
 
     Returns:
-        Dictionary containing total count, paginated data, current page, and page size
+        Dictionary containing total count, paginated data, current page,
+        and page size
     """
     try:
         with get_db() as db:
@@ -314,9 +384,12 @@ def find_clusters_paginated(
 
             return {
                 "total": total,
-                "data": [ClusterSchema.model_validate(item) for item in paginated_items],
+                "data": [
+                    ClusterSchema.model_validate(item)
+                    for item in paginated_items
+                ],
                 "page": page,
-                "page_size": page_size
+                "page_size": page_size,
             }
 
     except Exception as e:
@@ -340,14 +413,16 @@ def update_cluster_name(cluster_id: int, new_name: str) -> ClusterSchema:
     """
     try:
         with get_db() as db:
-            cluster_orm = db.query(Cluster).filter(
-                Cluster.cluster_id == cluster_id
-            ).first()
+            cluster_orm = (
+                db.query(Cluster)
+                .filter(Cluster.cluster_id == cluster_id)
+                .first()
+            )
 
             if not cluster_orm:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Cluster with ID {cluster_id} not found"
+                    detail=f"Cluster with ID {cluster_id} not found",
                 )
 
             cluster_orm.name = new_name  # type: ignore
@@ -363,7 +438,9 @@ def update_cluster_name(cluster_id: int, new_name: str) -> ClusterSchema:
         raise
 
 
-def update_cluster_status(cluster_id: int, status: ClusterStatus) -> ClusterSchema:
+def update_cluster_status(
+    cluster_id: int, status: ClusterStatus
+) -> ClusterSchema:
     """Update cluster status.
 
     Args:
@@ -380,16 +457,19 @@ def update_cluster_status(cluster_id: int, status: ClusterStatus) -> ClusterSche
     try:
         with get_db() as db:
             from core.task_runtime import check_application_attempt
+
             db.execute(text("BEGIN IMMEDIATE"))
             check_application_attempt(db, cluster_id)
-            cluster_orm = db.query(Cluster).filter(
-                Cluster.cluster_id == cluster_id
-            ).first()
+            cluster_orm = (
+                db.query(Cluster)
+                .filter(Cluster.cluster_id == cluster_id)
+                .first()
+            )
 
             if not cluster_orm:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Cluster with ID {cluster_id} not found"
+                    detail=f"Cluster with ID {cluster_id} not found",
                 )
 
             cluster_orm.status = status  # type: ignore
@@ -419,9 +499,11 @@ def find_cluster_by_id(cluster_id: int) -> Optional[ClusterSchema]:
     """
     try:
         with get_db() as db:
-            cluster_orm = db.query(Cluster).filter(
-                Cluster.cluster_id == cluster_id
-            ).first()
+            cluster_orm = (
+                db.query(Cluster)
+                .filter(Cluster.cluster_id == cluster_id)
+                .first()
+            )
 
             if cluster_orm:
                 return ClusterSchema.model_validate(cluster_orm)
@@ -448,16 +530,19 @@ def remove_cluster_by_id(cluster_id: int) -> bool:
     try:
         with get_db() as db:
             from core.task_runtime import check_application_attempt
+
             db.execute(text("BEGIN IMMEDIATE"))
             check_application_attempt(db, cluster_id)
-            cluster_orm = db.query(Cluster).filter(
-                Cluster.cluster_id == cluster_id
-            ).first()
+            cluster_orm = (
+                db.query(Cluster)
+                .filter(Cluster.cluster_id == cluster_id)
+                .first()
+            )
 
             if not cluster_orm:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Cluster with ID {cluster_id} not found"
+                    detail=f"Cluster with ID {cluster_id} not found",
                 )
 
             db.delete(cluster_orm)

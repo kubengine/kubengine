@@ -3,45 +3,54 @@
 
 提供镜像构建、管理、查询等功能，支持单个版本、多版本和全量构建。
 """
-from __future__ import annotations
-from cli.ctr import cli as ctr_cli
 
-from functools import wraps
+from __future__ import annotations
+
+import shutil
 import sys
 import traceback
-import shutil
+from functools import wraps
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Any, Callable, TypeVar, ParamSpec
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    ParamSpec,
+    Tuple,
+    TypeVar,
+)
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 
-from cli.models import LIST
+from builder.image.base_builder import BaseBuilder, BuilderOptions
 from builder.image.loader import LazyBuilderLoader, create_builder
-from builder.image.base_builder import BuilderOptions, BaseBuilder
+from cli.ctr import cli as ctr_cli
+from cli.models import LIST
 from core.config.application import Application
 from core.logger import get_logger, setup_cli_logging
-
 
 logger = get_logger(__name__)
 # 初始化Rich控制台
 console: Console = Console()
 
 # 泛型类型定义
-P = ParamSpec('P')
-T = TypeVar('T')
+P = ParamSpec("P")
+T = TypeVar("T")
 
 
 class ImageCLIError(Exception):
     """Image CLI异常"""
+
     pass
 
 
 def handle_errors(
-    exit_on_error: bool = True,
-    show_traceback: bool = False
+    exit_on_error: bool = True, show_traceback: bool = False
 ) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """错误处理装饰器
 
@@ -52,6 +61,7 @@ def handle_errors(
     Returns:
         装饰器函数
     """
+
     def decorator(func: Callable[P, T]) -> Callable[P, T]:
         @wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
@@ -106,7 +116,9 @@ def handle_errors(
             except Exception as e:
                 # 通用异常处理
                 error_msg = str(e)
-                logger.error(f"执行失败: {error_msg}\n{traceback.format_exc()}")
+                logger.error(
+                    f"执行失败: {error_msg}\n{traceback.format_exc()}"
+                )
 
                 # 根据错误类型显示不同的消息
                 if isinstance(e, (OSError, IOError)):
@@ -114,19 +126,23 @@ def handle_errors(
                 elif isinstance(e, ValueError):
                     console.print(f"[red]值错误: {error_msg}[/red]")
                 elif isinstance(e, KeyError):
-                    console.print(f"[red]配置错误: 缺少必要的配置项 {error_msg}[/red]")
+                    console.print(
+                        f"[red]配置错误: 缺少必要的配置项 {error_msg}[/red]"
+                    )
                 else:
                     console.print(f"[red]未知错误: {error_msg}[/red]")
 
                 if show_traceback:
                     console.print(
-                        f"[dim]详细错误信息:\n{traceback.format_exc()}[/dim]")
+                        f"[dim]详细错误信息:\n{traceback.format_exc()}[/dim]"
+                    )
 
                 if exit_on_error:
                     sys.exit(1)
                 raise
 
         return wrapper
+
     return decorator
 
 
@@ -149,8 +165,12 @@ def safe_execution(func: Callable[P, T]) -> Callable[P, T]:
 
 
 @click.group()
-@click.option('--quiet', '-q', is_flag=True, help='静默模式')
-@click.option('--debug', is_flag=True, help='启用调试模式（显示所有日志，优先级高于--quiet）')
+@click.option("--quiet", "-q", is_flag=True, help="静默模式")
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="启用调试模式（显示所有日志，优先级高于--quiet）",
+)
 @click.pass_context
 @cli_command
 def cli(ctx: click.Context, quiet: bool, debug: bool) -> None:
@@ -160,25 +180,26 @@ def cli(ctx: click.Context, quiet: bool, debug: bool) -> None:
     支持单个版本构建、批量构建、应用管理等功能。
     """
     ctx.ensure_object(dict)
-    ctx.obj['quiet'] = quiet
-    ctx.obj['debug'] = debug
+    ctx.obj["quiet"] = quiet
+    ctx.obj["debug"] = debug
 
     # 配置日志级别【调整：移除verbose分支，按debug→quiet→默认逻辑配置】
     log_file = f"{Application.ROOT_DIR}/logs/images_cli.log"
     # 日志级别优先级：debug（最高）> quiet > 默认（WARNING）
     if debug:
         log_level = "DEBUG"
-        ctx.obj['show_traceback'] = True
+        ctx.obj["show_traceback"] = True
     elif quiet:
         log_level = "ERROR"  # 静默模式：仅显示错误日志
-        ctx.obj['show_traceback'] = False
+        ctx.obj["show_traceback"] = False
     else:
         log_level = "INFO"
-        ctx.obj['show_traceback'] = False
+        ctx.obj["show_traceback"] = False
 
     # 核心修改：调用setup_cli_logging时，传入全局rich console实例，实现日志/进度条输出统一
-    setup_cli_logging(log_level, log_file,
-                      console_output=False, rich_console=console)
+    setup_cli_logging(
+        log_level, log_file, console_output=False, rich_console=console
+    )
     # 同步设置当前logger级别
     logger.setLevel(log_level)
 
@@ -197,7 +218,7 @@ def create_builder_options(
     push: bool = False,
     timeout: Optional[int] = None,
     parallel: bool = True,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> BuilderOptions:
     """创建构建器选项"""
     return BuilderOptions(
@@ -206,16 +227,20 @@ def create_builder_options(
         out=out or "/opt/images",
         timeout=timeout,
         parallel=parallel,
-        **kwargs
+        **kwargs,
     )
 
 
-def format_build_results(app_name: str, results: List[Tuple[str, bool]]) -> None:
+def format_build_results(
+    app_name: str, results: List[Tuple[str, bool]]
+) -> None:
     """格式化构建结果输出"""
     successful: List[str] = [
-        version for version, success in results if success]
-    failed: List[str] = [version for version,
-                         success in results if not success]
+        version for version, success in results if success
+    ]
+    failed: List[str] = [
+        version for version, success in results if not success
+    ]
 
     # 创建结果表格
     table = Table(title=f"[bold]{app_name}[/bold] 构建结果")
@@ -226,28 +251,34 @@ def format_build_results(app_name: str, results: List[Tuple[str, bool]]) -> None
     for version, success in results:
         status = "成功" if success else "失败"
         result_style = "green" if success else "red"
-        table.add_row(version, status,
-                      f"[{result_style}]{status}[/{result_style}]")
+        table.add_row(
+            version, status, f"[{result_style}]{status}[/{result_style}]"
+        )
 
     console.print(table)
 
     # 汇总信息
     if successful:
         console.print(
-            f"[green]成功构建 {len(successful)} 个版本: {', '.join(successful)}[/green]")
+            f"[green]成功构建 {len(successful)} 个版本:"
+            f" {', '.join(successful)}[/green]"
+        )
     if failed:
         console.print(
-            f"[red]构建失败 {len(failed)} 个版本: {', '.join(failed)}[/red]")
+            f"[red]构建失败 {len(failed)} 个版本: {', '.join(failed)}[/red]"
+        )
 
 
 @cli.command()
-@click.argument('app', required=True, nargs=1)
-@click.option('-v', '--version', required=True, help='版本号')
-@click.option('--out', type=click.Path(), help='输出路径，默认为/opt/images')
-@click.option('--no-export', is_flag=True, help='导出镜像')
-@click.option('--push', is_flag=True, help='推送到镜像仓库')
-@click.option('--timeout', type=int, help='构建超时时间（秒）')
-@click.option('--config-file', type=click.Path(exists=True), help='自定义配置文件路径')
+@click.argument("app", required=True, nargs=1)
+@click.option("-v", "--version", required=True, help="版本号")
+@click.option("--out", type=click.Path(), help="输出路径，默认为/opt/images")
+@click.option("--no-export", is_flag=True, help="导出镜像")
+@click.option("--push", is_flag=True, help="推送到镜像仓库")
+@click.option("--timeout", type=int, help="构建超时时间（秒）")
+@click.option(
+    "--config-file", type=click.Path(exists=True), help="自定义配置文件路径"
+)
 @click.pass_context
 @cli_command
 def build(
@@ -258,7 +289,7 @@ def build(
     no_export: bool,
     push: bool,
     timeout: Optional[int],
-    config_file: Optional[str]
+    config_file: Optional[str],
 ) -> None:
     """构建单个应用版本
 
@@ -266,16 +297,14 @@ def build(
 
     示例:\n
         image build myapp -v 1.0.0 --no-export\n
-        image build myapp -v 1.0.0 --out /tmp/images --push --timeout 600\n
+        image build myapp -v 1.0.0 --out /tmp/images --push \\
+            --timeout 600\n
     """
     console.print(f"[blue]开始构建 {app}:{version}[/blue]")
 
     # 创建构建器选项
     options: BuilderOptions = create_builder_options(
-        out=out,
-        export=not no_export,
-        push=push,
-        timeout=timeout
+        out=out, export=not no_export, push=push, timeout=timeout
     )
 
     # 创建构建器
@@ -292,14 +321,18 @@ def build(
 
 
 @cli.command()
-@click.argument('app', required=True, nargs=1)
-@click.option('--versions', required=True, type=LIST, help='版本列表，用逗号分隔')
-@click.option('--out', type=click.Path(), help='输出路径，默认为/opt/images')
-@click.option('--no-export', is_flag=True, help='导出镜像')
-@click.option('--push', is_flag=True, help='推送到镜像仓库')
-@click.option('--timeout', type=int, help='单个版本构建超时时间（秒）')
-@click.option('--parallel', is_flag=True, default=True, help='并行构建')
-@click.option('--config-file', type=click.Path(exists=True), help='自定义配置文件路径')
+@click.argument("app", required=True, nargs=1)
+@click.option(
+    "--versions", required=True, type=LIST, help="版本列表，用逗号分隔"
+)
+@click.option("--out", type=click.Path(), help="输出路径，默认为/opt/images")
+@click.option("--no-export", is_flag=True, help="导出镜像")
+@click.option("--push", is_flag=True, help="推送到镜像仓库")
+@click.option("--timeout", type=int, help="单个版本构建超时时间（秒）")
+@click.option("--parallel", is_flag=True, default=True, help="并行构建")
+@click.option(
+    "--config-file", type=click.Path(exists=True), help="自定义配置文件路径"
+)
 @click.pass_context
 @cli_command
 def build_multi(
@@ -311,17 +344,21 @@ def build_multi(
     push: bool,
     timeout: Optional[int],
     parallel: bool,
-    config_file: Optional[str]
+    config_file: Optional[str],
 ) -> None:
     """构建多个版本
 
     批量构建指定应用的多个版本镜像。
 
     示例:\n
-        image build-multi myapp --versions 1.0.0,1.1.0,2.0.0 --no-export --parallel\n
-        image build-multi myapp --versions 1.0.0,1.1.0 --out /tmp/images\n
+        image build-multi myapp --versions 1.0.0,1.1.0,2.0.0 \\
+            --no-export --parallel\n
+        image build-multi myapp --versions 1.0.0,1.1.0 \\
+            --out /tmp/images\n
     """
-    console.print(f"[blue]开始批量构建 {app}，共 {len(versions)} 个版本[/blue]")
+    console.print(
+        f"[blue]开始批量构建 {app}，共 {len(versions)} 个版本[/blue]"
+    )
 
     # 创建构建器选项
     options: BuilderOptions = create_builder_options(
@@ -329,7 +366,7 @@ def build_multi(
         export=not no_export,
         push=push,
         timeout=timeout,
-        parallel=parallel
+        parallel=parallel,
     )
 
     # 创建构建器
@@ -339,8 +376,7 @@ def build_multi(
     results: List[Tuple[str, bool]]
     if parallel:
         results = []
-        build_results: List[Tuple[str, bool]
-                            ] = builder.build_multi(versions)
+        build_results: List[Tuple[str, bool]] = builder.build_multi(versions)
         for _, (version, success) in enumerate(build_results):
             # progress.update(task, advance=1)
             results.append((version, success))
@@ -365,13 +401,15 @@ def build_multi(
 
 
 @cli.command()
-@click.argument('app', required=True, nargs=1)
-@click.option('--out', type=click.Path(), help='输出路径，默认为/opt/images')
-@click.option('--no-export', is_flag=True, help='导出镜像')
-@click.option('--push', is_flag=True, help='推送到镜像仓库')
-@click.option('--timeout', type=int, help='单个版本构建超时时间（秒）')
-@click.option('--parallel', is_flag=True, default=True, help='并行构建')
-@click.option('--config-file', type=click.Path(exists=True), help='自定义配置文件路径')
+@click.argument("app", required=True, nargs=1)
+@click.option("--out", type=click.Path(), help="输出路径，默认为/opt/images")
+@click.option("--no-export", is_flag=True, help="导出镜像")
+@click.option("--push", is_flag=True, help="推送到镜像仓库")
+@click.option("--timeout", type=int, help="单个版本构建超时时间（秒）")
+@click.option("--parallel", is_flag=True, default=True, help="并行构建")
+@click.option(
+    "--config-file", type=click.Path(exists=True), help="自定义配置文件路径"
+)
 @click.pass_context
 @cli_command
 def build_all(
@@ -382,7 +420,7 @@ def build_all(
     push: bool,
     timeout: Optional[int],
     parallel: bool,
-    config_file: Optional[str]
+    config_file: Optional[str],
 ) -> None:
     """构建应用所有版本
 
@@ -400,7 +438,7 @@ def build_all(
         export=not no_export,
         push=push,
         timeout=timeout,
-        parallel=parallel
+        parallel=parallel,
     )
 
     # 创建构建器
@@ -416,26 +454,32 @@ def build_all(
         return
 
     console.print(
-        f"[cyan]找到 {len(versions)} 个版本: {', '.join(versions)}[/cyan]")
+        f"[cyan]找到 {len(versions)} 个版本: {', '.join(versions)}[/cyan]"
+    )
 
     if help_info:
-        console.print(Panel(help_info, title="版本选择提示", border_style="cyan"))
+        console.print(
+            Panel(help_info, title="版本选择提示", border_style="cyan")
+        )
 
     # 构建所有版本（复用 build_multi 逻辑）
-    ctx.invoke(build_multi, **{
-        'app': app,
-        'versions': versions,
-        'out': out,
-        'no_export': no_export,
-        'push': push,
-        'timeout': timeout,
-        'parallel': parallel,
-        'config_file': config_file
-    })
+    ctx.invoke(
+        build_multi,
+        **{
+            "app": app,
+            "versions": versions,
+            "out": out,
+            "no_export": no_export,
+            "push": push,
+            "timeout": timeout,
+            "parallel": parallel,
+            "config_file": config_file,
+        },
+    )
 
 
 @cli.command()
-@click.option('--detailed', '-d', is_flag=True, help='显示详细信息')
+@click.option("--detailed", "-d", is_flag=True, help="显示详细信息")
 @cli_command
 def list_apps(detailed: bool) -> None:
     """列出支持的应用
@@ -470,8 +514,12 @@ def list_apps(detailed: bool) -> None:
                 help_info: str
                 versions, help_info = temp_builder.supported_versions()
 
-                description: str = metadata.description or "无描述" if metadata else "无描述"
-                version_str: str = ', '.join(versions) if versions else "无版本"
+                description: str = (
+                    metadata.description or "无描述" if metadata else "无描述"
+                )
+                version_str: str = (
+                    ", ".join(versions) if versions else "无版本"
+                )
 
                 # table.add_row(
                 #     name,
@@ -482,12 +530,7 @@ def list_apps(detailed: bool) -> None:
                 #     help_info[:40] + "..." if help_info and len(
                 #         help_info) > 40 else (help_info or "")
                 # )
-                table.add_row(
-                    name,
-                    description,
-                    version_str,
-                    help_info
-                )
+                table.add_row(name, description, version_str, help_info)
             except Exception as e:
                 table.add_row(name, f"加载失败: {str(e)}", "N/A", "N/A")
 
@@ -497,15 +540,18 @@ def list_apps(detailed: bool) -> None:
         for name in sorted(builders.keys()):
             try:
                 metadata = loader.get_builder_metadata(name)
-                description: str = metadata.description or "无描述" if metadata else "无描述"
+                description: str = (
+                    metadata.description or "无描述" if metadata else "无描述"
+                )
                 console.print(f"[cyan]• {name}[/cyan]: {description}")
             except Exception as e:
                 console.print(
-                    f"[red]• {name}[/red]: [dim]加载失败: {str(e)}[/dim]")
+                    f"[red]• {name}[/red]: [dim]加载失败: {str(e)}[/dim]"
+                )
 
 
 @cli.command()
-@click.argument('app_name', required=False)
+@click.argument("app_name", required=False)
 @cli_command
 def info(app_name: Optional[str]) -> None:
     """显示应用详细信息
@@ -542,22 +588,38 @@ def info(app_name: Optional[str]) -> None:
 """
 
             if metadata.version:
-                info_text += f"[bold cyan]构建器版本:[/bold cyan] {metadata.version}\n"
+                info_text += (
+                    f"[bold cyan]构建器版本:[/bold cyan] {metadata.version}\n"
+                )
 
             if metadata.author:
-                info_text += f"[bold cyan]作者:[/bold cyan] {metadata.author}\n"
+                info_text += (
+                    f"[bold cyan]作者:[/bold cyan] {metadata.author}\n"
+                )
 
             if metadata.supported_features:
-                info_text += f"[bold cyan]支持特性:[/bold cyan] {', '.join(metadata.supported_features)}\n"
+                info_text += (
+                    "[bold cyan]支持特性:[/bold cyan]"
+                    f" {', '.join(metadata.supported_features)}\n"
+                )
 
             if help_info:
-                info_text += f"\n[bold yellow]版本选择提示:[/bold yellow]\n{help_info}"
+                info_text += (
+                    f"\n[bold yellow]版本选择提示:[/bold yellow]\n{help_info}"
+                )
 
             console.print(
-                Panel(info_text.strip(), title=f"{app_name} 详细信息", border_style="cyan"))
+                Panel(
+                    info_text.strip(),
+                    title=f"{app_name} 详细信息",
+                    border_style="cyan",
+                )
+            )
 
         except Exception as e:
-            console.print(f"[red]获取应用 '{app_name}' 信息失败: {str(e)}[/red]")
+            console.print(
+                f"[red]获取应用 '{app_name}' 信息失败: {str(e)}[/red]"
+            )
     else:
         # 显示所有应用简要信息
         ctx: click.Context = click.get_current_context()
@@ -565,7 +627,7 @@ def info(app_name: Optional[str]) -> None:
 
 
 @cli.command()
-@click.argument('apps', required=False, nargs=-1)
+@click.argument("apps", required=False, nargs=-1)
 @cli_command
 def clean(apps: Optional[list[str]]) -> None:
     """清理构建产物
@@ -590,13 +652,17 @@ def clean(apps: Optional[list[str]]) -> None:
                         console.print(f"[green]删除: {file_path.name}[/green]")
                     except Exception as e:
                         console.print(
-                            f"[red]删除失败 {file_path.name}: {str(e)}[/red]")
+                            f"[red]删除失败 {file_path.name}: {str(e)}[/red]"
+                        )
 
                 if deleted_count > 0:
                     console.print(
-                        f"[green]清理了 {deleted_count} 个 {app} 的镜像文件[/green]")
+                        f"[green]清理了 {deleted_count} 个 {app} 的镜像文件[/green]"
+                    )
                 else:
-                    console.print(f"[yellow]没有找到 {app} 的镜像文件[/yellow]")
+                    console.print(
+                        f"[yellow]没有找到 {app} 的镜像文件[/yellow]"
+                    )
             else:
                 console.print("[yellow]镜像目录不存在[/yellow]")
     else:
@@ -618,5 +684,5 @@ def clean(apps: Optional[list[str]]) -> None:
 cli.add_command(ctr_cli, "ctr")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

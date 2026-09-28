@@ -15,19 +15,24 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from builder.image.base_builder import BaseBuilder, BuildContext, BuilderError, BuilderOptions
-from core.command import CommandResult
-from core.command import execute_command
-from core.logger import get_logger
+from builder.image.base_builder import (
+    BaseBuilder,
+    BuildContext,
+    BuilderError,
+    BuilderOptions,
+)
+from core.command import CommandResult, execute_command
 from core.config import ConfigDict
+from core.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class KylinBuilderError(Exception):
     """Kylin 构建器专用异常"""
+
     pass
 
 
@@ -55,7 +60,7 @@ class Builder(BaseBuilder):
             "timezone_configuration",
             "security_optimization",
             "image_size_optimization",
-            "minimal_base_image"
+            "minimal_base_image",
         ]
 
     def __init__(
@@ -63,7 +68,7 @@ class Builder(BaseBuilder):
         name: str,
         config_file: Optional[Union[str, Path]] = None,
         options: Optional[BuilderOptions] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """初始化 Kylin 镜像构建器
 
@@ -99,8 +104,9 @@ class Builder(BaseBuilder):
         Raises:
             BuilderError: 环境验证失败
         """
-        execute_command(
-            "dnf --version").raise_if_failed("dnf 命令不可用，请确保系统支持dnf包管理器")
+        execute_command("dnf --version").raise_if_failed(
+            "dnf 命令不可用，请确保系统支持dnf包管理器"
+        )
         logger.debug("构建环境验证通过")
 
     def _custom_step(self, context: BuildContext) -> None:
@@ -147,7 +153,9 @@ class Builder(BaseBuilder):
         except Exception as e:
             raise BuilderError(f"Kylin 构建步骤执行失败: {e}")
 
-    def _install_packages(self, context: BuildContext, config: ConfigDict) -> None:
+    def _install_packages(
+        self, context: BuildContext, config: ConfigDict
+    ) -> None:
         """安装软件包
 
         Args:
@@ -166,7 +174,8 @@ class Builder(BaseBuilder):
             return
 
         context.log_operation(
-            f"安装 {len(packages)} 个软件包: {', '.join(packages)}")
+            f"安装 {len(packages)} 个软件包: {', '.join(packages)}"
+        )
 
         # 构建dnf安装命令
         base_cmd: List[str] = [
@@ -177,7 +186,7 @@ class Builder(BaseBuilder):
             "--setopt=tsflags=nodocs",
             "--setopt=install_weak_deps=false",
             "--setopt=keepcache=false",
-            "-y"
+            "-y",
         ]
 
         # 添加额外的setopt配置
@@ -209,7 +218,10 @@ class Builder(BaseBuilder):
         # 定义要清理的目录和文件
         cleanup_operations: List[Tuple[str, str]] = [
             # 清理包管理器缓存
-            (f"yum clean all --installroot={mount_dir} --releasever=/", "清理yum缓存"),
+            (
+                f"yum clean all --installroot={mount_dir} --releasever=/",
+                "清理yum缓存",
+            ),
             # 删除文档文件
             (f"rm -rf {mount_dir}/usr/share/man/*", "删除手册文件"),
             (f"rm -rf {mount_dir}/usr/share/doc/*", "删除文档文件"),
@@ -220,7 +232,13 @@ class Builder(BaseBuilder):
             # 删除systemd文件
             (f"rm -rf {mount_dir}/usr/lib/systemd/*", "删除systemd文件"),
             # 删除locale文件（保留基础en_US和zh_CN）
-            (f"find {mount_dir}/usr/share/locale -type d ! -name 'en_US' ! -name 'zh_CN' -exec rm -rf {{}} +", "清理locale文件"),
+            (
+                (
+                    f"find {mount_dir}/usr/share/locale -type d ! -name"
+                    " 'en_US' ! -name 'zh_CN' -exec rm -rf {} +"
+                ),
+                "清理locale文件",
+            ),
             # 删除内核模块（基础镜像不需要）
             (f"rm -rf {mount_dir}/lib/modules/*", "删除内核模块"),
         ]
@@ -232,7 +250,9 @@ class Builder(BaseBuilder):
 
         context.log_operation("镜像体积优化完成")
 
-    def _configure_system(self, context: BuildContext, config: ConfigDict) -> None:
+    def _configure_system(
+        self, context: BuildContext, config: ConfigDict
+    ) -> None:
         """配置系统设置
 
         Args:
@@ -275,14 +295,25 @@ class Builder(BaseBuilder):
 
         # 创建时区链接
         timezone_operations: List[Tuple[str, str]] = [
-            (f"ln -sf /usr/share/zoneinfo/Asia/Shanghai {mount_dir}/etc/localtime", "设置时区链接"),
-            (f"echo 'Asia/Shanghai' > {mount_dir}/etc/timezone", "写入时区配置"),
+            (
+                (
+                    "ln -sf /usr/share/zoneinfo/Asia/Shanghai"
+                    f" {mount_dir}/etc/localtime"
+                ),
+                "设置时区链接",
+            ),
+            (
+                f"echo 'Asia/Shanghai' > {mount_dir}/etc/timezone",
+                "写入时区配置",
+            ),
         ]
 
         for command, _ in timezone_operations:
             execute_command(command).raise_if_failed("时区配置失败")
 
-    def _configure_dns(self, context: BuildContext, config: ConfigDict) -> None:
+    def _configure_dns(
+        self, context: BuildContext, config: ConfigDict
+    ) -> None:
         """配置DNS
 
         Args:
@@ -293,24 +324,29 @@ class Builder(BaseBuilder):
 
         # 获取DNS配置
         dns_servers: List[str] = config.get("dns_servers") or [
-            "8.8.8.8", "114.114.114.114"]
+            "8.8.8.8",
+            "114.114.114.114",
+        ]
 
         context.log_operation(f"配置DNS服务器: {', '.join(dns_servers)}")
 
         # 写入resolv.conf
         resolv_content = "\n".join(
-            f"nameserver {server}" for server in dns_servers)
+            f"nameserver {server}" for server in dns_servers
+        )
         resolv_file = Path(mount_dir) / "etc" / "resolv.conf"
 
         try:
-            with open(resolv_file, 'w') as f:
+            with open(resolv_file, "w") as f:
                 f.write(resolv_content + "\n")
                 f.write("# Generated by Kylin Builder\n")
 
         except Exception as e:
             raise BuilderError(f"写入DNS配置失败: {e}")
 
-    def _configure_network(self, context: BuildContext, config: ConfigDict) -> None:
+    def _configure_network(
+        self, context: BuildContext, config: ConfigDict
+    ) -> None:
         """配置网络
 
         Args:
@@ -330,7 +366,7 @@ class Builder(BaseBuilder):
 
         hosts_file = Path(mount_dir) / "etc" / "hosts"
         try:
-            with open(hosts_file, 'w') as f:
+            with open(hosts_file, "w") as f:
                 f.write(hosts_content)
 
             context.log_operation(f"配置主机名为: {hostname}")
@@ -338,7 +374,9 @@ class Builder(BaseBuilder):
         except Exception as e:
             raise BuilderError(f"写入hosts配置失败: {e}")
 
-    def _create_essential_directories(self, context: BuildContext, config: ConfigDict) -> None:
+    def _create_essential_directories(
+        self, context: BuildContext, config: ConfigDict
+    ) -> None:
         """创建必要的目录
 
         Args:
@@ -354,7 +392,7 @@ class Builder(BaseBuilder):
             "var/log",
             "var/run",
             "opt",
-            "srv"
+            "srv",
         ]
 
         # 额外目录（从配置中获取）
@@ -388,8 +426,14 @@ class Builder(BaseBuilder):
         try:
             # 移除setuid位以增强安全性
             security_commands: List[str] = [
-                f"buildah run {container_id} -- bash -c 'find / -perm /6000 -type f -exec chmod a-s {{}} \\; || true'",
-                f"buildah run {container_id} -- bash -c 'find / -perm /2000 -type f -exec chmod g-s {{}} \\; || true'",
+                (
+                    f"buildah run {container_id} -- bash -c 'find / -perm"
+                    " /6000 -type f -exec chmod a-s {} \\; || true'"
+                ),
+                (
+                    f"buildah run {container_id} -- bash -c 'find / -perm"
+                    " /2000 -type f -exec chmod g-s {} \\; || true'"
+                ),
             ]
 
             for command in security_commands:
@@ -419,5 +463,5 @@ class Builder(BaseBuilder):
             "supported_features": self.supported_features(),
             "description": "Kylin 基础镜像构建器",
             "base_os": "Kylin Linux Advanced Server",
-            "package_manager": "dnf"
+            "package_manager": "dnf",
         }

@@ -42,7 +42,6 @@ from core.command import execute_command
 from core.config.application import Application
 from core.http_api_client.harbor_client import HarborClient
 from core.logger import get_logger, with_log_context
-from core.runtime_files import private_runtime_file
 from core.orm.image_import import (
     ImageImportLease,
     ImageImportLeaseLost,
@@ -50,17 +49,17 @@ from core.orm.image_import import (
     create_image_import_task,
     find_image_import_task,
     find_image_import_tasks,
-    requeue_image_import_task,
     replace_image_import_items,
+    requeue_image_import_task,
     update_image_import_item,
     update_image_import_task,
 )
+from core.runtime_files import private_runtime_file
 from web.utils.auth import auth_with_renew
 from web.utils.page import PageParams, pagination_params
+from web.utils.uploads import SecureUploadRoute
 
 logger = get_logger(__name__)
-
-from web.utils.uploads import SecureUploadRoute
 
 router = APIRouter(tags=["制品管理"], route_class=SecureUploadRoute)
 
@@ -117,7 +116,9 @@ def _check_file_size(file: UploadFile, max_size_mb: int) -> bool:
 
 
 def _split_image_ref(ref: str) -> tuple[str, str]:
-    """Split an image reference into registry and repository with tag."""
+    """
+    Split an image reference into registry and repository with tag.
+    """
     parts = ref.split("/", 1)
     if len(parts) == 2 and ("." in parts[0] or ":" in parts[0]):
         return parts[0], parts[1]
@@ -143,7 +144,9 @@ def _parse_image_ref(ref: str) -> dict[str, str]:
 
 
 def _inspect_image_archive(file_path: str) -> dict[str, str]:
-    """Return image-specific errors for missing OCI/Docker archive content."""
+    """
+    Return image-specific errors for missing OCI/Docker archive content.
+    """
 
     def normalized_name(name: str) -> str:
         return name[2:] if name.startswith("./") else name
@@ -201,11 +204,15 @@ def _inspect_image_archive(file_path: str) -> dict[str, str]:
                     if member_name not in members:
                         content_type = (
                             "manifest"
-                            if "manifest" in media_type or "index" in media_type
+                            if "manifest" in media_type
+                            or "index" in media_type
                             else "blob"
                         )
                         errors.setdefault(image_ref, []).append(
-                            f"缺少 {platform_name(platform)} {content_type}：{digest}"
+                            (
+                                f"缺少 {platform_name(platform)} {content_type}："
+                                f"{digest}"
+                            )
                         )
                         return
 
@@ -213,7 +220,10 @@ def _inspect_image_archive(file_path: str) -> dict[str, str]:
                     if visit_key in visited:
                         return
                     visited.add(visit_key)
-                    if "manifest" not in media_type and "index" not in media_type:
+                    if (
+                        "manifest" not in media_type
+                        and "index" not in media_type
+                    ):
                         return
 
                     document = read_json(member_name)
@@ -243,8 +253,10 @@ def _inspect_image_archive(file_path: str) -> dict[str, str]:
                     for image_ref, messages in errors.items()
                 }
 
-            # Docker archives do not have index.json. Validate the paths named
-            # by manifest.json without reading or hashing large layer payloads.
+            # Docker archives do not have index.json. Validate the paths
+            # named
+            # by manifest.json without reading or hashing large layer
+            # payloads.
             if "manifest.json" in members:
                 member = members["manifest.json"]
                 if member.size > 16 * 1024 * 1024:
@@ -276,7 +288,12 @@ def _inspect_image_archive(file_path: str) -> dict[str, str]:
                     for image_ref, messages in errors.items()
                 }
             return {}
-    except (tarfile.TarError, OSError, ValueError, json.JSONDecodeError) as exc:
+    except (
+        tarfile.TarError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
         raise RuntimeError(f"镜像包完整性预检失败：{exc}") from exc
 
 
@@ -285,7 +302,10 @@ def _image_import_lock(*, blocking=True):
     """Serialize access to the shared apps containerd namespace."""
     with private_runtime_file("image-import.lock") as lock_file:
         try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+            fcntl.flock(
+                lock_file.fileno(),
+                fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB),
+            )
         except BlockingIOError:
             yield False
             return
@@ -435,11 +455,16 @@ def get_artifacts(
         制品列表
     """
     client = HarborClient()
-    return client.get_artifacts(project_name, repository_name, query, pagination)
+    return client.get_artifacts(
+        project_name, repository_name, query, pagination
+    )
 
 
 @router.get(
-    "/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}",
+    (
+        "/projects/{project_name}/repositories/{repository_name}/artifacts/"
+        "{digest}"
+    ),
     summary="获取制品详情",
     description="根据制品摘要获取制品详细信息",
 )
@@ -467,7 +492,10 @@ def get_artifact(
 
 
 @router.delete(
-    "/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}",
+    (
+        "/projects/{project_name}/repositories/{repository_name}/artifacts/"
+        "{digest}"
+    ),
     summary="删除制品",
     description="根据制品摘要删除制品",
 )
@@ -494,7 +522,8 @@ def delete_artifact(
     return client.delete_artifact(project_name, repository_name, digest)
 
 
-# ============================ Chart Values 管理 ============================
+# ============================ Chart Values 管理
+# ============================
 
 
 @router.get(
@@ -529,7 +558,10 @@ def get_chart_values(
 
 
 @router.get(
-    "/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}/tags",
+    (
+        "/projects/{project_name}/repositories/{repository_name}/artifacts/"
+        "{digest}/tags"
+    ),
     summary="获取标签列表",
     description="获取制品的标签列表",
 )
@@ -559,7 +591,10 @@ def get_tags(
 
 
 @router.post(
-    "/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}/tags",
+    (
+        "/projects/{project_name}/repositories/{repository_name}/artifacts/"
+        "{digest}/tags"
+    ),
     summary="添加标签",
     description="为制品添加标签",
 )
@@ -589,7 +624,10 @@ def add_tag(
 
 
 @router.delete(
-    "/projects/{project_name}/repositories/{repository_name}/artifacts/{digest}/tags/{tag_name}",
+    (
+        "/projects/{project_name}/repositories/{repository_name}/artifacts/"
+        "{digest}/tags/{tag_name}"
+    ),
     summary="删除标签",
     description="删除制品标签",
 )
@@ -622,7 +660,9 @@ def delete_tag(
 
 
 @router.post(
-    "/upload/chart", summary="上传 Chart 模板", description="上传 Helm Chart 到仓库"
+    "/upload/chart",
+    summary="上传 Chart 模板",
+    description="上传 Helm Chart 到仓库",
 )
 @auth_with_renew()
 async def upload_chart(
@@ -658,40 +698,56 @@ async def upload_chart(
                     detail=f"文件大小超过限制！最大支持 {MAX_SIZE_MB}MB",
                 )
 
-            # The client filename is metadata only. Each upload owns its private
-            # directory, including cleanup on copy errors and failed pushes.
-            with tempfile.TemporaryDirectory(prefix="kubengine-chart-") as task_dir:
+            # The client filename is metadata only. Each upload owns its
+            # private
+            # directory, including cleanup on copy errors and failed
+            # pushes.
+            with tempfile.TemporaryDirectory(
+                prefix="kubengine-chart-"
+            ) as task_dir:
                 file_path = FilePath(task_dir) / "chart.tgz"
                 try:
                     with file_path.open("xb") as buffer:
                         shutil.copyfileobj(file.file, buffer)
                 except OSError:
                     logger.exception("Chart 文件保存失败")
-                    raise HTTPException(status_code=500, detail="文件保存失败") from None
+                    raise HTTPException(
+                        status_code=500, detail="文件保存失败"
+                    ) from None
 
                 file_size_mb = file_path.stat().st_size / 1024 / 1024
                 logger.info("开始推送 Chart (%.2fMB)", file_size_mb)
                 result = execute_command(
                     [
-                        "helm", "push", str(file_path),
+                        "helm",
+                        "push",
+                        str(file_path),
                         f"oci://{Application.DOMAIN}/charts",
-                        "--username", Application.REGISTRY.USERNAME,
-                        "--password", Application.REGISTRY.PASSWORD,
+                        "--username",
+                        Application.REGISTRY.USERNAME,
+                        "--password",
+                        Application.REGISTRY.PASSWORD,
                     ],
-                    env={"KUBECONFIG": "/etc/kubernetes/admin.conf"}, timeout=600,
+                    env={"KUBECONFIG": "/etc/kubernetes/admin.conf"},
+                    timeout=600,
                 )
                 if result.is_failure():
                     logger.error("推送 Chart 到仓库失败")
-                    raise HTTPException(status_code=500, detail="推送 Chart 到仓库失败")
+                    raise HTTPException(
+                        status_code=500, detail="推送 Chart 到仓库失败"
+                    )
 
                 logger.info("Chart 推送成功")
                 return {
-                    "filename": os.path.basename((file.filename or "").replace("\\", "/")),
+                    "filename": os.path.basename(
+                        (file.filename or "").replace("\\", "/")
+                    ),
                     "content_type": file.content_type,
                     "file_size_mb": round(file_size_mb, 2),
                 }
 
-        # File copies and Helm execution must not block the request event loop.
+        # File copies and Helm execution must not block the request
+        # event loop.
         data = await run_in_threadpool(_push_chart)
         return 200, "文件上传成功", data
     finally:
@@ -699,11 +755,17 @@ async def upload_chart(
 
 
 def _prune_apps_namespace(namespace: str = "apps") -> Optional[str]:
-    """Clean the temporary image namespace and return an error if it fails."""
+    """
+    Clean the temporary image namespace and return an error if it fails.
+    """
     try:
-        result = execute_command(["ctr", "-n", namespace, "i", "prune", "--all"], timeout=600)
+        result = execute_command(
+            ["ctr", "-n", namespace, "i", "prune", "--all"], timeout=600
+        )
         if result.is_failure():
-            return f"清理 {namespace} namespace 失败：{result.get_error_lines()}"
+            return (
+                f"清理 {namespace} namespace 失败：{result.get_error_lines()}"
+            )
     except Exception as exc:
         return f"清理 {namespace} namespace 异常：{exc}"
     return None
@@ -714,11 +776,17 @@ def _cleanup_image_namespace(namespace: str) -> Optional[str]:
     if error or not namespace.startswith("kubengine-import-"):
         return error
     try:
-        namespaces = execute_command(["ctr", "namespaces", "list", "-q"], timeout=120)
+        namespaces = execute_command(
+            ["ctr", "namespaces", "list", "-q"], timeout=120
+        )
         if namespaces.is_failure():
             return "无法确认临时镜像 namespace 的清理结果"
-        if namespace in {line.strip() for line in namespaces.get_output_lines()}:
-            result = execute_command(["ctr", "namespaces", "remove", namespace], timeout=120)
+        if namespace in {
+            line.strip() for line in namespaces.get_output_lines()
+        }:
+            result = execute_command(
+                ["ctr", "namespaces", "remove", namespace], timeout=120
+            )
             if result.is_failure():
                 return f"删除临时 namespace 失败：{result.get_error_lines()}"
     except Exception as exc:
@@ -727,14 +795,22 @@ def _cleanup_image_namespace(namespace: str) -> Optional[str]:
 
 
 def _mark_task_items_failed(
-    task_id: int, image_refs: list[str], stage: str, error: str,
-    *, lease: ImageImportLease,
+    task_id: int,
+    image_refs: list[str],
+    stage: str,
+    error: str,
+    *,
+    lease: ImageImportLease,
 ) -> None:
     for image_ref in image_refs:
-        update_image_import_item(task_id, image_ref, "failed", stage, error, lease=lease)
+        update_image_import_item(
+            task_id, image_ref, "failed", stage, error, lease=lease
+        )
 
 
-def _finish_image_import_task(task_id: int, *, lease: ImageImportLease) -> None:
+def _finish_image_import_task(
+    task_id: int, *, lease: ImageImportLease
+) -> None:
     task = find_image_import_task(task_id)
     if task is None:
         return
@@ -767,13 +843,21 @@ def _finish_image_import_task(task_id: int, *, lease: ImageImportLease) -> None:
 
 @with_log_context(task_id="task_id")
 def process_image_import_task(
-    task_id: int, retry_failed: bool = False, *, lease: ImageImportLease,
+    task_id: int,
+    retry_failed: bool = False,
+    *,
+    lease: ImageImportLease,
     lease_lost: Optional[threading.Event] = None,
 ) -> None:
-    """Import an archive and persist the result of every contained image."""
+    """
+    Import an archive and persist the result of every contained image.
+    """
+
     def check_lease() -> None:
         if lease_lost is not None and lease_lost.is_set():
-            raise ImageImportLeaseLost(f"Image-import task {task_id} lease was lost")
+            raise ImageImportLeaseLost(
+                f"Image-import task {task_id} lease was lost"
+            )
         assert_image_import_lease(task_id, lease)
 
     check_lease()
@@ -784,7 +868,9 @@ def process_image_import_task(
     namespace = task["namespace"]
     existing_items = task.get("items", [])
     retry_refs = {
-        item["image_ref"] for item in existing_items if item["status"] != "success"
+        item["image_ref"]
+        for item in existing_items
+        if item["status"] != "success"
     }
     update_image_import_task(
         task_id,
@@ -802,10 +888,14 @@ def process_image_import_task(
                 f"{image_ref}: {error}"
                 for image_ref, error in validation_errors.items()
             )
-            update_image_import_task(task_id, error_message=summary, lease=lease)
+            update_image_import_task(
+                task_id, error_message=summary, lease=lease
+            )
         with _image_import_lock():
-            # A claimant may have waited behind another task long enough to
-            # lose its lease. Never touch the namespace before checking again.
+            # A claimant may have waited behind another task long enough
+            # to
+            # lose its lease. Never touch the namespace before checking
+            # again.
             check_lease()
             try:
                 cleanup_error = _prune_apps_namespace(namespace)
@@ -813,57 +903,86 @@ def process_image_import_task(
                     raise RuntimeError(cleanup_error)
                 check_lease()
                 import_result = execute_command(
-                    ["ctr", "-n", namespace, "i", "import", file_path], timeout=600
+                    ["ctr", "-n", namespace, "i", "import", file_path],
+                    timeout=600,
                 )
                 check_lease()
                 if import_result.is_failure():
-                    raise RuntimeError(f"导入镜像失败：{import_result.get_error_lines()}")
+                    raise RuntimeError(
+                        f"导入镜像失败：{import_result.get_error_lines()}"
+                    )
 
                 list_result = execute_command(
                     ["ctr", "-n", namespace, "i", "ls", "-q"], timeout=120
                 )
                 check_lease()
                 if list_result.is_failure():
-                    raise RuntimeError(f"获取镜像信息失败：{list_result.get_error_lines()}")
+                    raise RuntimeError(
+                        f"获取镜像信息失败：{list_result.get_error_lines()}"
+                    )
                 image_refs = [
-                    line.strip() for line in list_result.get_output_lines() if line.strip()
+                    line.strip()
+                    for line in list_result.get_output_lines()
+                    if line.strip()
                 ]
                 if not image_refs:
                     raise RuntimeError("导入后 apps namespace 中没有镜像")
 
                 if not existing_items:
-                    item_refs = list(dict.fromkeys([*image_refs, *validation_errors]))
+                    item_refs = list(
+                        dict.fromkeys([*image_refs, *validation_errors])
+                    )
                     replace_image_import_items(
-                        task_id, [_parse_image_ref(ref) for ref in item_refs], lease=lease
+                        task_id,
+                        [_parse_image_ref(ref) for ref in item_refs],
+                        lease=lease,
                     )
                     update_image_import_task(
-                        task_id, lease=lease, total_count=len(item_refs),
-                        success_count=0, failed_count=0,
+                        task_id,
+                        lease=lease,
+                        total_count=len(item_refs),
+                        success_count=0,
+                        failed_count=0,
                     )
                     unfinished_refs = set(item_refs)
                 else:
-                    # Both an interrupted first run and a user retry resume all
-                    # unfinished items. A completed push must not be reset.
+                    # Both an interrupted first run and a user retry
+                    # resume all
+                    # unfinished items. A completed push must not be
+                    # reset.
                     unfinished_refs = retry_refs
 
-                missing_refs = unfinished_refs - set(image_refs) - set(validation_errors)
+                missing_refs = (
+                    unfinished_refs - set(image_refs) - set(validation_errors)
+                )
                 _mark_task_items_failed(
-                    task_id, list(missing_refs), "import", "镜像包导入后未找到该镜像",
+                    task_id,
+                    list(missing_refs),
+                    "import",
+                    "镜像包导入后未找到该镜像",
                     lease=lease,
                 )
                 for image_ref, error in validation_errors.items():
                     if image_ref in unfinished_refs:
                         update_image_import_item(
-                            task_id, image_ref, "failed", "validate",
-                            f"镜像包完整性校验失败：{error}", lease=lease,
+                            task_id,
+                            image_ref,
+                            "failed",
+                            "validate",
+                            f"镜像包完整性校验失败：{error}",
+                            lease=lease,
                         )
                 target_refs = [
-                    ref for ref in image_refs
+                    ref
+                    for ref in image_refs
                     if ref in unfinished_refs and ref not in validation_errors
                 ]
                 for ref in target_refs:
                     update_image_import_item(
-                        task_id, ref, "processing", "retry" if existing_items else "import",
+                        task_id,
+                        ref,
+                        "processing",
+                        "retry" if existing_items else "import",
                         lease=lease,
                     )
 
@@ -872,43 +991,66 @@ def process_image_import_task(
                 invalid_registries: set[str] = set()
                 for registry in sorted(registries):
                     check_lease()
-                    created = harbor_client.create_project(registry, public=True)
+                    created = harbor_client.create_project(
+                        registry, public=True
+                    )
                     check_lease()
                     if not created:
                         invalid_registries.add(registry)
                         refs = [
-                            ref for ref in target_refs if _split_image_ref(ref)[0] == registry
+                            ref
+                            for ref in target_refs
+                            if _split_image_ref(ref)[0] == registry
                         ]
                         _mark_task_items_failed(
-                            task_id, refs, "create_project",
-                            f"Harbor 项目 [{registry}] 创建失败", lease=lease,
+                            task_id,
+                            refs,
+                            "create_project",
+                            f"Harbor 项目 [{registry}] 创建失败",
+                            lease=lease,
                         )
 
                 push_refs = [
-                    ref for ref in target_refs
+                    ref
+                    for ref in target_refs
                     if _split_image_ref(ref)[0] not in invalid_registries
                 ]
-                proxy_registries = {_split_image_ref(ref)[0] for ref in push_refs}
+                proxy_registries = {
+                    _split_image_ref(ref)[0] for ref in push_refs
+                }
                 if proxy_registries:
                     check_lease()
                     proxy_command = [
-                        sys.executable, "-m", "cli.app",
-                        # Only configure this host; cluster-wide sync is explicit.
-                        "image", "ctr", "add-proxy", "-y", "--no-sync",
+                        sys.executable,
+                        "-m",
+                        "cli.app",
+                        # Only configure this host; cluster-wide sync is
+                        # explicit.
+                        "image",
+                        "ctr",
+                        "add-proxy",
+                        "-y",
+                        "--no-sync",
                         *sorted(proxy_registries),
                     ]
                     proxy_result = execute_command(proxy_command, timeout=600)
                     check_lease()
                     if proxy_result.is_failure():
                         _mark_task_items_failed(
-                            task_id, push_refs, "proxy",
-                            f"containerd 透明代理配置失败：{proxy_result.get_error_lines()}",
+                            task_id,
+                            push_refs,
+                            "proxy",
+                            (
+                                "containerd 透明代理配置失败："
+                                f"{proxy_result.get_error_lines()}"
+                            ),
                             lease=lease,
                         )
                         push_refs = []
 
                 registry_auth = (
-                    f"{Application.REGISTRY.USERNAME}:{Application.REGISTRY.PASSWORD}"
+                    f"{Application.REGISTRY.USERNAME}:"
+                    f"{Application.REGISTRY.PASSWORD}"
                 )
                 for image_ref in push_refs:
                     check_lease()
@@ -917,33 +1059,57 @@ def process_image_import_task(
                     )
                     push_result = execute_command(
                         [
-                            "ctr", "-n", namespace, "i", "push",
-                            "--hosts-dir", "/etc/containerd/certs.d/",
-                            "-u", registry_auth, image_ref,
+                            "ctr",
+                            "-n",
+                            namespace,
+                            "i",
+                            "push",
+                            "--hosts-dir",
+                            "/etc/containerd/certs.d/",
+                            "-u",
+                            registry_auth,
+                            image_ref,
                         ],
                         timeout=600,
                     )
                     check_lease()
                     if push_result.is_failure():
                         update_image_import_item(
-                            task_id, image_ref, "failed", "push",
-                            f"推送失败：{push_result.get_error_lines()}", lease=lease,
+                            task_id,
+                            image_ref,
+                            "failed",
+                            "push",
+                            f"推送失败：{push_result.get_error_lines()}",
+                            lease=lease,
                         )
                     else:
                         update_image_import_item(
-                            task_id, image_ref, "success", "completed", lease=lease
+                            task_id,
+                            image_ref,
+                            "success",
+                            "completed",
+                            lease=lease,
                         )
 
                 check_lease()
             finally:
-                # Keep the same lock through cleanup, even after losing the DB
-                # lease. The new attempt cannot touch this namespace until we
-                # finish cleaning our own execution and release this lock.
+                # Keep the same lock through cleanup, even after losing
+                # the DB
+                # lease. The new attempt cannot touch this namespace
+                # until we
+                # finish cleaning our own execution and release this
+                # lock.
                 cleanup_error = _cleanup_image_namespace(namespace)
                 update_image_import_task(
-                    task_id, lease=lease, cleanup_pending=bool(cleanup_error),
+                    task_id,
+                    lease=lease,
+                    cleanup_pending=bool(cleanup_error),
                     cleanup_error=cleanup_error,
-                    cleanup_retry_at=datetime.now() + timedelta(seconds=60) if cleanup_error else None,
+                    cleanup_retry_at=(
+                        datetime.now() + timedelta(seconds=60)
+                        if cleanup_error
+                        else None
+                    ),
                 )
                 if cleanup_error:
                     logger.warning(cleanup_error)
@@ -957,7 +1123,8 @@ def process_image_import_task(
         current = find_image_import_task(task_id)
         if current:
             unfinished_refs = [
-                item["image_ref"] for item in current.get("items", [])
+                item["image_ref"]
+                for item in current.get("items", [])
                 if item["status"] != "success"
             ]
             _mark_task_items_failed(
@@ -976,11 +1143,16 @@ async def _create_image_import(file: UploadFile) -> dict[str, Any]:
         )
 
     from core.image_storage import store_archive
-    filename = os.path.basename((file.filename or "images.tar").replace("\\", "/"))
+
+    filename = os.path.basename(
+        (file.filename or "images.tar").replace("\\", "/")
+    )
     task = create_image_import_task(filename, file.content_type, "")
     task_id = int(task["task_id"])
     cancelled = threading.Event()
-    copying = asyncio.create_task(run_in_threadpool(store_archive, task_id, file.file, cancelled))
+    copying = asyncio.create_task(
+        run_in_threadpool(store_archive, task_id, file.file, cancelled)
+    )
     try:
         await asyncio.shield(copying)
     except asyncio.CancelledError:
@@ -994,7 +1166,9 @@ async def _create_image_import(file: UploadFile) -> dict[str, Any]:
         raise
     except Exception:
         logger.exception("保存上传镜像失败")
-        raise HTTPException(status_code=500, detail="保存上传镜像失败") from None
+        raise HTTPException(
+            status_code=500, detail="保存上传镜像失败"
+        ) from None
     finally:
         await file.close()
 
@@ -1016,7 +1190,9 @@ async def create_image_import_api(
     return 200, "镜像导入任务已创建", task
 
 
-@router.post("/upload/image", summary="上传镜像", description="创建镜像导入任务")
+@router.post(
+    "/upload/image", summary="上传镜像", description="创建镜像导入任务"
+)
 @auth_with_renew()
 async def upload_image(
     request: Request,
@@ -1058,6 +1234,7 @@ def retry_image_import_task_api(
         raise HTTPException(status_code=404, detail="镜像导入任务不存在")
     if task.get("cleanup_pending"):
         from core.orm.image_import import request_cleanup_retry
+
         request_cleanup_retry(task_id)
         return find_image_import_task(task_id, include_items=False)
     if task["status"] in {"uploading", "pending", "processing"}:
@@ -1065,5 +1242,7 @@ def retry_image_import_task_api(
     if not os.path.exists(str(task.get("file_path") or "")):
         raise HTTPException(status_code=410, detail="原始镜像文件已不存在")
     if not requeue_image_import_task(task_id):
-        raise HTTPException(status_code=409, detail="镜像导入任务已被其他请求调度")
+        raise HTTPException(
+            status_code=409, detail="镜像导入任务已被其他请求调度"
+        )
     return find_image_import_task(task_id, include_items=False)

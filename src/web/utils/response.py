@@ -5,13 +5,12 @@
 """
 
 import json
-from typing import Any, Generic, TypeVar, Optional
+from typing import Any, Generic, Optional, TypeVar
 
+import pydantic_core
 from fastapi import status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-import pydantic_core
-
 
 # 泛型类型变量
 T = TypeVar("T")
@@ -34,7 +33,9 @@ class StandardResponse(BaseModel, Generic[T]):
     code: int = Field(default=200, description="业务状态码")
     message: str = Field(default="操作成功", description="响应提示信息")
     data: Optional[T] = Field(default=None, description="业务数据")
-    new_access_token: Optional[str] = Field(default=None, description="新的访问令牌")
+    new_access_token: Optional[str] = Field(
+        default=None, description="新的访问令牌"
+    )
     token_type: str = Field(default="Bearer", description="令牌类型")
 
     model_config = {

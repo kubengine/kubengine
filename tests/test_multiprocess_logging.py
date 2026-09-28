@@ -15,54 +15,32 @@ from core.logger import (
     MultiProcessTimedRotatingFileHandler,
 )
 
-_WORKER_SCRIPT = r"""
-import logging
-import sys
-import time
-from pathlib import Path
-
-from core.logger import MultiProcessFileHandler, MultiProcessTimedRotatingFileHandler
-
-log_file = sys.argv[1]
-worker_id = int(sys.argv[2])
-ready_file = Path(sys.argv[3])
-start_file = Path(sys.argv[4])
-record_count = int(sys.argv[5])
-rotate = sys.argv[6] == "true"
-
-if rotate:
-    handler = MultiProcessTimedRotatingFileHandler(
-        log_file,
-        when="S",
-        interval=1,
-        backupCount=5,
-        encoding="utf-8",
-    )
-    # 所有进程都认为已到轮转时间，用于复现重复轮转竞争。
-    handler.rolloverAt = 1
-else:
-    handler = MultiProcessFileHandler(log_file, encoding="utf-8")
-handler.setFormatter(logging.Formatter("%(message)s"))
-
-process_logger = logging.getLogger(f"test.multiprocess.{worker_id}")
-process_logger.handlers = [handler]
-process_logger.setLevel(logging.INFO)
-process_logger.propagate = False
-
-ready_file.touch()
-deadline = time.monotonic() + 10
-while not start_file.exists():
-    if time.monotonic() >= deadline:
-        raise RuntimeError("等待多进程日志测试启动超时")
-    time.sleep(0.01)
-
-try:
-    for sequence in range(record_count):
-        process_logger.info("worker=%s sequence=%s", worker_id, sequence)
-finally:
-    handler.close()
-    process_logger.handlers.clear()
-"""
+_WORKER_SCRIPT = (
+    "\nimport logging\nimport sys\nimport time\nfrom pathlib import "
+    "Path\n\nfrom core.logger import MultiProcessFileHandler, "
+    "MultiProcessTimedRotatingFileHandler\n\nlog_file = "
+    "sys.argv[1]\nworker_id = int(sys.argv[2])\nready_file = "
+    "Path(sys.argv[3])\nstart_file = Path(sys.argv[4])\nrecord_count = "
+    'int(sys.argv[5])\nrotate = sys.argv[6] == "true"\n\nif rotate:\n  '
+    "  handler = MultiProcessTimedRotatingFileHandler(\n        "
+    'log_file,\n        when="S",\n        interval=1,\n        '
+    'backupCount=5,\n        encoding="utf-8",\n    )\n    # '
+    "所有进程都认为已到轮转时间，用于复现重复轮转竞争。\n    handler.rolloverAt = 1\nelse:\n    "
+    "handler = MultiProcessFileHandler(log_file, "
+    'encoding="utf-8")\nhandler.setFormatter(logging.Formatter("%(messa'
+    'ge)s"))\n\nprocess_logger = '
+    'logging.getLogger(f"test.multiprocess.{worker_id}")\nprocess_logge'
+    "r.handlers = "
+    "[handler]\nprocess_logger.setLevel(logging.INFO)\nprocess_logger.p"
+    "ropagate = False\n\nready_file.touch()\ndeadline = "
+    "time.monotonic() + 10\nwhile not start_file.exists():\n    if "
+    "time.monotonic() >= deadline:\n        raise "
+    'RuntimeError("等待多进程日志测试启动超时")\n    time.sleep(0.01)\n\ntry:\n    '
+    "for sequence in range(record_count):\n        "
+    'process_logger.info("worker=%s sequence=%s", worker_id, '
+    "sequence)\nfinally:\n    handler.close()\n    "
+    "process_logger.handlers.clear()\n"
+)
 
 
 def _run_log_workers(
@@ -111,7 +89,9 @@ def _run_log_workers(
                 process for process in processes if process.poll() is not None
             ]
             if failed_processes or time.monotonic() >= deadline:
-                details = [process.communicate() for process in failed_processes]
+                details = [
+                    process.communicate() for process in failed_processes
+                ]
                 raise AssertionError(f"日志工作进程未就绪: {details}")
             time.sleep(0.01)
 

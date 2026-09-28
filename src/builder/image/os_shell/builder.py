@@ -4,13 +4,16 @@ Kylin V11 OS Shell 镜像构建器
 扩展基础的KylinV11Builder，专门用于构建带有shell配置的Kylin V11镜像。
 包含bash配置、shell工具和环境变量等shell相关功能。
 """
+
 from __future__ import annotations
 
-from builder.image.os.kylin import Builder as KylinBuilder
-from builder.image.base_builder import BuilderOptions
-from typing import Any, List, Optional, Union
 from pathlib import Path
+from typing import Any, List, Optional, Union
+
+from builder.image.base_builder import BuilderOptions
+from builder.image.os.kylin import Builder as KylinBuilder
 from core.logger import get_logger
+
 logger = get_logger(__name__)
 
 
@@ -40,7 +43,7 @@ class Builder(KylinBuilder):
             "interactive_shell",
             "prompt_customization",
             "bash_completion",
-            "shell_history"
+            "shell_history",
         ]
 
         # 合并特性列表
@@ -51,7 +54,7 @@ class Builder(KylinBuilder):
         name: str,
         config_file: Optional[Union[str, Path]] = None,
         options: Optional[BuilderOptions] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """初始化 Kylin V11 OS Shell 镜像构建器。
 

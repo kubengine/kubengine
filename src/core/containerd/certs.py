@@ -1,7 +1,8 @@
 """Containerd certificates and hosts configuration utilities."""
 
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from core.config.config_dict import ConfigDict
 from core.logger import get_logger
 
@@ -51,7 +52,9 @@ class ContainerdCertsConfig:
             hosts_toml_path = subdir / "hosts.toml"
 
             if not hosts_toml_path.exists():
-                logger.debug(f"目录 {subdir.name} 下没有 hosts.toml 文件，忽略")
+                logger.debug(
+                    f"目录 {subdir.name} 下没有 hosts.toml 文件，忽略"
+                )
                 continue
 
             # 验证hosts.toml文件是否有效
@@ -61,7 +64,9 @@ class ContainerdCertsConfig:
             else:
                 logger.warning(f"无效的hosts.toml文件: {hosts_toml_path}")
 
-        logger.debug(f"共找到 {len(valid_hosts_toml_paths)} 个有效的hosts.toml文件")
+        logger.debug(
+            f"共找到 {len(valid_hosts_toml_paths)} 个有效的hosts.toml文件"
+        )
         return valid_hosts_toml_paths
 
     def _is_valid_hosts_toml(self, hosts_toml_path: Path) -> bool:
@@ -95,7 +100,9 @@ class ContainerdCertsConfig:
                 logger.debug(f"hosts.toml结构无效: {hosts_toml_path}")
                 return False
         except Exception as e:
-            logger.error(f"验证hosts.toml文件时发生错误: {hosts_toml_path}, 错误: {e}")
+            logger.error(
+                f"验证hosts.toml文件时发生错误: {hosts_toml_path}, 错误: {e}"
+            )
             return False
 
     def _has_valid_structure(self, config: Dict[str, Any]) -> bool:
@@ -108,22 +115,28 @@ class ContainerdCertsConfig:
             bool: 结构是否有效
         """
         # 基本验证：至少包含一个有效字段
-        valid_fields = ['server', 'host', 'ca', 'cert',
-                        'key', 'capabilities', 'skip_verify']
+        valid_fields = [
+            "server",
+            "host",
+            "ca",
+            "cert",
+            "key",
+            "capabilities",
+            "skip_verify",
+        ]
         has_valid_field = any(key in config for key in valid_fields)
         if not has_valid_field:
             logger.debug("hosts.toml不包含任何有效字段")
             return False
 
         # 验证server字段（如果存在）
-        if 'server' in config:
-            server = config['server']
+        if "server" in config:
+            server = config["server"]
             if not isinstance(server, str) or not server.strip():
                 logger.debug("server字段格式无效")
                 return False
 
-        # 验证host字段（如果存在）
-        # if 'host' in config:
+        # 验证host字段（如果存在） if 'host' in config:
         #     host = config['host']
         #     if not isinstance(host, str) or not host.strip():
         #         logger.debug("host字段格式无效")
@@ -151,7 +164,9 @@ class ContainerdCertsConfig:
                 logger.debug(f"加载配置: {repo_name} -> {config}")
 
             except Exception as e:
-                logger.error(f"加载hosts.toml失败: {hosts_toml_path}, 错误: {e}")
+                logger.error(
+                    f"加载hosts.toml失败: {hosts_toml_path}, 错误: {e}"
+                )
 
         return self._valid_hosts_configs
 
@@ -166,8 +181,8 @@ class ContainerdCertsConfig:
 
         for repo_name, config in configs.items():
             # 优先使用server字段
-            if 'server' in config:
-                server = config['server']
+            if "server" in config:
+                server = config["server"]
                 if isinstance(server, str) and server.strip():
                     servers.append(server.strip())
 
@@ -178,7 +193,9 @@ class ContainerdCertsConfig:
         # 去重
         return list(set(servers))
 
-    def find_config_for_registry(self, registry: str) -> Optional[Dict[str, Any]]:
+    def find_config_for_registry(
+        self, registry: str
+    ) -> Optional[Dict[str, Any]]:
         """查找指定镜像仓库的配置
 
         Args:
@@ -194,17 +211,19 @@ class ContainerdCertsConfig:
             return configs[registry]
 
         # 模糊匹配（去除协议前缀）
-        clean_registry = registry.replace(
-            'https://', '').replace('http://', '')
+        clean_registry = registry.replace("https://", "").replace(
+            "http://", ""
+        )
         if clean_registry in configs:
             return configs[clean_registry]
 
         # 检查server字段匹配
         for repo_name, config in configs.items():
-            server = config.get('server', '')
+            server = config.get("server", "")
             if isinstance(server, str) and server.strip():
-                clean_server = server.replace(
-                    'https://', '').replace('http://', '')
+                clean_server = server.replace("https://", "").replace(
+                    "http://", ""
+                )
                 if clean_server == clean_registry:
                     return config
 
@@ -221,18 +240,18 @@ class ContainerdCertsConfig:
 
         for repo_name, config in configs.items():
             # 检查CA证书
-            if 'ca' in config:
-                ca_path = Path(config['ca'])
+            if "ca" in config:
+                ca_path = Path(config["ca"])
                 cert_validation[f"{repo_name}.ca"] = ca_path.exists()
 
             # 检查客户端证书
-            if 'cert' in config:
-                cert_path = Path(config['cert'])
+            if "cert" in config:
+                cert_path = Path(config["cert"])
                 cert_validation[f"{repo_name}.cert"] = cert_path.exists()
 
             # 检查客户端密钥
-            if 'key' in config:
-                key_path = Path(config['key'])
+            if "key" in config:
+                key_path = Path(config["key"])
                 cert_validation[f"{repo_name}.key"] = key_path.exists()
 
         return cert_validation
@@ -245,7 +264,7 @@ class ContainerdCertsConfig:
         cert_file: Optional[str] = None,
         key_file: Optional[str] = None,
         skip_verify: bool = False,
-        capabilities: Optional[List[str]] = None
+        capabilities: Optional[List[str]] = None,
     ) -> bool:
         """创建hosts.toml配置文件
 
@@ -267,24 +286,22 @@ class ContainerdCertsConfig:
             registry_dir.mkdir(parents=True, exist_ok=True)
 
             # 构建配置
-            config: ConfigDict = ConfigDict({
-                'server': server
-            })
+            config: ConfigDict = ConfigDict({"server": server})
 
             if ca_file:
-                config['ca'] = ca_file
+                config["ca"] = ca_file
 
             if cert_file:
-                config['cert'] = cert_file
+                config["cert"] = cert_file
 
             if key_file:
-                config['key'] = key_file
+                config["key"] = key_file
 
             if skip_verify:
-                config['skip_verify'] = True
+                config["skip_verify"] = True
 
             if capabilities:
-                config['capabilities'] = capabilities
+                config["capabilities"] = capabilities
 
             # 写入文件
             hosts_toml_path = registry_dir / "hosts.toml"
@@ -312,13 +329,13 @@ class ContainerdCertsConfig:
 
         for repo_name, config in configs.items():
             info: Dict[str, Any] = {
-                'registry': repo_name,
-                'server': config.get('host', 'N/A'),
-                'has_ca': 'ca' in config,
-                'has_cert': 'cert' in config,
-                'has_key': 'key' in config,
-                'skip_verify': config.get('skip_verify', False),
-                'capabilities': config.get('capabilities', [])
+                "registry": repo_name,
+                "server": config.get("host", "N/A"),
+                "has_ca": "ca" in config,
+                "has_cert": "cert" in config,
+                "has_key": "key" in config,
+                "skip_verify": config.get("skip_verify", False),
+                "capabilities": config.get("capabilities", []),
             }
             cert_info.append(info)
 

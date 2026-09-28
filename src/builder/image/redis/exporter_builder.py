@@ -10,8 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Optional, Union
 
-from builder.image.base_builder import BaseBuilder, BuildContext, BuilderOptions
+from builder.image.base_builder import (
+    BaseBuilder,
+    BuildContext,
+    BuilderOptions,
+)
 from core.logger import get_logger
+
 logger = get_logger(__name__)
 
 
@@ -36,7 +41,7 @@ class Builder(BaseBuilder):
             "redis_exporter",
             "monitoring_tools",
             "time_series_data",
-            "redis_compatibility"
+            "redis_compatibility",
         ]
 
     def __init__(
@@ -44,7 +49,7 @@ class Builder(BaseBuilder):
         name: str,
         config_file: Optional[Union[str, Path]] = None,
         options: Optional[BuilderOptions] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         """初始化Redis Exporter镜像构建器
 

@@ -26,7 +26,9 @@ def test_private_files_preserve_lock_inode_and_restrict_permissions(runtime):
 
 
 @pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo"])
-def test_unsafe_runtime_file_is_rejected_without_modifying_target(runtime, kind):
+def test_unsafe_runtime_file_is_rejected_without_modifying_target(
+    runtime, kind
+):
     with private_runtime_file("setup.lock"):
         pass
     target = runtime / "preserve"

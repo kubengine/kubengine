@@ -42,7 +42,9 @@ def test_thread_notifications_send_on_connection_event_loop():
         socket = Socket()
         await manager.connect(socket)
         owner = asyncio.get_running_loop()
-        thread = threading.Thread(target=manager.broadcast_from_thread, args=({"status": "done"},))
+        thread = threading.Thread(
+            target=manager.broadcast_from_thread, args=({"status": "done"},)
+        )
         thread.start()
         await asyncio.wait_for(socket.sent.wait(), 1)
         thread.join(timeout=1)
@@ -58,7 +60,9 @@ def test_async_broadcast_from_another_loop_uses_owner_loop():
         socket = Socket()
         await manager.connect(socket)
         owner = asyncio.get_running_loop()
-        await asyncio.to_thread(asyncio.run, manager.broadcast({"status": "done"}))
+        await asyncio.to_thread(
+            asyncio.run, manager.broadcast({"status": "done"})
+        )
         assert socket.loops == [owner]
 
     asyncio.run(check())

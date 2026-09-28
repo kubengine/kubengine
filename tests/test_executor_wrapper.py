@@ -1,19 +1,19 @@
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-from gevent.pool import Pool
 import pytest
+from gevent.pool import Pool
 from pyinfra.api.operation import OperationMeta
 from pyinfra.connectors.util import CommandOutput, OutputLine
 
+from core.logger import bind_log_context, get_log_context
 from infra.executor_wrapper import (
     HostExecutionResult,
     HostOperationResult,
-    InfraLifecycleCallback,
     InfraExecutionResult,
     InfraFileExecutor,
+    InfraLifecycleCallback,
 )
-from core.logger import bind_log_context, get_log_context
 
 
 class FakeOperationMeta:
@@ -57,11 +57,14 @@ class FakeState:
         self.activated_hosts = set(hosts)
         self._order = [op_hash for op_hash, _ in operations]
         self._names = {
-            op_hash: SimpleNamespace(names={name}) for op_hash, name in operations
+            op_hash: SimpleNamespace(names={name})
+            for op_hash, name in operations
         }
         self._data: dict[tuple[FakeHost, str], SimpleNamespace] = {}
 
-    def add_result(self, host: FakeHost, op_hash: str, meta: FakeOperationMeta) -> None:
+    def add_result(
+        self, host: FakeHost, op_hash: str, meta: FakeOperationMeta
+    ) -> None:
         self._data[(host, op_hash)] = SimpleNamespace(operation_meta=meta)
 
     def get_op_order(self) -> list[str]:
@@ -70,15 +73,21 @@ class FakeState:
     def get_op_meta(self, op_hash: str) -> SimpleNamespace:
         return self._names[op_hash]
 
-    def get_op_data_for_host(self, host: FakeHost, op_hash: str) -> SimpleNamespace:
+    def get_op_data_for_host(
+        self, host: FakeHost, op_hash: str
+    ) -> SimpleNamespace:
         return self._data[(host, op_hash)]
 
 
-def make_result(*hosts: FakeHost, connected: bool = True) -> InfraExecutionResult:
+def make_result(
+    *hosts: FakeHost, connected: bool = True
+) -> InfraExecutionResult:
     return InfraExecutionResult(
         total_hosts=len(hosts),
         host_results={
-            str(host): HostExecutionResult(hostname=str(host), connected=connected)
+            str(host): HostExecutionResult(
+                hostname=str(host), connected=connected
+            )
             for host in hosts
         },
     )
@@ -159,7 +168,9 @@ def test_incomplete_result_is_not_reported_as_success() -> None:
 def test_empty_deployment_can_succeed() -> None:
     host = FakeHost("node-1")
     executor = InfraFileExecutor()
-    executor._state = FakeState(hosts=[host], operations=[])  # type: ignore[assignment]
+    executor._state = FakeState(  # type: ignore[assignment]
+        hosts=[host], operations=[]
+    )
     result = make_result(host)
 
     executor._collect_operation_results(result)
@@ -183,7 +194,9 @@ def test_connection_failure_makes_deployment_fail() -> None:
 
 def test_unsupported_pyinfra_state_api_is_explicit_failure() -> None:
     executor = InfraFileExecutor()
-    executor._state = SimpleNamespace(activated_hosts=set())  # type: ignore[assignment]
+    executor._state = SimpleNamespace(  # type: ignore[assignment]
+        activated_hosts=set()
+    )
 
     with pytest.raises(RuntimeError, match="Unsupported PyInfra state API"):
         executor._collect_operation_results(InfraExecutionResult())
@@ -252,7 +265,9 @@ def test_pyinfra_greenlet_inherits_log_context() -> None:
     executor._state = SimpleNamespace(pool=pool)  # type: ignore[assignment]
     executor._enable_greenlet_context_propagation()
 
-    with bind_log_context(deployment_id="dep-greenlet", component="containerd"):
+    with bind_log_context(
+        deployment_id="dep-greenlet", component="containerd"
+    ):
         context = pool.spawn(get_log_context).get()
 
     assert context == {
@@ -263,7 +278,9 @@ def test_pyinfra_greenlet_inherits_log_context() -> None:
 
 def test_infrastructure_connections_require_verified_host_keys(tmp_path):
     executor = InfraFileExecutor()
-    executor._setup_execution_environment(tmp_path / "infra.py", ["test-node"], {}, None)
+    executor._setup_execution_environment(
+        tmp_path / "infra.py", ["test-node"], {}, None
+    )
     host = executor._state.inventory.get_host("test-node")
     assert host.data.ssh_strict_host_key_checking == "yes"
 
@@ -272,10 +289,20 @@ def test_infrastructure_trust_cannot_be_disabled_by_inventory(tmp_path):
     executor = InfraFileExecutor()
     for shared, groups in (
         ({"ssh_strict_host_key_checking": "no"}, None),
-        ({}, {"worker": (["test-node"], {"ssh_strict_host_key_checking": "accept-new"})}),
+        (
+            {},
+            {
+                "worker": (
+                    ["test-node"],
+                    {"ssh_strict_host_key_checking": "accept-new"},
+                )
+            },
+        ),
     ):
         with pytest.raises(ValueError, match="strict host key checking"):
-            executor._setup_execution_environment(tmp_path / "infra.py", ["test-node"], shared, groups)
+            executor._setup_execution_environment(
+                tmp_path / "infra.py", ["test-node"], shared, groups
+            )
 
 
 def test_pyinfra_callback_records_operation_lifecycle(caplog) -> None:
@@ -285,11 +312,17 @@ def test_pyinfra_callback_records_operation_lifecycle(caplog) -> None:
 
     with caplog.at_level("INFO", logger="infra.executor_wrapper"):
         with bind_log_context(deployment_id="dep-1", component="containerd"):
-            callback.operation_host_start(state, host, "one")  # type: ignore[arg-type]
-            callback.operation_host_success(state, host, "one")  # type: ignore[arg-type]
+            callback.operation_host_start(
+                state, host, "one"  # type: ignore[arg-type]
+            )
+            callback.operation_host_success(
+                state, host, "one"  # type: ignore[arg-type]
+            )
 
     records = [record for record in caplog.records if hasattr(record, "event")]
-    assert [record.event for record in records] == [  # type: ignore[attr-defined]
+    assert [
+        record.event for record in records  # type: ignore[attr-defined]
+    ] == [
         "operation_start",
         "operation_end",
     ]
@@ -297,7 +330,9 @@ def test_pyinfra_callback_records_operation_lifecycle(caplog) -> None:
     assert records[-1].deployment_id == "dep-1"  # type: ignore[attr-defined]
     assert records[-1].component == "containerd"  # type: ignore[attr-defined]
     assert records[-1].host == "node-1"  # type: ignore[attr-defined]
-    assert records[-1].operation == "Restart service"  # type: ignore[attr-defined]
+    assert (
+        records[-1].operation  # type: ignore[attr-defined]
+    ) == "Restart service"
 
 
 def test_execute_file_records_component_and_host_terminal_events(
@@ -310,7 +345,9 @@ def test_execute_file_records_component_and_host_terminal_events(
 
     records = [record for record in caplog.records if hasattr(record, "event")]
     assert result.success is False
-    assert [record.event for record in records] == [  # type: ignore[attr-defined]
+    assert [
+        record.event for record in records  # type: ignore[attr-defined]
+    ] == [
         "component_start",
         "host_start",
         "host_end",

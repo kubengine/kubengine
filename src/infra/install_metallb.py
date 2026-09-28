@@ -1,27 +1,31 @@
 """安装metallb"""
-from io import StringIO
+
 import os
-from pyinfra.operations import server
-from pyinfra.context import host
+from io import StringIO
 
 from _offline_transfer import import_seconds, op_timeout, pull
+from pyinfra.context import host
+from pyinfra.operations import server
 
 data = host.data
 master_ip = data.master_ip
 deploy_src = data.deploy_src
 loadbalancer_ippools = data.loadbalancer_ippools
 images_file = os.path.join(
-    deploy_src, "images", "metallb.images.v0.15.2.tar.gz")
-helm_charts_dir = os.path.join(
-    deploy_src, "charts", "metallb")
+    deploy_src, "images", "metallb.images.v0.15.2.tar.gz"
+)
+helm_charts_dir = os.path.join(deploy_src, "charts", "metallb")
 
 images_budget = import_seconds(images_file)
 
 # 加载离线镜像
 if "master" not in host.groups:
     command, timeout = pull(
-        f"sftp://{master_ip}{images_file}", images_file,
-        "ctr -n k8s.io i import -", extra_seconds=images_budget)
+        f"sftp://{master_ip}{images_file}",
+        images_file,
+        "ctr -n k8s.io i import -",
+        extra_seconds=images_budget,
+    )
 else:
     command = f"ctr -n k8s.io i import {images_file}"
     timeout = op_timeout(images_file, extra_seconds=images_budget)
@@ -35,31 +39,46 @@ server.shell(
 
 if "master" in host.groups:
     commands = [
-        "KUBECONFIG=/etc/kubernetes/admin.conf helm", "upgrade", "--install", "--wait", "--timeout", "5m",
+        "KUBECONFIG=/etc/kubernetes/admin.conf helm",
+        "upgrade",
+        "--install",
+        "--wait",
+        "--timeout",
+        "5m",
         "metallb",
         helm_charts_dir,
-        "-n", "metallb-system",
+        "-n",
+        "metallb-system",
         "--create-namespace",
-        "-f", f"{helm_charts_dir}/values.yaml"
+        "-f",
+        f"{helm_charts_dir}/values.yaml",
     ]
     server.shell(name="Install metallb", commands=" ".join(commands))
-    server.shell(name='Sleep 30 seconds on remote host', commands="sleep 30", )
+    server.shell(
+        name="Sleep 30 seconds on remote host",
+        commands="sleep 30",
+    )
     # 配置ip池资源
     manifests_dir = data.manifest_dir
     server.files.directory(
-        name="Create manifests directory", path=manifests_dir)
+        name="Create manifests directory", path=manifests_dir
+    )
     ippool_manifests_file = os.path.join(manifests_dir, "metallb-ippool.yaml")
     ippool_manifests_template_file = os.path.join(
-        deploy_src, "templates", "metallb-ippool.yaml.j2")
+        deploy_src, "templates", "metallb-ippool.yaml.j2"
+    )
     server.files.template(
         name="Gen metallb-ippool.yaml manifests file",
         src=ippool_manifests_template_file,
         dest=ippool_manifests_file,
-        loadbalancer_ippool=loadbalancer_ippools
+        loadbalancer_ippool=loadbalancer_ippools,
     )
     server.shell(
         name="Config LoadBalancer ippool",
-        commands=f"KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f {ippool_manifests_file}"
+        commands=(
+            "KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f "
+            f"{ippool_manifests_file}"
+        ),
     )
 
     # empty-l2-advertisement
@@ -75,9 +94,12 @@ spec:
   ipAddressPools:
   - loadbalancer-pool
   # 不指定任何节点，意味着不在任何节点上为该IP池启用Layer2广播
-  nodeSelectors: []""")
+  nodeSelectors: []"""),
     )
     server.shell(
         name="Empty l2 advertisement",
-        commands=f"KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f {manifests_dir}/empty-l2-advertisement.yaml"
+        commands=(
+            "KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f "
+            f"{manifests_dir}/empty-l2-advertisement.yaml"
+        ),
     )

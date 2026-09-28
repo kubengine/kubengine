@@ -1,5 +1,5 @@
-import time
 import logging
+import time
 from pathlib import Path
 
 from core.command import execute_command
@@ -8,10 +8,7 @@ from core.logger import bind_log_context
 
 def test_timeout_kills_command_process_group(tmp_path: Path) -> None:
     marker = tmp_path / "orphan-survived"
-    command = (
-        "(trap '' TERM; sleep 1; "
-        f"touch '{marker}') & wait"
-    )
+    command = "(trap '' TERM; sleep 1; " f"touch '{marker}') & wait"
 
     result = execute_command(command, timeout=0.1, log_output=False)
 
@@ -22,7 +19,9 @@ def test_timeout_kills_command_process_group(tmp_path: Path) -> None:
 
 
 def test_command_captures_output() -> None:
-    result = execute_command("printf 'hello'; printf 'problem' >&2", log_output=False)
+    result = execute_command(
+        "printf 'hello'; printf 'problem' >&2", log_output=False
+    )
 
     assert result.is_success()
     assert result.stdout == "hello"
@@ -32,7 +31,10 @@ def test_command_captures_output() -> None:
 def test_command_passes_log_context_to_child_process() -> None:
     with bind_log_context(request_id="req-child", task_id=12):
         result = execute_command(
-            "printf '%s:%s' \"$KUBENGINE_LOG_REQUEST_ID\" \"$KUBENGINE_LOG_TASK_ID\"",
+            (
+                "printf '%s:%s' \"$KUBENGINE_LOG_REQUEST_ID\" "
+                '"$KUBENGINE_LOG_TASK_ID"'
+            ),
             log_output=False,
         )
 
@@ -46,7 +48,9 @@ def test_command_lifecycle_records_success(caplog) -> None:
 
     records = [record for record in caplog.records if hasattr(record, "event")]
     assert result.is_success()
-    assert [record.event for record in records] == [  # type: ignore[attr-defined]
+    assert [
+        record.event for record in records  # type: ignore[attr-defined]
+    ] == [
         "command_start",
         "command_end",
     ]
@@ -68,7 +72,9 @@ def test_command_lifecycle_records_failure_at_error_level(caplog) -> None:
         record for record in caplog.records if hasattr(record, "event")
     ]
     start_record = next(
-        record for record in lifecycle_records if record.event == "command_start"
+        record
+        for record in lifecycle_records
+        if record.event == "command_start"
     )
     end_record = next(
         record for record in lifecycle_records if record.event == "command_end"
@@ -77,12 +83,20 @@ def test_command_lifecycle_records_failure_at_error_level(caplog) -> None:
     assert end_record.levelno == logging.ERROR
     assert end_record.status == "failed"  # type: ignore[attr-defined]
     assert end_record.exit_code == 7  # type: ignore[attr-defined]
-    assert end_record.stderr_bytes == len(result.stderr.encode("utf-8"))  # type: ignore[attr-defined]
+    assert (end_record.stderr_bytes) == len(  # type: ignore[attr-defined]
+        result.stderr.encode("utf-8")
+    )
     assert end_record.error == "final error"  # type: ignore[attr-defined]
-    assert start_record.command_id == end_record.command_id  # type: ignore[attr-defined]
-    assert end_record.command_id.startswith("local-")  # type: ignore[attr-defined]
+    assert (
+        start_record.command_id  # type: ignore[attr-defined]
+    ) == end_record.command_id  # type: ignore[attr-defined]
+    assert end_record.command_id.startswith(  # type: ignore[attr-defined]
+        "local-"
+    )
     assert end_record.executor == "local"  # type: ignore[attr-defined]
-    assert end_record.operation == "install_package"  # type: ignore[attr-defined]
+    assert (
+        end_record.operation  # type: ignore[attr-defined]
+    ) == "install_package"
 
 
 def test_command_lifecycle_marks_timeout(caplog) -> None:

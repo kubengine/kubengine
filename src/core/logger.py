@@ -1,22 +1,37 @@
-import logging
-import inspect
 import fcntl
+import inspect
+import logging
 import os
 import re
-from pathlib import Path
-from logging.handlers import TimedRotatingFileHandler
 import sys
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-import time
-from typing import Any, Callable, Iterator, Mapping, Optional, TextIO, TypeVar, cast
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
+from typing import (
+    Any,
+    Callable,
+    Iterator,
+    Mapping,
+    Optional,
+    TextIO,
+    TypeVar,
+    cast,
+)
 from uuid import uuid4
 
-from core.config.application import Application
-from core.redaction import command_secrets, redact_text, redact_value, safe_command
 # 新增：导入Rich日志处理器和控制台类型（适配rich）
 from rich.console import Console
+
+from core.config.application import Application
+from core.redaction import (
+    command_secrets,
+    redact_text,
+    redact_value,
+    safe_command,
+)
 
 LOG_CONTEXT_FIELDS = (
     "request_id",
@@ -31,7 +46,9 @@ LOG_CONTEXT_FIELDS = (
     "transfer_id",
 )
 _LOG_CONTEXT_ENV_PREFIX = "KUBENGINE_LOG_"
-_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+_ANSI_ESCAPE_PATTERN = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))"
+)
 
 
 def _context_from_environment() -> dict[str, str]:
@@ -39,7 +56,11 @@ def _context_from_environment() -> dict[str, str]:
     return {
         field: value
         for field in LOG_CONTEXT_FIELDS
-        if (value := os.environ.get(f"{_LOG_CONTEXT_ENV_PREFIX}{field.upper()}"))
+        if (
+            value := os.environ.get(
+                f"{_LOG_CONTEXT_ENV_PREFIX}{field.upper()}"
+            )
+        )
     }
 
 
@@ -104,7 +125,9 @@ def with_log_context(**field_sources: str) -> Callable[[F], F]:
     def decorator(func: F) -> F:
         signature = inspect.signature(func)
 
-        def resolve(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+        def resolve(
+            args: tuple[Any, ...], kwargs: dict[str, Any]
+        ) -> dict[str, Any]:
             arguments = signature.bind_partial(*args, **kwargs).arguments
             return {
                 field: arguments.get(parameter)
@@ -112,6 +135,7 @@ def with_log_context(**field_sources: str) -> Callable[[F], F]:
             }
 
         if inspect.iscoroutinefunction(func):
+
             @wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 with bind_log_context(**resolve(args, kwargs)):
@@ -136,6 +160,7 @@ def with_new_log_context(field: str, prefix: str = "") -> Callable[[F], F]:
 
     def decorator(func: F) -> F:
         if inspect.iscoroutinefunction(func):
+
             @wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 value = f"{prefix}{uuid4().hex}"
@@ -159,12 +184,18 @@ _STANDARD_RECORD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__)
 
 
 def _redact_log_record(record: logging.LogRecord) -> tuple[str, ...]:
-    """Remove credentials from messages, extras and cached exception text."""
+    """
+    Remove credentials from messages, extras and cached exception text.
+    """
     message = record.getMessage()
     command = getattr(record, "command", None)
     secrets = (
         *command_secrets(message),
-        *(command_secrets(command) if isinstance(command, (str, list, tuple)) else ()),
+        *(
+            command_secrets(command)
+            if isinstance(command, (str, list, tuple))
+            else ()
+        ),
     )
     record.msg = redact_text(message, secrets)
     record.args = ()
@@ -177,7 +208,8 @@ def _redact_log_record(record: logging.LogRecord) -> tuple[str, ...]:
         record.exc_text = redact_text(
             logging.Formatter().formatException(record.exc_info), secrets
         )
-        # A structured handler must not retain the original exception object.
+        # A structured handler must not retain the original exception
+        # object.
         record.exc_info = None
     elif record.exc_text:
         record.exc_text = redact_text(record.exc_text, secrets)
@@ -298,17 +330,18 @@ class MultiProcessFileHandler(logging.FileHandler):
 class MultiProcessTimedRotatingFileHandler(TimedRotatingFileHandler):
     """通过进程锁协调写入和按时间轮转的文件处理器。
 
-    标准 ``TimedRotatingFileHandler`` 只提供线程锁。多个 Uvicorn
-    worker 共用日志路径时，可能重复轮转，或继续写入已改名文件。
-    本处理器使用独立 ``.lock`` 文件串行化关键区，并在每次写入前
-    比对文件 inode，发现其他进程已轮转时自动重开当前日志。
+    标准 ``TimedRotatingFileHandler`` 只提供线程锁。多个 Uvicorn worker
+    共用日志路径时，可能重复轮转，或继续写入已改名文件。 本处理器使用独立 ``.lock`` 文件串行化关键区，并在每次写入前 比对文件
+    inode，发现其他进程已轮转时自动重开当前日志。
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._coordinator = _InterProcessFileLock(self.baseFilename)
 
-    def _refresh_rollover_after_external_rotation(self, current_time: int) -> None:
+    def _refresh_rollover_after_external_rotation(
+        self, current_time: int
+    ) -> None:
         """其他进程已轮转时，将下次轮转时间推进到未来。"""
         next_rollover = self.computeRollover(current_time)
         while next_rollover <= current_time:
@@ -322,7 +355,9 @@ class MultiProcessTimedRotatingFileHandler(TimedRotatingFileHandler):
                 replaced = _reopen_file_handler_if_replaced(self)
                 current_time = int(time.time())
                 if replaced and current_time >= self.rolloverAt:
-                    self._refresh_rollover_after_external_rotation(current_time)
+                    self._refresh_rollover_after_external_rotation(
+                        current_time
+                    )
                 if self.shouldRollover(record):
                     self.doRollover()
                 logging.FileHandler.emit(self, record)
@@ -352,11 +387,12 @@ class GlobalLoggerManager:
         level: Optional[str] = None,
         log_file: Optional[str] = None,
         console_output: Optional[bool] = None,
-        rich_console: Optional[Console] = None  # 新增：支持传入外部Rich Console实例
+        rich_console: Optional[
+            Console
+        ] = None,  # 新增：支持传入外部Rich Console实例
     ) -> None:
-        """
-        配置全局日志（幂等操作：多次调用仅生效一次）
-        :param rich_console: 外部Rich Console实例，用于统一日志/进度条输出载体
+        """配置全局日志（幂等操作：多次调用仅生效一次） :param rich_console: 外部Rich
+        Console实例，用于统一日志/进度条输出载体
         """
         if self._configured:
             logging.getLogger(__name__).debug("全局日志已配置，跳过重复初始化")
@@ -368,12 +404,15 @@ class GlobalLoggerManager:
         # 1. 重置根Logger
         root_logger = logging.getLogger()
         root_logger.setLevel(
-            getattr(logging, level or Application.LOGGER_CONFIG.LEVEL.upper()))
+            getattr(logging, level or Application.LOGGER_CONFIG.LEVEL.upper())
+        )
         root_logger.handlers.clear()
 
         # 2. 创建格式化器（保留原有配置，RichHandler兼容原生格式）
         formatter = ReadableFormatter(
-            fmt=Application.LOGGER_CONFIG.FORMAT, datefmt=Application.LOGGER_CONFIG.DATE_FORMAT)
+            fmt=Application.LOGGER_CONFIG.FORMAT,
+            datefmt=Application.LOGGER_CONFIG.DATE_FORMAT,
+        )
 
         # 3. 配置控制台输出【核心修改：替换为RichHandler，适配rich生态，移除stream参数】
         # if console_output:
@@ -387,7 +426,7 @@ class GlobalLoggerManager:
         #         show_path=False,  # 隐藏文件路径（简化CLI输出，可根据需要开启）
         #         rich_tracebacks=False,
         #         enable_link_path=False,  # 关闭路径链接（避免多余样式）
-        #         log_time_format="%Y-%m-%d %H:%M:%S",  # 兼容低版本Rich的时间格式参数
+        # log_time_format="%Y-%m-%d %H:%M:%S",  # 兼容低版本Rich的时间格式参数
         #     )
         #     console_handler.setFormatter(formatter)
         #     root_logger.addHandler(console_handler)
@@ -408,8 +447,10 @@ class GlobalLoggerManager:
         # 标记配置完成
         self._configured = True
         root_logger.info(
-            f"全局日志初始化完成 | 级别: {level or Application.LOGGER_CONFIG.LEVEL} | "
-            f"日志文件: {log_file or '无'} | 轮转: {Application.LOGGER_CONFIG.ROTATE_ENABLE}"
+            "全局日志初始化完成 | 级别:"
+            f" {level or Application.LOGGER_CONFIG.LEVEL} | 日志文件:"
+            f" {log_file or '无'} | 轮转:"
+            f" {Application.LOGGER_CONFIG.ROTATE_ENABLE}"
         )
 
     def _setup_file_handler(
@@ -433,7 +474,8 @@ class GlobalLoggerManager:
             file_handler.suffix = "%Y-%m-%d.log"
         else:
             file_handler = MultiProcessFileHandler(
-                log_path, mode="a", encoding="utf-8")
+                log_path, mode="a", encoding="utf-8"
+            )
 
         file_handler.setFormatter(formatter)
         file_handler.addFilter(LogContextFilter())
@@ -441,11 +483,13 @@ class GlobalLoggerManager:
 
     def _setup_third_party_loggers(self) -> None:
         """统一第三方日志级别和输出通道，避免重复记录。"""
-        for logger_name, level in Application.LOGGER_CONFIG.THIRD_PARTY_LOG_LEVELS.items():
+        for (
+            logger_name,
+            level,
+        ) in Application.LOGGER_CONFIG.THIRD_PARTY_LOG_LEVELS.items():
             third_logger = logging.getLogger(logger_name)
             third_logger.setLevel(getattr(logging, str(level).upper()))
-            # 由根 Logger 统一格式化和落盘，避免库自带 Handler
-            # 与应用 Handler 同时输出同一条日志。
+            # 由根 Logger 统一格式化和落盘，避免库自带 Handler 与应用 Handler 同时输出同一条日志。
             third_logger.handlers.clear()
             third_logger.propagate = True
 
@@ -453,25 +497,30 @@ class GlobalLoggerManager:
 def setup_fastapi_logging(
     level: Optional[str] = None,
     log_file: Optional[str] = None,
-    console_output: Optional[bool] = None
+    console_output: Optional[bool] = None,
 ) -> None:
     """FastAPI场景快捷配置【完全保留原有代码】"""
     GlobalLoggerManager().setup(
-        level, log_file or f"{Application.ROOT_DIR}/logs/web.log", console_output)
+        level,
+        log_file or f"{Application.ROOT_DIR}/logs/web.log",
+        console_output,
+    )
 
 
 def setup_cli_logging(
     level: Optional[str] = None,
     log_file: Optional[str] = None,
     console_output: Optional[bool] = None,
-    rich_console: Optional[Console] = None  # 新增：透传Rich Console实例到setup方法
+    rich_console: Optional[
+        Console
+    ] = None,  # 新增：透传Rich Console实例到setup方法
 ) -> None:
     """CLI场景快捷配置（调试级别、轮转）【新增rich_console参数】"""
     GlobalLoggerManager().setup(
         level,
         log_file or f"{Application.ROOT_DIR}/logs/cli.log",
         console_output,
-        rich_console=rich_console  # 透传外部Console
+        rich_console=rich_console,  # 透传外部Console
     )
 
 
@@ -489,13 +538,18 @@ def log_lifecycle_event(
 ) -> None:
     """记录字段稳定的生命周期事件。
 
-    当前文件日志仍是人类可读格式，因此同时将字段写入消息和
-    ``LogRecord``。后续切换 JSON formatter 时可直接复用这些字段。
+    当前文件日志仍是人类可读格式，因此同时将字段写入消息和 ``LogRecord``。后续切换 JSON formatter
+    时可直接复用这些字段。
     """
     command = fields.get("command")
-    secrets = command_secrets(command) if isinstance(command, (str, list, tuple)) else ()
+    secrets = (
+        command_secrets(command)
+        if isinstance(command, (str, list, tuple))
+        else ()
+    )
     explicit_fields = redact_value(
-        {key: value for key, value in fields.items() if value is not None}, secrets
+        {key: value for key, value in fields.items() if value is not None},
+        secrets,
     )
     if isinstance(command, (str, list, tuple)):
         explicit_fields["command"] = safe_command(command)
