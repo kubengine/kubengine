@@ -6,8 +6,11 @@ include README.md
 include LICENSE.txt
 include pyproject.toml
 
-# 包含配置文件
-recursive-include config *.yaml *.yml *.json *.toml
+# Only the anonymous release template; never include live deployment config.
+prune config
+include config/application.example.yaml
+exclude config/application.yaml
+prune config/certs
 
 # 包含 Builder 配置文件
 recursive-include src/builder *.yaml
@@ -47,6 +50,14 @@ global-exclude .DS_Store
 global-exclude *.log
 global-exclude *.db
 global-exclude *.sqlite
+global-exclude *.sqlite3
+global-exclude *.key
+global-exclude *.pem
+global-exclude *.p12
+global-exclude *.pfx
+global-exclude *.token
+global-exclude id_rsa
+global-exclude id_ed25519
 global-exclude .pytest_cache
 global-exclude .mypy_cache
 global-exclude .coverage

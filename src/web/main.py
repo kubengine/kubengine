@@ -13,6 +13,7 @@ import os
 import platform
 import re
 import sys
+from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable
 from uuid import uuid4
 
@@ -176,7 +177,12 @@ async def validation_exception_handler(
     Returns:
         标准错误响应
     """
-    errors = exc.errors()
+    # Validation errors may contain the complete submitted body in `input`,
+    # including login passwords, SSH keys and application credentials.
+    errors = [
+        {key: error[key] for key in ("loc", "type", "msg") if key in error}
+        for error in exc.errors()
+    ]
     logger.warning(f"参数校验失败: {errors}")
     return error_response(
         message=f"参数校验失败: {errors}",
@@ -263,6 +269,20 @@ async def general_exception_handler(
 # ============================ 路由处理器 ============================
 
 
+def _resolve_static_path(relative_path: str) -> Path:
+    """Resolve root-level assets without following paths outside the static root."""
+    path = Path(relative_path)
+    if path.is_absolute() or ".." in path.parts:
+        raise HTTPException(status_code=404, detail="Not Found")
+    try:
+        static_root = Path(STATIC_DIR).resolve()
+        resolved = (static_root / path).resolve()
+        resolved.relative_to(static_root)
+    except (OSError, RuntimeError, ValueError):
+        raise HTTPException(status_code=404, detail="Not Found") from None
+    return resolved
+
+
 @app.get("/")
 async def serve_index():
     """
@@ -273,7 +293,7 @@ async def serve_index():
     Returns:
         index.html 文件响应
     """
-    index_path = os.path.join(STATIC_DIR, "index.html")
+    index_path = _resolve_static_path("index.html")
     return FileResponse(index_path)
 
 
@@ -292,7 +312,7 @@ async def spa_fallback(full_path: str):
         静态文件响应或 404 错误
     """
     # 排除 API 路径（避免 API 被前端路由接管）
-    if full_path.startswith("api/"):
+    if full_path == "api" or full_path.startswith("api/"):
         logger.debug(f"API 路径未找到: {full_path}")
         return error_response(
             message="Not Found",
@@ -300,12 +320,13 @@ async def spa_fallback(full_path: str):
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
-    # 判断是否是静态文件请求（包含文件扩展名）
+    # Resolve before deciding whether this is an asset or a client-side route.
+    # This also rejects symlinks which would escape the static directory.
+    file_path = _resolve_static_path(full_path)
     if "." in full_path:
-        file_path = os.path.join(STATIC_DIR, full_path)
-        if os.path.exists(file_path):
+        if file_path.is_file():
             return FileResponse(file_path)
 
     # 返回 index.html，让前端路由处理
-    index_path = os.path.join(STATIC_DIR, "index.html")
+    index_path = _resolve_static_path("index.html")
     return FileResponse(index_path)

@@ -101,37 +101,10 @@ create_source_tarball() {
 
     local tarball_name="${PROJECT_NAME}-${VERSION}.tar.gz"
 
-    # 临时目录
-    local tmp_dir=$(mktemp -d)
-    trap "rm -rf ${tmp_dir}" EXIT
-
-    # 复制项目文件
-    local src_dir="${tmp_dir}/${PROJECT_NAME}-${VERSION}"
-    mkdir -p "${src_dir}"
-
-    # 复制必要文件
-    rsync -av \
-        --exclude='*.pyc' \
-        --exclude='__pycache__' \
-        --exclude='.git' \
-        --exclude='.gitignore' \
-        --exclude='.pytest_cache' \
-        --exclude='*.egg-info' \
-        --exclude='.mypy_cache' \
-        --exclude='build/' \
-        --exclude='dist/' \
-        --exclude='*.log' \
-        --exclude='logs/' \
-        --exclude='*.db' \
-        --exclude='.venv' \
-        --exclude='venv/' \
-        --exclude='env/' \
-        --exclude='.continue/' \
-        --exclude='.vscode/' \
-        ./ "${src_dir}/"
-
-    # 创建 tarball
-    tar -czf "${tarball_name}" -C "${tmp_dir}" "${PROJECT_NAME}-${VERSION}"
+    # Export only approved files from the committed tree. Untracked files,
+    # live configuration, private keys, tokens, and runtime state are excluded.
+    python${PYTHON_VERSION} scripts/create_source_archive.py \
+        --repo . --prefix "${PROJECT_NAME}-${VERSION}" --output "${tarball_name}"
 
     # 移动到 SOURCES 目录
     mv "${tarball_name}" ~/rpmbuild/SOURCES/

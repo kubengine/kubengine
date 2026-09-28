@@ -5,8 +5,11 @@ creating, updating, and executing background tasks with security controls.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime
 import enum
+import fcntl
+import importlib
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -14,6 +17,7 @@ from sqlalchemy import JSON, Column, DateTime, Enum, Integer, String, Text
 from sqlalchemy.orm import Query
 
 from core.logger import get_logger, with_log_context
+from core.runtime_files import private_runtime_file
 from core.orm.engine import Base, get_db
 
 logger = get_logger(__name__)
@@ -86,11 +90,15 @@ class TaskSchema(BaseModel):
         arbitrary_types_allowed = True
 
 
-# Security whitelist for allowed task function paths
-_ALLOWED_TASK_FUNCTIONS = {
-    "web.api.app.deploy_app",
-    "web.api.app.update_app",
-    "web.api.app.delete_app",
+# Persist stable operation names, rather than HTTP handler import paths.
+APP_DEPLOY_TASK = "app.deploy"
+APP_CLEANUP_TASK = "app.cleanup"
+_TASK_HANDLERS = {
+    APP_DEPLOY_TASK: ("web.api.app", "deploy_app"),
+    APP_CLEANUP_TASK: ("web.api.app", "clean_up_cluster"),
+    # These unambiguous names were accepted by older recovery code.
+    "web.api.app.deploy_app": ("web.api.app", "deploy_app"),
+    "web.api.app.clean_up_cluster": ("web.api.app", "clean_up_cluster"),
 }
 
 
@@ -112,6 +120,8 @@ def create_task_record(
     Raises:
         Exception: When database operation fails
     """
+    if task_func_path not in _TASK_HANDLERS:
+        raise ValueError(f"Unknown task operation: {task_func_path}")
     try:
         with get_db() as db:
             task = Task(
@@ -156,8 +166,7 @@ def update_task_record_status(
             task = db.query(Task).filter(Task.task_id == task_id).first()
             if task:
                 task.status = status  # type: ignore
-                if error_msg is not None:
-                    task.error_msg = error_msg  # type: ignore
+                task.error_msg = error_msg  # type: ignore
                 task.updated_time = datetime.now()  # type: ignore
 
                 db.commit()
@@ -216,7 +225,7 @@ def recover_unfinished_tasks_async() -> None:
         # Create thread pool with controlled concurrency
         with ThreadPoolExecutor(max_workers=4) as executor:
             for task in unfinished_tasks:
-                if task.task_id and task.task_func_path and task.params:
+                if task.task_id and task.task_func_path and task.params is not None:
                     executor.submit(
                         _execute_and_log_task,
                         task.task_id,
@@ -243,70 +252,78 @@ def _execute_and_log_task(
         task_params: Function parameters
     """
     try:
-        execute_task_function(task_id, task_func_path, task_params)
+        execute_task_function(task_id, task_func_path, task_params, recover_running=True)
         logger.info(f"Task {task_id} recovered and executed successfully")
     except Exception as e:
         logger.error(f"Task {task_id} recovery failed: {str(e)}")
+
+
+@contextmanager
+def _operation_lock(key: str, *, blocking: bool = True):
+    """Coordinate API threads and the recovery process on this installation."""
+    with private_runtime_file(f"{key}.lock") as lock:
+        flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+        try:
+            fcntl.flock(lock.fileno(), flags)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _claim_task(task_id: int, recover_running: bool) -> bool:
+    statuses = [TaskStatus.pending]
+    if recover_running:
+        statuses.append(TaskStatus.running)
+    with get_db() as db:
+        count = db.query(Task).filter(
+            Task.task_id == task_id, Task.status.in_(statuses),
+        ).update({"status": TaskStatus.running, "error_msg": None, "updated_time": datetime.now()},
+                 synchronize_session=False)
+        db.commit()
+        return count == 1
 
 
 @with_log_context(task_id="task_id")
 def execute_task_function(
     task_id: int,
     task_func_path: str,
-    task_params: Dict[str, Any]
+    task_params: Dict[str, Any],
+    *,
+    recover_running: bool = False,
 ) -> None:
-    """Dynamically execute specified task function with security validation.
+    """Run an explicitly registered operation and own its terminal task state.
 
-    Args:
-        task_id: Task ID for status tracking
-        task_func_path: Task function path (e.g., "task_functions.run_demo_task")
-        task_params: Task function parameters
-
-    Raises:
-        ValueError: When function path is invalid or unauthorized
-        ImportError: When module or function cannot be loaded
-        Exception: When function execution fails
+    The task lock prevents recovery from replaying a still-running API task.
+    The resource lock serializes deploy/delete actions for the same cluster.
+    OS locks are released after crashes, so interrupted work can be reclaimed.
     """
-    # 1. Security validation: check against whitelist
-    if task_func_path not in _ALLOWED_TASK_FUNCTIONS:
-        error_msg = f"Unauthorized function execution attempt: {task_func_path}"
-        logger.error(error_msg)
-        update_task_record_status(task_id, TaskStatus.failed, error_msg)
-        raise ValueError(error_msg)
-
-    # 2. Parse module and function name
-    try:
-        module_name, func_name = task_func_path.rsplit(".", 1)
-    except ValueError:
-        error_msg = f"Invalid function path format: {task_func_path}"
-        logger.error(error_msg)
-        update_task_record_status(task_id, TaskStatus.failed, error_msg)
-        raise ValueError(error_msg)
-
-    # 3. Dynamic module and function import
-    try:
-        module = __import__(module_name, fromlist=[func_name])
-        task_func = getattr(module, func_name)
-    except (ImportError, AttributeError) as e:
-        error_msg = f"Failed to load function {task_func_path}: {str(e)}"
-        logger.error(error_msg)
-        update_task_record_status(task_id, TaskStatus.failed, error_msg)
-        raise ImportError(error_msg)
-
-    # 4. Update status to running before execution
-    update_task_record_status(task_id, TaskStatus.running)
-
-    # 5. Execute task function
-    try:
-        logger.info(f"Executing task {task_id}: {task_func_path}")
-        task_func(task_id, **task_params)
-
-        # Mark as successful
-        update_task_record_status(task_id, TaskStatus.success)
-        logger.info(f"Task {task_id} completed successfully")
-
-    except Exception as e:
-        error_msg = f"Task function execution failed: {str(e)}"
-        logger.error(error_msg)
-        update_task_record_status(task_id, TaskStatus.failed, error_msg)
-        raise
+    with _operation_lock(f"task-{int(task_id)}", blocking=False) as acquired:
+        if not acquired:
+            return
+        if not _claim_task(task_id, recover_running):
+            return
+        try:
+            if task_func_path == "api.app.deploy_app":
+                raise ValueError(
+                    "Legacy task operation is ambiguous (deployment or deletion). "
+                    "Resources and management records are retained; reconcile the release manually."
+                )
+            if task_func_path not in _TASK_HANDLERS:
+                raise ValueError(f"Unknown task operation: {task_func_path}")
+            cluster_id = task_params.get("cluster_id")
+            if not isinstance(cluster_id, int) or isinstance(cluster_id, bool) or cluster_id <= 0:
+                raise ValueError("Task requires a positive cluster_id")
+            module_name, function_name = _TASK_HANDLERS[task_func_path]
+            task_func = getattr(importlib.import_module(module_name), function_name)
+            with _operation_lock(f"cluster-{cluster_id}"):
+                task_func(task_id, **task_params)
+            update_task_record_status(task_id, TaskStatus.success)
+            logger.info("Task %s completed successfully", task_id)
+        except Exception as exc:
+            update_task_record_status(task_id, TaskStatus.failed, str(exc))
+            logger.exception("Task %s failed", task_id)
+            raise

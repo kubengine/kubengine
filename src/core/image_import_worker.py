@@ -5,8 +5,8 @@ lease while a job is running, and can reclaim jobs after a crash.
 """
 
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime
 import os
-from pathlib import Path
 import signal
 import socket
 import threading
@@ -15,8 +15,11 @@ from typing import Dict
 from uuid import uuid4
 
 from core.logger import get_logger, with_log_context
+from core.runtime_files import private_runtime_file, runtime_path
 from core.orm.engine import Base, engine
 from core.orm.image_import import (
+    ImageImportLease,
+    ImageImportLeaseLost,
     claim_next_image_import_task,
     ensure_image_import_schema,
     renew_image_import_lease,
@@ -24,7 +27,7 @@ from core.orm.image_import import (
 )
 
 logger = get_logger(__name__)
-WORKER_HEARTBEAT_PATH = Path("/tmp/kubengine-image-import-worker.heartbeat")
+WORKER_HEARTBEAT_PATH = runtime_path("image-import-worker.heartbeat")
 
 
 class ImageImportWorker:
@@ -52,44 +55,60 @@ class ImageImportWorker:
         self._stop.set()
 
     @with_log_context(task_id="task_id")
-    def _heartbeat(self, task_id: int, done: threading.Event) -> None:
+    def _heartbeat(
+        self, task_id: int, lease: ImageImportLease,
+        done: threading.Event, lease_lost: threading.Event,
+    ) -> None:
         interval = max(10.0, self.lease_seconds / 3)
         while not done.wait(interval):
             try:
                 if not renew_image_import_lease(
-                    task_id, self.worker_id, self.lease_seconds
+                    task_id, lease.owner, self.lease_seconds, lease.attempt
                 ):
                     logger.warning("Lost lease for image-import task %s", task_id)
+                    lease_lost.set()
                     return
             except Exception:
                 logger.exception("Failed to renew lease for image-import task %s", task_id)
+                # Fail closed; the durable row can be reclaimed on expiry.
+                lease_lost.set()
+                return
 
     @with_log_context(task_id="task_id")
-    def _run_task(self, task_id: int, retry_failed: bool) -> None:
+    def _run_task(
+        self, task_id: int, retry_failed: bool, lease: ImageImportLease
+    ) -> None:
         # Import lazily so the worker process, rather than every web worker,
         # loads the image-processing service and its CLI dependencies.
         from web.api.artifacts import process_image_import_task
 
         heartbeat_done = threading.Event()
+        lease_lost = threading.Event()
         heartbeat = threading.Thread(
             target=self._heartbeat,
-            args=(task_id, heartbeat_done),
+            args=(task_id, lease, heartbeat_done, lease_lost),
             daemon=True,
             name=f"image-import-heartbeat-{task_id}",
         )
         heartbeat.start()
         try:
-            process_image_import_task(task_id, retry_failed=retry_failed)
+            process_image_import_task(
+                task_id, retry_failed=retry_failed, lease=lease, lease_lost=lease_lost
+            )
+        except ImageImportLeaseLost:
+            logger.warning("Stopped stale image-import attempt for task %s", task_id)
         except BaseException as exc:
             logger.exception("Image-import task %s escaped worker boundary", task_id)
-            update_image_import_task(
-                task_id,
-                status="failed",
-                error_message=f"worker failure: {exc}",
-                lease_owner=None,
-                lease_expires_at=None,
-                heartbeat_at=None,
-            )
+            # Do not convert a process interruption into a completed retry;
+            # keep its item state recoverable until a later claim takes over.
+            try:
+                update_image_import_task(
+                    task_id, lease=lease,
+                    error_message=f"worker interrupted: {exc}",
+                    lease_expires_at=datetime.now(),
+                )
+            except ImageImportLeaseLost:
+                logger.warning("Ignored failure from stale attempt for task %s", task_id)
         finally:
             heartbeat_done.set()
             heartbeat.join(timeout=2)
@@ -106,7 +125,8 @@ class ImageImportWorker:
         )
         try:
             while not self._stop.is_set():
-                WORKER_HEARTBEAT_PATH.write_text(self.worker_id, encoding="utf-8")
+                with private_runtime_file("image-import-worker.heartbeat", truncate=True) as heartbeat:
+                    heartbeat.write(self.worker_id)
                 for future, task_id in list(self._futures.items()):
                     if future.done():
                         try:
@@ -126,6 +146,7 @@ class ImageImportWorker:
                         self._run_task,
                         task_id,
                         bool(task.get("retry_failed")),
+                        ImageImportLease(self.worker_id, int(task["attempt_count"])),
                     )
                     self._futures[future] = task_id
                     logger.info("Claimed image-import task %s", task_id)

@@ -13,10 +13,11 @@
 import fcntl
 import json
 import os
-import shlex
 import shutil
 import sys
 import tarfile
+import tempfile
+import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path as FilePath
@@ -40,7 +41,11 @@ from core.command import execute_command
 from core.config.application import Application
 from core.http_api_client.harbor_client import HarborClient
 from core.logger import get_logger, with_log_context
+from core.runtime_files import private_runtime_file
 from core.orm.image_import import (
+    ImageImportLease,
+    ImageImportLeaseLost,
+    assert_image_import_lease,
     create_image_import_task,
     find_image_import_task,
     find_image_import_tasks,
@@ -275,8 +280,7 @@ def _inspect_image_archive(file_path: str) -> dict[str, str]:
 @contextmanager
 def _image_import_lock():
     """Serialize access to the shared apps containerd namespace."""
-    lock_path = FilePath("/tmp/kubengine-image-import.lock")
-    with lock_path.open("w", encoding="utf-8") as lock_file:
+    with private_runtime_file("image-import.lock") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
             yield
@@ -633,75 +637,64 @@ async def upload_chart(
     ALLOWED_EXTENSIONS: Set[str] = {"tgz", "tar.gz"}
     MAX_SIZE_MB = 2
 
-    # 1. 验证文件扩展名
-    if not _validate_file_extension(file.filename, ALLOWED_EXTENSIONS):
-        raise HTTPException(
-            status_code=400,
-            detail=f"文件类型不允许！仅支持：{','.join(ALLOWED_EXTENSIONS)}",
-        )
-
-    # 2. 验证文件大小
-    if not _check_file_size(file, MAX_SIZE_MB):
-        raise HTTPException(
-            status_code=400,
-            detail=f"文件大小超过限制！最大支持 {MAX_SIZE_MB}MB",
-        )
-
-    # 3. 保存文件到本地
-    file_path = os.path.join("/tmp", file.filename or "")
     try:
-        # 流式写入（避免大文件占用过多内存）
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
-        logger.error(f"文件保存失败：{str(e)}")
-        raise HTTPException(status_code=500, detail=f"文件保存失败：{str(e)}")
+        if not _validate_file_extension(file.filename, ALLOWED_EXTENSIONS):
+            raise HTTPException(
+                status_code=400,
+                detail=f"文件类型不允许！仅支持：{','.join(ALLOWED_EXTENSIONS)}",
+            )
+
+        def _push_chart() -> dict[str, Any]:
+            if not _check_file_size(file, MAX_SIZE_MB):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"文件大小超过限制！最大支持 {MAX_SIZE_MB}MB",
+                )
+
+            # The client filename is metadata only. Each upload owns its private
+            # directory, including cleanup on copy errors and failed pushes.
+            with tempfile.TemporaryDirectory(prefix="kubengine-chart-") as task_dir:
+                file_path = FilePath(task_dir) / "chart.tgz"
+                try:
+                    with file_path.open("xb") as buffer:
+                        shutil.copyfileobj(file.file, buffer)
+                except OSError:
+                    logger.exception("Chart 文件保存失败")
+                    raise HTTPException(status_code=500, detail="文件保存失败") from None
+
+                file_size_mb = file_path.stat().st_size / 1024 / 1024
+                logger.info("开始推送 Chart (%.2fMB)", file_size_mb)
+                result = execute_command(
+                    [
+                        "helm", "push", str(file_path),
+                        f"oci://{Application.DOMAIN}/charts",
+                        "--username", Application.REGISTRY.USERNAME,
+                        "--password", Application.REGISTRY.PASSWORD,
+                    ],
+                    env={"KUBECONFIG": "/etc/kubernetes/admin.conf"},
+                )
+                if result.is_failure():
+                    logger.error("推送 Chart 到仓库失败")
+                    raise HTTPException(status_code=500, detail="推送 Chart 到仓库失败")
+
+                logger.info("Chart 推送成功")
+                return {
+                    "filename": os.path.basename((file.filename or "").replace("\\", "/")),
+                    "content_type": file.content_type,
+                    "file_size_mb": round(file_size_mb, 2),
+                }
+
+        # File copies and Helm execution must not block the request event loop.
+        data = await run_in_threadpool(_push_chart)
+        return 200, "文件上传成功", data
     finally:
         await file.close()
-
-    # 4. 推送 chart 到仓库
-    try:
-        file_size_mb = os.path.getsize(file_path) / 1024 / 1024
-        logger.info(f"开始推送 Chart: {file.filename} ({file_size_mb:.2f}MB)")
-
-        cmd = (
-            f"KUBECONFIG=/etc/kubernetes/admin.conf "
-            f"helm push {file_path} "
-            f"oci://{Application.DOMAIN}/charts "
-            f"--username admin --password Harbor@123"
-        )
-        result = execute_command(cmd)
-
-        if result.is_failure():
-            error_msg = f"推送 Chart 到仓库失败：{result.get_error_lines()}"
-            logger.error(error_msg)
-            raise HTTPException(status_code=500, detail=error_msg)
-
-        logger.info(f"Chart 推送成功: {file.filename}")
-
-        data: dict[str, Any] = {
-            "filename": file.filename,
-            "content_type": file.content_type,
-            "file_path": file_path,
-            "file_size_mb": round(file_size_mb, 2),
-        }
-
-        return 200, "文件上传成功", data
-
-    finally:
-        # 清理临时文件
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-                logger.debug(f"已删除临时文件: {file_path}")
-            except Exception as e:
-                logger.warning(f"删除临时文件失败：{str(e)}")
 
 
 def _prune_apps_namespace() -> Optional[str]:
     """Clean the temporary image namespace and return an error if it fails."""
     try:
-        result = execute_command("ctr -n apps i prune --all", timeout=600)
+        result = execute_command(["ctr", "-n", "apps", "i", "prune", "--all"], timeout=600)
         if result.is_failure():
             return f"清理 apps namespace 失败：{result.get_error_lines()}"
     except Exception as exc:
@@ -710,13 +703,14 @@ def _prune_apps_namespace() -> Optional[str]:
 
 
 def _mark_task_items_failed(
-    task_id: int, image_refs: list[str], stage: str, error: str
+    task_id: int, image_refs: list[str], stage: str, error: str,
+    *, lease: ImageImportLease,
 ) -> None:
     for image_ref in image_refs:
-        update_image_import_item(task_id, image_ref, "failed", stage, error)
+        update_image_import_item(task_id, image_ref, "failed", stage, error, lease=lease)
 
 
-def _finish_image_import_task(task_id: int) -> None:
+def _finish_image_import_task(task_id: int, *, lease: ImageImportLease) -> None:
     task = find_image_import_task(task_id)
     if task is None:
         return
@@ -731,6 +725,7 @@ def _finish_image_import_task(task_id: int) -> None:
         status = "failed"
     update_image_import_task(
         task_id,
+        lease=lease,
         status=status,
         total_count=len(items),
         success_count=success_count,
@@ -744,24 +739,32 @@ def _finish_image_import_task(task_id: int) -> None:
 
 
 @with_log_context(task_id="task_id")
-def process_image_import_task(task_id: int, retry_failed: bool = False) -> None:
+def process_image_import_task(
+    task_id: int, retry_failed: bool = False, *, lease: ImageImportLease,
+    lease_lost: Optional[threading.Event] = None,
+) -> None:
     """Import an archive and persist the result of every contained image."""
+    def check_lease() -> None:
+        if lease_lost is not None and lease_lost.is_set():
+            raise ImageImportLeaseLost(f"Image-import task {task_id} lease was lost")
+        assert_image_import_lease(task_id, lease)
+
+    check_lease()
     task = find_image_import_task(task_id, include_file_path=True)
     if task is None:
         return
     file_path = str(task.get("file_path") or "")
     existing_items = task.get("items", [])
     retry_refs = {
-        item["image_ref"] for item in existing_items if item["status"] == "failed"
+        item["image_ref"] for item in existing_items if item["status"] != "success"
     }
     update_image_import_task(
         task_id,
+        lease=lease,
         status="processing",
         error_message=None,
         completed_at=None,
     )
-    namespace_touched = False
-
     try:
         if not file_path or not os.path.exists(file_path):
             raise RuntimeError("原始镜像文件已不存在")
@@ -771,156 +774,164 @@ def process_image_import_task(task_id: int, retry_failed: bool = False) -> None:
                 f"{image_ref}: {error}"
                 for image_ref, error in validation_errors.items()
             )
-            update_image_import_task(task_id, error_message=summary)
+            update_image_import_task(task_id, error_message=summary, lease=lease)
         with _image_import_lock():
-            namespace_touched = True
-            cleanup_error = _prune_apps_namespace()
-            if cleanup_error:
-                raise RuntimeError(cleanup_error)
-
-            import_result = execute_command(
-                f"ctr -n apps i import {shlex.quote(file_path)}", timeout=600
-            )
-            if import_result.is_failure():
-                error = f"导入镜像失败：{import_result.get_error_lines()}"
-                if retry_refs:
-                    _mark_task_items_failed(task_id, list(retry_refs), "import", error)
-                raise RuntimeError(error)
-
-            list_result = execute_command("ctr -n apps i ls -q", timeout=120)
-            if list_result.is_failure():
-                raise RuntimeError(f"获取镜像信息失败：{list_result.get_error_lines()}")
-            image_refs = [
-                line.strip() for line in list_result.get_output_lines() if line.strip()
-            ]
-            if not image_refs:
-                raise RuntimeError("导入后 apps namespace 中没有镜像")
-
-            if not retry_failed or not existing_items:
-                item_refs = list(
-                    dict.fromkeys([*image_refs, *validation_errors.keys()])
+            # A claimant may have waited behind another task long enough to
+            # lose its lease. Never touch the namespace before checking again.
+            check_lease()
+            try:
+                cleanup_error = _prune_apps_namespace()
+                if cleanup_error:
+                    raise RuntimeError(cleanup_error)
+                check_lease()
+                import_result = execute_command(
+                    ["ctr", "-n", "apps", "i", "import", file_path], timeout=600
                 )
-                replace_image_import_items(
-                    task_id, [_parse_image_ref(ref) for ref in item_refs]
-                )
-                update_image_import_task(
-                    task_id,
-                    total_count=len(item_refs),
-                    success_count=0,
-                    failed_count=0,
-                )
-                target_refs = image_refs
-            else:
-                target_refs = [ref for ref in image_refs if ref in retry_refs]
-                for ref in target_refs:
-                    update_image_import_item(task_id, ref, "processing", "retry", None)
+                check_lease()
+                if import_result.is_failure():
+                    raise RuntimeError(f"导入镜像失败：{import_result.get_error_lines()}")
 
-            for image_ref, error in validation_errors.items():
-                update_image_import_item(
-                    task_id,
-                    image_ref,
-                    "failed",
-                    "validate",
-                    f"镜像包完整性校验失败：{error}",
+                list_result = execute_command(
+                    ["ctr", "-n", "apps", "i", "ls", "-q"], timeout=120
                 )
-            target_refs = [
-                ref for ref in target_refs if ref not in validation_errors
-            ]
+                check_lease()
+                if list_result.is_failure():
+                    raise RuntimeError(f"获取镜像信息失败：{list_result.get_error_lines()}")
+                image_refs = [
+                    line.strip() for line in list_result.get_output_lines() if line.strip()
+                ]
+                if not image_refs:
+                    raise RuntimeError("导入后 apps namespace 中没有镜像")
 
-            registries = {_split_image_ref(ref)[0] for ref in target_refs}
-            harbor_client = HarborClient()
-            invalid_registries: set[str] = set()
-            for registry in sorted(registries):
-                if not harbor_client.create_project(registry, public=True):
-                    invalid_registries.add(registry)
-                    error = f"Harbor 项目 [{registry}] 创建失败"
-                    refs = [
-                        ref
-                        for ref in target_refs
-                        if _split_image_ref(ref)[0] == registry
-                    ]
-                    _mark_task_items_failed(task_id, refs, "create_project", error)
-
-            push_refs = [
-                ref
-                for ref in target_refs
-                if _split_image_ref(ref)[0] not in invalid_registries
-            ]
-            proxy_registries = {_split_image_ref(ref)[0] for ref in push_refs}
-            if proxy_registries:
-                proxy_command = (
-                    f"{shlex.quote(sys.executable)} -m cli.app "
-                    # 镜像导入只配置本机。集群同步属于独立的运维变更，
-                    # 必须由管理员显式执行 add-proxy（不带 --no-sync）。
-                    "image ctr add-proxy -y --no-sync "
-                    + " ".join(
-                        shlex.quote(registry) for registry in sorted(proxy_registries)
+                if not existing_items:
+                    item_refs = list(dict.fromkeys([*image_refs, *validation_errors]))
+                    replace_image_import_items(
+                        task_id, [_parse_image_ref(ref) for ref in item_refs], lease=lease
                     )
-                )
-                proxy_result = execute_command(proxy_command, timeout=600)
-                if proxy_result.is_failure():
-                    error = (
-                        "containerd 透明代理配置失败："
-                        f"{proxy_result.get_error_lines()}"
+                    update_image_import_task(
+                        task_id, lease=lease, total_count=len(item_refs),
+                        success_count=0, failed_count=0,
                     )
-                    _mark_task_items_failed(task_id, push_refs, "proxy", error)
-                    push_refs = []
-
-            registry_auth = (
-                f"{Application.REGISTRY.USERNAME}:" f"{Application.REGISTRY.PASSWORD}"
-            )
-            for image_ref in push_refs:
-                update_image_import_item(task_id, image_ref, "processing", "push", None)
-                push_result = execute_command(
-                    "ctr -n apps i push "
-                    "--hosts-dir /etc/containerd/certs.d/ "
-                    f"-u {shlex.quote(registry_auth)} "
-                    f"{shlex.quote(image_ref)}",
-                    timeout=600,
-                )
-                if push_result.is_failure():
-                    update_image_import_item(
-                        task_id,
-                        image_ref,
-                        "failed",
-                        "push",
-                        f"推送失败：{push_result.get_error_lines()}",
-                    )
+                    unfinished_refs = set(item_refs)
                 else:
+                    # Both an interrupted first run and a user retry resume all
+                    # unfinished items. A completed push must not be reset.
+                    unfinished_refs = retry_refs
+
+                missing_refs = unfinished_refs - set(image_refs) - set(validation_errors)
+                _mark_task_items_failed(
+                    task_id, list(missing_refs), "import", "镜像包导入后未找到该镜像",
+                    lease=lease,
+                )
+                for image_ref, error in validation_errors.items():
+                    if image_ref in unfinished_refs:
+                        update_image_import_item(
+                            task_id, image_ref, "failed", "validate",
+                            f"镜像包完整性校验失败：{error}", lease=lease,
+                        )
+                target_refs = [
+                    ref for ref in image_refs
+                    if ref in unfinished_refs and ref not in validation_errors
+                ]
+                for ref in target_refs:
                     update_image_import_item(
-                        task_id, image_ref, "success", "completed", None
+                        task_id, ref, "processing", "retry" if existing_items else "import",
+                        lease=lease,
                     )
 
-            _finish_image_import_task(task_id)
+                registries = {_split_image_ref(ref)[0] for ref in target_refs}
+                harbor_client = HarborClient()
+                invalid_registries: set[str] = set()
+                for registry in sorted(registries):
+                    check_lease()
+                    created = harbor_client.create_project(registry, public=True)
+                    check_lease()
+                    if not created:
+                        invalid_registries.add(registry)
+                        refs = [
+                            ref for ref in target_refs if _split_image_ref(ref)[0] == registry
+                        ]
+                        _mark_task_items_failed(
+                            task_id, refs, "create_project",
+                            f"Harbor 项目 [{registry}] 创建失败", lease=lease,
+                        )
+
+                push_refs = [
+                    ref for ref in target_refs
+                    if _split_image_ref(ref)[0] not in invalid_registries
+                ]
+                proxy_registries = {_split_image_ref(ref)[0] for ref in push_refs}
+                if proxy_registries:
+                    check_lease()
+                    proxy_command = [
+                        sys.executable, "-m", "cli.app",
+                        # Only configure this host; cluster-wide sync is explicit.
+                        "image", "ctr", "add-proxy", "-y", "--no-sync",
+                        *sorted(proxy_registries),
+                    ]
+                    proxy_result = execute_command(proxy_command, timeout=600)
+                    check_lease()
+                    if proxy_result.is_failure():
+                        _mark_task_items_failed(
+                            task_id, push_refs, "proxy",
+                            f"containerd 透明代理配置失败：{proxy_result.get_error_lines()}",
+                            lease=lease,
+                        )
+                        push_refs = []
+
+                registry_auth = (
+                    f"{Application.REGISTRY.USERNAME}:{Application.REGISTRY.PASSWORD}"
+                )
+                for image_ref in push_refs:
+                    check_lease()
+                    update_image_import_item(
+                        task_id, image_ref, "processing", "push", lease=lease
+                    )
+                    push_result = execute_command(
+                        [
+                            "ctr", "-n", "apps", "i", "push",
+                            "--hosts-dir", "/etc/containerd/certs.d/",
+                            "-u", registry_auth, image_ref,
+                        ],
+                        timeout=600,
+                    )
+                    check_lease()
+                    if push_result.is_failure():
+                        update_image_import_item(
+                            task_id, image_ref, "failed", "push",
+                            f"推送失败：{push_result.get_error_lines()}", lease=lease,
+                        )
+                    else:
+                        update_image_import_item(
+                            task_id, image_ref, "success", "completed", lease=lease
+                        )
+
+                check_lease()
+                _finish_image_import_task(task_id, lease=lease)
+            finally:
+                # Keep the same lock through cleanup, even after losing the DB
+                # lease. The new attempt cannot touch this namespace until we
+                # finish cleaning our own execution and release this lock.
+                cleanup_error = _prune_apps_namespace()
+                if cleanup_error:
+                    logger.warning(cleanup_error)
+    except ImageImportLeaseLost:
+        logger.warning("镜像导入任务 %s 已丢失租约，停止旧执行", task_id)
+        raise
     except Exception as exc:
         logger.exception("镜像导入任务 %s 失败", task_id)
+        check_lease()
         current = find_image_import_task(task_id)
         if current:
-            pending_refs = [
-                item["image_ref"]
-                for item in current.get("items", [])
-                if item["status"] in {"pending", "processing"}
+            unfinished_refs = [
+                item["image_ref"] for item in current.get("items", [])
+                if item["status"] != "success"
             ]
-            _mark_task_items_failed(task_id, pending_refs, "system", str(exc))
-        update_image_import_task(
-            task_id,
-            status="failed",
-            error_message=str(exc),
-            completed_at=datetime.now(),
-            lease_owner=None,
-            lease_expires_at=None,
-            heartbeat_at=None,
-            retry_failed=False,
-        )
-        _finish_image_import_task(task_id)
-    finally:
-        # Pruning must use the same lock as import/push. Otherwise another task
-        # could import images between lock release and this final cleanup.
-        if namespace_touched:
-            with _image_import_lock():
-                cleanup_error = _prune_apps_namespace()
-            if cleanup_error:
-                logger.warning(cleanup_error)
+            _mark_task_items_failed(
+                task_id, unfinished_refs, "system", str(exc), lease=lease
+            )
+        update_image_import_task(task_id, error_message=str(exc), lease=lease)
+        _finish_image_import_task(task_id, lease=lease)
 
 
 async def _create_image_import(file: UploadFile) -> dict[str, Any]:

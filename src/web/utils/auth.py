@@ -1,24 +1,24 @@
 """
 鉴权认证模块
 
-提供 JWT Token 和 AK/SK 两种鉴权方式，支持 Token 自动刷新和统一响应格式。
+提供 JWT Token 鉴权、自动刷新和统一响应格式。
 """
 
 import asyncio
-import base64
 import bcrypt
 import hashlib
 import hmac
 from datetime import datetime, timedelta
 from functools import wraps
 from inspect import signature
-from pathlib import Path
 from typing import Any, Callable, Optional
 from typing import Dict, Tuple, TypeVar, Union
 from uuid import uuid4
 
 from core.config import Application
-from core.misc.ca import create_cert
+from core.auth_credentials import load_auth_users, load_signing_secret
+from core.orm.auth import is_token_revoked
+from starlette.concurrency import run_in_threadpool
 from web.utils.response import StandardResponse
 from fastapi import Header, HTTPException, Request, status
 from jwt import JWT, jwk_from_dict
@@ -34,32 +34,23 @@ ALGORITHM: str = Application.AUTH.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES: int = Application.AUTH.TOKEN_EXPIRE_MINUTES
 TOKEN_RENEW_THRESHOLD_MINUTES: int = Application.AUTH.TOKEN_RENEW_THRESHOLD_MINUTES
 
-# AK/SK 过期时间（天）
-AK_SK_EXPIRE_DAYS: int = 90
-
-# 用户数据存储
-USERS: Dict[str, Dict[str, Any]] = {
-    "admin": {
-        "password_hash": Application.AUTH.USERS_ADMIN_PASSWORD_HASH,
-        "ak": Application.AUTH.USERS_ADMIN_AK,
-        "sk_hash": Application.AUTH.USERS_ADMIN_SK_HASH,
-    }
-}
-
-# JWT 签名密钥
-_app_secret_key: str = "your-strong-secret-key-keep-it-safe-never-expose-in-production"
-if not Path(Application.TLS_CONFIG.CA_KEY).exists():
-    create_cert()
-with open(Application.TLS_CONFIG.CA_KEY, "r", encoding="utf-8") as f:
-    _app_secret_key = f.read().strip()
-
+# A separate, private key is shared by all API workers. Old CA-signed tokens
+# intentionally stop working after this security update.
+_app_secret_key = load_signing_secret()
 signing_key = jwk_from_dict({"kty": "oct", "k": _app_secret_key})
+
+
+def credential_version(record: Dict[str, Any]) -> str:
+    """Invalidate sessions when password or API credentials are rotated."""
+    import json
+    material = json.dumps({key: record.get(key, "") for key in
+                           ("password_hash", "ak", "sk_hash")}, sort_keys=True)
+    return hmac.new(_app_secret_key.encode(), material.encode(), hashlib.sha256).hexdigest()
+
 
 # JWT 实例
 jwt_instance = JWT()
 
-# Token 黑名单
-token_blacklist: Dict[str, datetime] = {}
 
 # 泛型类型变量
 F = TypeVar("F", bound=Callable[..., Any])
@@ -108,10 +99,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Returns:
         密码是否匹配
     """
-    return bcrypt.checkpw(
-        plain_password.encode("utf-8"),
-        hashed_password.encode("utf-8"),
-    )
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 def get_password_hash(password: str) -> str:
@@ -146,6 +137,18 @@ def create_access_token(
         (access_token, expire_time) 元组
     """
     to_encode = data.copy()
+    record = load_auth_users().get(str(data.get("sub", "")))
+    if not record:
+        raise HTTPException(status_code=401, detail="未知用户")
+    current_version = credential_version(record)
+    authenticated_version = data.get("credential_version", current_version)
+    if not isinstance(authenticated_version, str) or not hmac.compare_digest(
+        authenticated_version, current_version
+    ):
+        raise HTTPException(status_code=401, detail="凭据已变更，请重新登录")
+    # Keep the version actually authenticated. A concurrent rotation after this
+    # check must invalidate this token, rather than upgrade the old session.
+    to_encode["credential_version"] = authenticated_version
     expire = datetime.now() + (expires_delta or timedelta(minutes=15))
     to_encode.update(
         {"exp": get_int_from_datetime(expire), "jti": str(uuid4())}
@@ -164,63 +167,7 @@ def is_token_blacklisted(token: str) -> bool:
     Returns:
         是否在黑名单中
     """
-    if token not in token_blacklist:
-        return False
-    if token_blacklist[token] < datetime.now():
-        del token_blacklist[token]
-        return False
-    return True
-
-
-# ============================ AK/SK 工具函数 ============================
-
-
-def verify_ak_sk_signature(
-    ak: str,
-    timestamp: str,
-    nonce: str,
-    signature: str,
-    user: User,
-) -> bool:
-    """
-    验证 AK/SK 签名
-
-    Args:
-        ak: Access Key
-        timestamp: 时间戳字符串（格式：YYYYMMDDHHMMSS）
-        nonce: 随机数
-        signature: 签名
-        user: 用户对象
-
-    Returns:
-        签名是否有效
-    """
-    # 验证时间戳（5分钟内有效）
-    try:
-        request_time = datetime.strptime(timestamp, "%Y%m%d%H%M%S")
-        if abs((datetime.now() - request_time).total_seconds()) > 300:
-            return False
-    except ValueError:
-        return False
-
-    # 获取用户的 SK（实际应用中应从安全存储获取）
-    user_data = USERS.get(user.username, {})
-    original_sk = user_data.get("sk", "SK12345678")
-
-    # 计算期望签名
-    sign_string = f"{ak}{timestamp}{nonce}".encode("utf-8")
-    hmac_obj = hmac.new(
-        original_sk.encode("utf-8"),
-        sign_string,
-        hashlib.sha256,
-    )
-    expected_signature = base64.b64encode(hmac_obj.digest()).decode("utf-8")
-
-    # 使用常量时间比较防止时序攻击
-    return hmac.compare_digest(signature, expected_signature)
-
-
-# ============================ 鉴权依赖 ============================
+    return is_token_revoked(token)
 
 
 async def get_current_user(
@@ -230,82 +177,28 @@ async def get_current_user(
     nonce: Optional[str] = Header(None),
     signature: Optional[str] = Header(None),
 ) -> Tuple[User, str]:
+    """Authenticate a bearer token; never fall back to a default API secret.
+
+    The legacy AK/SK scheme cannot verify HMAC using its stored bcrypt hash.
+    Until a versioned, request-bound protocol is available it fails closed.
     """
-    统一鉴权依赖：Token 或 AK/SK 二选一
-
-    Args:
-        authorization: Authorization 头（Bearer Token）
-        ak: Access Key
-        timestamp: 请求时间戳
-        nonce: 随机数
-        signature: 请求签名
-
-    Returns:
-        (当前用户, 鉴权类型) 元组，鉴权类型为 "token" 或 "aksk"
-
-    Raises:
-        HTTPException: 鉴权失败时抛出 401 错误
-    """
-    user: Optional[User] = None
-    auth_type = ""
-
-    # 验证 Authorization 头格式
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization 头格式错误，应为 'Bearer <token>'",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
+    if not isinstance(authorization, str) or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="请使用 Bearer Token；旧 AK/SK 签名认证已停用",
+                            headers={"WWW-Authenticate": "Bearer"})
     token = authorization.split(" ", 1)[1]
-
-    # 尝试 Token 鉴权
-    if token:
+    try:
+        payload = jwt_instance.decode(token, signing_key, algorithms={ALGORITHM})
+        username = payload.get("sub", "")
+        record = load_auth_users().get(username)
+        if (not token or not record or not payload.get("exp")
+                or not hmac.compare_digest(str(payload.get("credential_version", "")), credential_version(record))):
+            raise ValueError("Invalid session")
         if is_token_blacklisted(token):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="令牌已失效（已登出）",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        try:
-            payload = jwt_instance.decode(
-                token, signing_key, algorithms={ALGORITHM})
-            username: str = payload.get("sub", "")
-            if username and (user_dict := USERS.get(username)):
-                user = User(username=username, **user_dict)
-                auth_type = "token"
-        except Exception:
-            pass
-
-    # Token 鉴权失败，尝试 AK/SK 鉴权
-    if user is None and all([ak, timestamp, nonce, signature]):
-        user_dict = next(
-            (u for u in USERS.values() if u.get("ak") == ak),
-            None,
-        )
-        if user_dict:
-            user = User(**user_dict)
-            # 类型断言：all() 已确保参数不为 None
-            if verify_ak_sk_signature(
-                ak,  # type: ignore
-                timestamp,  # type: ignore
-                nonce,  # type: ignore
-                signature,  # type: ignore
-                user,
-            ):
-                auth_type = "aksk"
-            else:
-                user = None
-
-    # 两种鉴权都失败
-    if user is None or not auth_type:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token 或 AK/SK 鉴权失败，请检查凭证",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return user, auth_type
+            raise ValueError("Revoked session")
+        return User(username=username, **record), "token"
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Token 无效或已失效，请重新登录",
+                            headers={"WWW-Authenticate": "Bearer"}) from exc
 
 
 # ============================ 响应转换 ============================
@@ -354,7 +247,7 @@ def auth_with_renew(
     renew_threshold: int = TOKEN_RENEW_THRESHOLD_MINUTES,
 ) -> Callable[[F], F]:
     """
-    鉴权装饰器：支持 Token/AKSK 二选一鉴权 + Token 自动刷新 + 统一响应
+    鉴权装饰器：Bearer Token 鉴权、自动刷新和统一响应
 
     Args:
         renew_threshold: Token 刷新阈值（分钟），小于此值时自动刷新
@@ -372,6 +265,12 @@ def auth_with_renew(
     """
 
     def decorator(func: F) -> F:
+        endpoint_signature = signature(func)
+        public_signature = endpoint_signature.replace(return_annotation=StandardResponse[Any], parameters=[
+            parameter for name, parameter in endpoint_signature.parameters.items()
+            if name != "current_user"
+        ])
+
         @wraps(func)
         async def wrapper(request: Request, *args: Any, **kwargs: Any) -> StandardResponse[Any]:
             headers = request.headers
@@ -422,26 +321,21 @@ def auth_with_renew(
                     # 触发 Token 刷新
                     if remaining_minutes < renew_threshold:
                         new_token, _ = create_access_token(
-                            data={"sub": current_user.username},
+                            data={"sub": current_user.username,
+                                  "credential_version": payload["credential_version"]},
                             expires_delta=timedelta(
                                 minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
                         )
 
-            # 执行原接口函数
-            sig = signature(func)
-            params = sig.parameters
-            func_args: list[Any] = [request]
-            func_kwargs = kwargs.copy()
-
-            # 检测是否需要 current_user 参数
-            if "current_user" in params:
-                func_args.append(current_user)
-
-            # 执行原函数
+            # Bind only business parameters; identity always comes from authentication.
+            bound = public_signature.bind(request, *args, **kwargs)
+            func_kwargs = dict(bound.arguments)
+            if "current_user" in endpoint_signature.parameters:
+                func_kwargs["current_user"] = current_user
             if asyncio.iscoroutinefunction(func):
-                res = await func(*func_args, *args, **func_kwargs)
+                res = await func(**func_kwargs)
             else:
-                res = func(*func_args, *args, **func_kwargs)
+                res = await run_in_threadpool(func, **func_kwargs)
 
             # 转换为标准响应
             response_data = convert_to_standard(res)
@@ -453,9 +347,10 @@ def auth_with_renew(
 
             return response_data
 
-        # 设置类型注解（运行时动态设置，类型检查器无法推断）
-        wrapper.__annotations__[
-            "return"] = StandardResponse[Any]  # type: ignore
+        wrapper.__signature__ = public_signature  # type: ignore[attr-defined]
+        wrapper.__annotations__ = dict(func.__annotations__)
+        wrapper.__annotations__.pop("current_user", None)
+        wrapper.__annotations__["return"] = StandardResponse[Any]
         return wrapper  # type: ignore
 
     return decorator

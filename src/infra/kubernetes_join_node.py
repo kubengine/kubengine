@@ -1,7 +1,9 @@
 """kubenetes添加节点"""
+import shlex
 from pyinfra.operations import server
 from pyinfra.context import host, inventory
 from pyinfra.facts.server import Command
+from _kubernetes_bootstrap import guarded_kubeadm, join_arguments
 
 data = host.data
 vip = data.control_plane_endpoint or ""
@@ -15,17 +17,10 @@ if "worker" in host.groups:
         _retry_delay=20
     )
 
-    # 如果配置了VIP，将 join 目标替换为 VIP
-    if vip:
-        import re
-        join_command = re.sub(
-            r'https?://[^:]+:\d+',
-            f'https://{vip}:6443',
-            join_command
-        )
+    join_args = join_arguments(join_command, vip)
 
     # Execute join command to add worker node to the cluster
     server.shell(
         name="Join worker node to Kubernetes cluster",
-        commands=join_command
+        commands=guarded_kubeadm(shlex.join(join_args), "worker")
     )

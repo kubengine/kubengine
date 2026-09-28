@@ -261,6 +261,23 @@ def test_pyinfra_greenlet_inherits_log_context() -> None:
     }
 
 
+def test_infrastructure_connections_require_verified_host_keys(tmp_path):
+    executor = InfraFileExecutor()
+    executor._setup_execution_environment(tmp_path / "infra.py", ["test-node"], {}, None)
+    host = executor._state.inventory.get_host("test-node")
+    assert host.data.ssh_strict_host_key_checking == "yes"
+
+
+def test_infrastructure_trust_cannot_be_disabled_by_inventory(tmp_path):
+    executor = InfraFileExecutor()
+    for shared, groups in (
+        ({"ssh_strict_host_key_checking": "no"}, None),
+        ({}, {"worker": (["test-node"], {"ssh_strict_host_key_checking": "accept-new"})}),
+    ):
+        with pytest.raises(ValueError, match="strict host key checking"):
+            executor._setup_execution_environment(tmp_path / "infra.py", ["test-node"], shared, groups)
+
+
 def test_pyinfra_callback_records_operation_lifecycle(caplog) -> None:
     host = FakeHost("node-1")
     state = FakeState(hosts=[host], operations=[("one", "Restart service")])

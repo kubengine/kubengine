@@ -55,7 +55,11 @@ curl -X POST 'http://localhost:8080/api/v1/logout' \
   -H 'Authorization: Bearer <JWT>'
 ```
 
-管理员密码和 AK/SK 通过 `kubengine app set-password` 设置或轮换。仓库配置文件只保存密码和 SK 的哈希值，文档不提供可直接使用的默认明文密钥。
+管理员密码通过 `kubengine app set-password` 设置或轮换，配置中只保存密码哈希。旧 AK/SK 签名协议无法使用所保存的哈希安全验证 HMAC，现已关闭该认证入口，并停止生成新的 AK/SK；API 调用请使用 Bearer Token。
+
+JWT 使用 `${root_dir}/config/jwt-signing.key` 中独立生成的私钥（权限 0600），不再复用 TLS CA 私钥。升级后已有令牌失效，需要重新登录。登出记录保存在数据库中，对同一安装的多个 API 进程和重启生效；密码或 AK/SK 轮换后，旧令牌也会失效。此文件属于运行数据，不得加入发布包。
+
+WebSocket 保持现有 `token=Bearer ...` 查询参数接入方式，每次广播和回复发送前重新验证会话，客户端消息处理前也进行验证。空闲连接每 30 秒复核，失效时以 1008 关闭。升级步骤及任务恢复边界见[安全边界与资源管理修复说明](安全边界与资源管理修复-2026-09-28.md)。
 
 ## 标准响应
 

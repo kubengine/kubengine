@@ -7,7 +7,9 @@ supporting connection reuse and cluster operations.
 import asyncio
 import base64
 import logging
+import shlex
 import time
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
@@ -66,6 +68,7 @@ class AsyncSSHClient:
         """Initialize SSH client with connection pool."""
         # Connection pool: host -> connection mapping
         self._connections: Dict[str, asyncssh.SSHClientConnection] = {}
+        self._connection_options: Dict[str, Dict[str, Any]] = {}
         self._connection_locks: Dict[str, asyncio.Lock] = {}
         self._pool_lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(max(1, max_concurrency))
@@ -89,10 +92,22 @@ class AsyncSSHClient:
         Returns:
             SSH client connection object
         """
+        if kwargs.get("known_hosts", "default") is None:
+            raise ValueError("known_hosts=None is not permitted; provide a verified known_hosts file")
+        if "known_hosts" not in kwargs:
+            paths = [Path(p).expanduser() for p in (
+                "~/.ssh/known_hosts", "~/.ssh/known_hosts2",
+                "/etc/ssh/ssh_known_hosts", "/etc/ssh/ssh_known_hosts2",
+            )]
+            kwargs["known_hosts"] = [str(p) for p in paths if p.is_file()] or b""
+        connection_options = {k: v for k, v in kwargs.items() if k != "connect_timeout"}
         host_lock = await self._host_lock(host)
         async with host_lock:
             with bind_log_context(host=host):
                 conn = self._connections.get(host)
+                if conn is not None and self._connection_options.get(host) != connection_options:
+                    await self._discard_connection(host)
+                    conn = None
                 if conn is not None and not conn.is_closed():
                     log_lifecycle_event(
                         logger,
@@ -113,9 +128,6 @@ class AsyncSSHClient:
                     level=logging.DEBUG,
                     timeout_seconds=connect_timeout,
                 )
-                # 现有环境使用应用凭据建立初始信任；调用方仍可
-                # 通过 known_hosts 路径开启严格的主机密钥校验。
-                kwargs.setdefault("known_hosts", None)
                 try:
                     conn = await asyncio.wait_for(
                         asyncssh.connect(
@@ -132,6 +144,19 @@ class AsyncSSHClient:
                         duration_ms=round((time.monotonic() - started_at) * 1000),
                     )
                     raise
+                except asyncssh.HostKeyNotVerifiable as exc:
+                    log_lifecycle_event(
+                        logger, "ssh_connection_end", level=logging.ERROR,
+                        status="failed",
+                        duration_ms=round((time.monotonic() - started_at) * 1000),
+                        error="Host key is unknown or changed",
+                    )
+                    raise RuntimeError(
+                        f"SSH 主机 {host} 的密钥未知或已变化，已拒绝连接。"
+                        "请通过主机控制台等可信渠道核对指纹，将确认的公钥写入 ~/.ssh/known_hosts；"
+                        "首次纳管也可使用 cluster config --known-hosts <已核验的文件>。"
+                        "不要直接信任未经核验的 ssh-keyscan 输出。"
+                    ) from exc
                 except Exception as exc:
                     log_lifecycle_event(
                         logger,
@@ -144,6 +169,7 @@ class AsyncSSHClient:
                     raise
 
                 self._connections[host] = conn
+                self._connection_options[host] = connection_options
                 log_lifecycle_event(
                     logger,
                     "ssh_connection_end",
@@ -155,6 +181,7 @@ class AsyncSSHClient:
 
     async def _discard_connection(self, host: str) -> None:
         conn = self._connections.pop(host, None)
+        self._connection_options.pop(host, None)
         if conn is None:
             return
         conn.close()
@@ -407,6 +434,8 @@ class AsyncSSHClient:
             if isinstance(host, str) and item["exit_status"] == 0:
                 reachable_hosts.append(host)
             elif isinstance(host, str):
+                if item.get("error"):
+                    logger.error("SSH connection to %s failed: %s", host, item["error"])
                 not_reachable_hosts.append(host)
 
         return reachable_hosts, not_reachable_hosts
@@ -616,50 +645,6 @@ fi
         return [cast(Dict[str, Union[str, int, None]], result) for result in results]
 
     @staticmethod
-    def _scan_host_keys_script(hosts: List[str]) -> str:
-        """生成"由**一台**节点统一采集全集群 host key"的脚本。
-
-        为什么不让每台节点各自扫：N 台 × (N-1) 个对端同时 ssh-keyscan 时，
-        每个节点会同时收到来自其它所有节点的连接，默认 MaxStartups 下必然
-        随机丢连接，结果就是"个别对端总是缺 host key"（实测 812 对里缺 26 对）。
-        集中扫一次，每个节点只被扫一次，结果确定。
-
-        脚本输出：
-          ``KUBENGINE_SCAN:<base64>``         采集到的 known_hosts 内容
-          ``KUBENGINE_SCAN_MISSING:<列表>``   重试后仍没拿到的节点
-        """
-        if not hosts:
-            return "true"
-
-        host_list = " ".join(hosts)
-        return f"""
-tmp=$(mktemp) || exit 1
-: > "$tmp"
-scan() {{
-    ssh-keyscan -T 10 -p 22 "$@" >> "$tmp" 2>/dev/null
-}}
-scan {host_list}
-# 同一台 sshd 会提供多种 host key（ed25519 / rsa / ecdsa），
-# 少收一种就会出现 "No ED25519 host key is known for ... and you have
-# requested strict checking."，所以一直补扫到"不再出现新行"为止。
-for attempt in 1 2 3 4; do
-    before=$(wc -l < "$tmp")
-    sleep $(awk 'BEGIN{{srand(); printf "%d", 1 + rand()*3}}')
-    scan {host_list}
-    after=$(wc -l < "$tmp")
-    [ "$after" = "$before" ] && break
-done
-sort -u "$tmp" > "$tmp.dedup" && mv "$tmp.dedup" "$tmp"
-missing=""
-for h in {host_list}; do
-    [ "$(grep -c "^$h " "$tmp")" -gt 0 ] || missing="$missing $h"
-done
-echo "KUBENGINE_SCAN_MISSING:$missing"
-printf 'KUBENGINE_SCAN:'; base64 -w0 < "$tmp"; echo
-rm -f "$tmp"
-""".strip()
-
-    @staticmethod
     def _strict_check_script(peers: List[str]) -> str:
         """生成"不带任何 host key 跳过参数"的免密连通自检脚本。
 
@@ -669,7 +654,7 @@ rm -f "$tmp"
         if not peers:
             return "true"
 
-        peer_list = " ".join(peers)
+        peer_list = " ".join(shlex.quote(peer) for peer in peers)
         return f"""
 STRICT_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=5"
 fail=""
@@ -704,42 +689,62 @@ fi
         return failures
 
     @staticmethod
+    def _authorized_keys_merge_script(payload: str) -> str:
+        """Merge cluster public keys without removing existing login grants."""
+        return f"""
+set -eu
+umask 077
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+(
+    flock -x 9
+    tmp=$(mktemp ~/.ssh/authorized_keys.XXXXXX)
+    trap 'rm -f "$tmp" "$tmp.merged"' EXIT HUP INT TERM
+    if [ -f ~/.ssh/authorized_keys ]; then cat ~/.ssh/authorized_keys > "$tmp"; fi
+    printf '\n' >> "$tmp"
+    printf '%s' '{payload}' | base64 -d >> "$tmp"
+    awk '!seen[$0]++' "$tmp" > "$tmp.merged"
+    chmod 600 "$tmp.merged"
+    mv -f "$tmp.merged" ~/.ssh/authorized_keys
+    grep -cE '^(ssh-|ecdsa-|sk-)' ~/.ssh/authorized_keys
+) 9> ~/.ssh/kubengine-authorized-keys.lock
+""".strip()
+
+    @staticmethod
     def _known_hosts_refresh_script(
         self_host: str, hosts: List[str], known_hosts_b64: str
     ) -> str:
-        """生成"清旧记录 + 写入全集群当前 host key + 严格自检"的脚本。
-
-        在每台节点上执行，内容来自集中采集（所有节点写同一份）：
-          1. 清掉 known_hosts（含 /etc/ssh/ssh_known_hosts）里集群各节点的旧记录，
-             节点重装 / 虚机回滚后 host key 会变，旧记录不清掉就会
-             "REMOTE HOST IDENTIFICATION HAS CHANGED"；
-          2. 把集中采集到的内容（base64，避免任何引号问题）追加进 known_hosts；
-          3. 用不带任何 host key 跳过参数的 ssh 自检，把仍然过不去的对端
-             连原因一起用标记行输出。
-
-        Args:
-            self_host: 当前节点自己的地址（自检时跳过）
-            hosts: 集群全部节点地址（清理范围）
-            known_hosts_b64: 集中采集到的 known_hosts 内容（base64）
-
-        Returns:
-            可直接在远端 sh 里执行的脚本
-        """
+        """Add authenticated host keys, refusing to replace existing trust."""
         peers = [h for h in hosts if h != self_host]
-        if not peers:
-            return "true"
-
-        clean_lines = "\n".join(
-            f"ssh-keygen -R {host} >/dev/null 2>&1 || true\n"
-            f"if [ -f /etc/ssh/ssh_known_hosts ]; then "
-            f"ssh-keygen -R {host} -f /etc/ssh/ssh_known_hosts >/dev/null 2>&1 || true; fi"
-            for host in hosts
-        )
-
         return f"""
-mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
-{clean_lines}
-printf '%s' '{known_hosts_b64}' | base64 -d >> ~/.ssh/known_hosts
+set -eu
+umask 077
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+(
+    flock -x 9
+    incoming=$(mktemp ~/.ssh/kubengine-host-keys.XXXXXX)
+    merged=$(mktemp ~/.ssh/known_hosts.XXXXXX)
+    trap 'rm -f "$incoming" "$merged"' EXIT HUP INT TERM
+    printf '%s' '{known_hosts_b64}' | base64 -d > "$incoming"
+    while read -r peer algorithm key remainder; do
+        [ -n "$peer" ] || continue
+        for trusted in ~/.ssh/known_hosts /etc/ssh/ssh_known_hosts; do
+            [ -f "$trusted" ] || continue
+            existing=$(ssh-keygen -F "$peer" -f "$trusted" | sed '/^#/d' || true)
+            if [ -n "$existing" ] && ! printf '%s\n' "$existing" | awk -v a="$algorithm" -v k="$key" '$2 == a && $3 == k {{found=1}} END {{exit !found}}'; then
+                echo "Host key conflict for $peer in $trusted; verify and update it explicitly" >&2
+                exit 1
+            fi
+        done
+    done < "$incoming"
+    if [ -f ~/.ssh/known_hosts ]; then cat ~/.ssh/known_hosts > "$merged"; fi
+    printf '\n' >> "$merged"
+    cat "$incoming" >> "$merged"
+    awk '!seen[$0]++' "$merged" > "$incoming"
+    chmod 600 "$incoming"
+    mv -f "$incoming" ~/.ssh/known_hosts
+) 9> ~/.ssh/kubengine-known-hosts.lock
 {AsyncSSHClient._strict_check_script(peers)}
 echo "KUBENGINE_KNOWN_HOSTS_DONE"
 """.strip()
@@ -809,6 +814,7 @@ cat ~/.ssh/id_rsa.pub || exit 1
                         'error': f"节点 {res['host']} 未能取到公钥（stdout={stdout.strip()[:120]!r}）",
                         'details': cast(List[Dict[str, Union[str, int, None]]], key_results)
                     }
+                asyncssh.import_public_key(pub_key)
                 public_keys[res['host']] = pub_key
 
             # 2. Merge all public keys for authorized_keys content
@@ -822,14 +828,7 @@ cat ~/.ssh/id_rsa.pub || exit 1
             payload = base64.b64encode(all_pub_keys.encode()).decode()
             distribute_tasks: List[Any] = []
             for host in hosts:
-                # 先写临时文件再 mv，保证并发/中断下不会留下半个 authorized_keys。
-                cmd = (
-                    "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-                    f"printf '%s' '{payload}' | base64 -d > ~/.ssh/authorized_keys.tmp && "
-                    "chmod 600 ~/.ssh/authorized_keys.tmp && "
-                    "mv -f ~/.ssh/authorized_keys.tmp ~/.ssh/authorized_keys && "
-                    "grep -cE '^(ssh-|ecdsa-|sk-)' ~/.ssh/authorized_keys"
-                )
+                cmd = self._authorized_keys_merge_script(payload)
                 distribute_tasks.append(
                     self.execute_command(host, cmd, **kwargs))
 
@@ -856,39 +855,23 @@ cat ~/.ssh/id_rsa.pub || exit 1
                         'details': cast(List[Dict[str, Union[str, int, None]]], distribute_results)
                     }
 
-            # 4. 刷新 known_hosts。
-            #
-            #    节点重装 / 虚机回滚之后 host key 会变，而 ~/.ssh/known_hosts
-            #    往往被保留下来，于是对端会出现
-            #    "REMOTE HOST IDENTIFICATION HAS CHANGED" 或停在 yes 确认上；
-            #    非交互执行时不带 -o StrictHostKeyChecking=no 就直接失败。
-            #
-            #    因此这里必须"先清旧记录、再把当前 host key 真正写进去"，
-            #    不能用 -o UserKnownHostsFile=/dev/null（那样只校验不落盘）。
-            #    采集只做一次（单台扫描），然后同一份内容下发给所有节点，
-            #    避免 N×N 扫描把各节点 sshd 打爆导致随机缺 key。
-            scanner = hosts[0]
-            scan_result = await self.execute_command(
-                scanner, self._scan_host_keys_script(hosts), **kwargs
-            )
-
-            scan_reason = _result_error(scan_result)
-            scan_blob = ''
+            # Only distribute the keys of authenticated SSH connections. A
+            # fresh ssh-keyscan is not evidence of a host's identity.
+            trusted_host_keys: List[str] = []
+            for node in hosts:
+                if any(character.isspace() for character in node) or node.startswith("-"):
+                    raise ValueError("Invalid SSH host name")
+                connection = await self._get_connection(node, **kwargs)
+                key = connection.get_server_host_key()
+                if key is None:
+                    raise RuntimeError(f"No authenticated host key for {node}")
+                trusted_host_keys.append(
+                    f"{node} {key.export_public_key().decode().strip()}"
+                )
+            scan_blob = base64.b64encode(
+                ("\n".join(trusted_host_keys) + "\n").encode()
+            ).decode()
             scan_missing: List[str] = []
-            for line in str(scan_result['stdout'] or '').splitlines():
-                if line.startswith("KUBENGINE_SCAN:"):
-                    scan_blob = line.split("KUBENGINE_SCAN:", 1)[1].strip()
-                elif line.startswith("KUBENGINE_SCAN_MISSING:"):
-                    scan_missing = line.split("KUBENGINE_SCAN_MISSING:", 1)[1].split()
-
-            if scan_reason or not scan_blob:
-                return {
-                    'error': (
-                        f"在 {scanner} 上采集集群 host key 失败: "
-                        f"{scan_reason or 'ssh-keyscan 没有输出'}"
-                    ),
-                    'details': cast(List[Dict[str, Union[str, int, None]]], distribute_results)
-                }
 
             refresh_tasks: List[Any] = []
             for src_host in hosts:
@@ -930,7 +913,8 @@ cat ~/.ssh/id_rsa.pub || exit 1
                 )
 
             return {
-                'error': None,
+                'error': ('SSH host trust verification failed'
+                          if known_hosts_failures or ssh_failures else None),
                 'known_hosts_failures': known_hosts_failures,
                 'scan_missing': scan_missing,
                 'ssh_failures': ssh_failures,

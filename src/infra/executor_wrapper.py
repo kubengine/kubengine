@@ -580,9 +580,19 @@ class InfraFileExecutor:
         # 所有操作的默认超时（单条操作显式传 _timeout 仍然优先生效）。
         inventory_data: Dict[str, Any] = dict(shared_data)
         inventory_data.setdefault("_timeout", self.config.op_timeout)
+        # Match the strict trust boundary used by the AsyncSSH management path.
+        # Explicitly set this so ~/.ssh/config cannot disable verification.
+        if inventory_data.get("ssh_strict_host_key_checking") not in (None, "yes"):
+            raise ValueError("Infrastructure SSH requires strict host key checking")
+        inventory_data["ssh_strict_host_key_checking"] = "yes"
+        verified_groups = {}
+        for name, (hosts, data) in (target_groups or {}).items():
+            if data.get("ssh_strict_host_key_checking") not in (None, "yes"):
+                raise ValueError("Infrastructure SSH requires strict host key checking")
+            verified_groups[name] = (hosts, {**data, "ssh_strict_host_key_checking": "yes"})
         inventory = Inventory(  # type: ignore[no-untyped-call]
             (host_ips, inventory_data),  # 直接传入IP列表和动态连接配置
-            **(target_groups or {}),
+            **verified_groups,
         )
         ctx_inventory.set(inventory)  # type: ignore
 

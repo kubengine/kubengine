@@ -13,7 +13,7 @@ from json import JSONDecodeError
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from core.logger import get_logger, with_log_context, with_new_log_context
@@ -24,6 +24,7 @@ from web.utils.auth import get_current_user
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["WebSocket 实时通信"])
+SESSION_CHECK_INTERVAL = 30.0
 
 # ============================ 全局状态管理 ============================
 
@@ -160,6 +161,7 @@ async def create_resource_task(
     "/create-resource",
     summary="创建资源",
     description="接收创建资源请求，返回 task_id，后台异步执行任务",
+    dependencies=[Depends(get_current_user)],
 )
 async def trigger_resource_create(
     request: ResourceCreateRequest,
@@ -256,8 +258,15 @@ async def websocket_endpoint(
         await websocket.close(code=1008, reason=e.detail)
         return
 
-    # 将连接加入连接池
-    await connection_manager.connect(websocket)
+    async def session_valid() -> bool:
+        try:
+            await get_current_user(authorization=token)
+            return True
+        except HTTPException:
+            return False
+
+    # Validate before each outbound message, including broadcasts and replies.
+    await connection_manager.connect(websocket, validator=session_valid)
     logger.info("WebSocket 连接已加入连接池")
 
     # 标记连接状态，避免重复操作
@@ -267,8 +276,16 @@ async def websocket_endpoint(
         # 循环接收客户端消息
         while is_connected:
             # 接收前端的指令
-            data = await websocket.receive_text()
-            logger.debug(f"收到 WebSocket 消息: {data}")
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(), timeout=SESSION_CHECK_INTERVAL
+                )
+            except asyncio.TimeoutError:
+                if not await connection_manager.validate(websocket):
+                    break
+                continue
+            if not await connection_manager.validate(websocket):
+                break
 
             try:
                 import json
@@ -278,12 +295,12 @@ async def websocket_endpoint(
 
                 # 处理 ping 指令
                 if req.get("action") == "ping":
-                    await websocket.send_json({"status": "ok"})
+                    await connection_manager.send_message(websocket, {"status": "ok"})
                     logger.debug("响应 ping 消息")
 
                 else:
                     # 未知指令，返回提示
-                    await websocket.send_json({
+                    await connection_manager.send_message(websocket, {
                         "status": "error",
                         "message": f"未知指令: {req.get('action')}",
                     })
@@ -291,7 +308,7 @@ async def websocket_endpoint(
 
             except JSONDecodeError as e:
                 # JSON 解析失败
-                await websocket.send_json({
+                await connection_manager.send_message(websocket, {
                     "status": "error",
                     "message": f"指令格式错误：{str(e)}",
                 })
@@ -299,7 +316,7 @@ async def websocket_endpoint(
 
             except Exception as e:
                 # 其他处理错误
-                await websocket.send_json({
+                await connection_manager.send_message(websocket, {
                     "status": "error",
                     "message": f"处理指令失败：{str(e)}",
                 })
@@ -307,8 +324,8 @@ async def websocket_endpoint(
 
     except WebSocketDisconnect:
         logger.info("WebSocket 连接已断开（正常关闭）")
-        await connection_manager.disconnect(websocket)
 
     except Exception as e:
         logger.error(f"WebSocket 异常：{e}")
+    finally:
         await connection_manager.disconnect(websocket)

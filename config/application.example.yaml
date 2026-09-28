@@ -1,0 +1,47 @@
+# Release template only. Configure deployment-specific values after installation.
+# No installation's credentials, certificates, node list, or state belongs here.
+root_dir: /opt/kubengine
+domain: example.invalid
+registry:
+  username: ""
+  password: ""
+auth:
+  jwt:
+    algorithm: HS256
+    token:
+      expire_minutes: 30
+      renew_threshold_minutes: 5
+  users:
+    admin:
+      password_hash: ""
+      ak: ""
+      sk_hash: ""
+tls:
+  root_dir: /opt/kubengine/config/certs
+  ca_password: ""
+  ca_common_name: "Local deployment CA"
+  ca_organization_name: "Local deployment"
+  ca_email_address: ""
+  ca_valid_days: 3650
+  ca_key_length: 4096
+kubernetes:
+  master:
+    ip: ""
+    additional_ips: []
+    control-plane-endpoint: ""
+    interface: ""
+    schedulable: false
+  worker:
+    ips: []
+  cidr:
+    service: 10.96.0.0/16
+    pod: 10.97.0.0/16
+  loadbalancer:
+    ip-pools: []
+  nameserver: []
+cluster:
+  nodes: []
+  hostnames: {}
+logger:
+  level: INFO
+  console: true

@@ -1,9 +1,12 @@
 # RPM spec 文件用于 KubeEngine 项目
 # 使用方法（Cython 编译模式）：
-#   1. 准备源码包: tar -czf kubengine-0.1.0.tar.gz --exclude='*.pyc' --exclude='__pycache__' .
+#   1. 从干净且已提交的源码生成白名单归档:
+#      python3.11 scripts/create_source_archive.py --repo . --prefix kubengine-0.1.0 --output kubengine-0.1.0.tar.gz
 #   2. 移动源码包: mv kubengine-0.1.0.tar.gz ~/rpmbuild/SOURCES/
 #   3. 复制 spec 文件: cp kubengine.spec ~/rpmbuild/SPECS/
 #   4. 构建 RPM: rpmbuild -ba ~/rpmbuild/SPECS/kubengine.spec
+#   或使用 scripts/build_rpm.sh 执行同样的安全归档与构建流程。
+#   不要直接打包工作目录；运行配置、token 和私钥不能进入发布源码包。
 #
 # 注意：使用 Cython 编译模式，将 Python 代码编译为 C 扩展以提升性能和保护源码
 
@@ -105,10 +108,8 @@ mkdir -p %{buildroot}%{_localstatedir}/lib/%{project_name}
 mkdir -p %{buildroot}%{_localstatedir}/log/%{project_name}
 mkdir -p %{buildroot}%{_unitdir}
 
-# 复制配置文件到 /opt/kubengine/config（如果存在）
-if [ -f config/application.yaml ]; then
-    install -p -D -m 644 config/application.yaml %{buildroot}%{kubengine_dir}/config/application.yaml
-fi
+# Only install the anonymous release template, never a build host's live config.
+install -p -D -m 600 config/application.example.yaml %{buildroot}%{kubengine_dir}/config/application.yaml
 
 # 静态文件已通过 Python 包自动打包（src/web/static）
 # 此处保留用于根目录的额外静态资源（如徽章、logo）
@@ -166,7 +167,7 @@ EOF
 
 # 设置权限
 chmod 755 %{buildroot}%{kubengine_dir}
-chmod 644 %{buildroot}%{kubengine_dir}/config/application.yaml
+chmod 600 %{buildroot}%{kubengine_dir}/config/application.yaml
 
 %files
 %doc README.md
@@ -208,16 +209,21 @@ echo "=========================================="
     'PyYAML>=6.0.3' \
     'toml>=0.10.2' \
     'jwt>=1.4.0' \
-    'click>=8.0.0' \
-    2>/dev/null || true
+    'click>=8.0.0' || {
+        echo "Python dependency installation failed; KubeEngine is not ready" >&2
+        exit 1
+    }
+
+# 初始化数据库
+if [ ! -f %{kubengine_dir}/config/sqlite.db ]; then
+    %{python311} -m cli.app app init-data || {
+        echo "KubeEngine data initialization failed" >&2
+        exit 1
+    }
+fi
 
 echo "Installation completed"
 echo "=========================================="
-
-# 初始化数据库
-if [ ! -f %{_localstatedir}/lib/%{project_name}/kubengine.db ]; then
-    %{python311} -m cli.app init-data 2>/dev/null || true
-fi
 
 # 重新加载 systemd
 systemctl daemon-reload &>/dev/null || true

@@ -14,6 +14,7 @@ from typing import Any, Callable, Iterator, Mapping, Optional, TextIO, TypeVar, 
 from uuid import uuid4
 
 from core.config.application import Application
+from core.redaction import command_secrets, redact_text, redact_value, safe_command
 # 新增：导入Rich日志处理器和控制台类型（适配rich）
 from rich.console import Console
 
@@ -154,11 +155,43 @@ def with_new_log_context(field: str, prefix: str = "") -> Callable[[F], F]:
     return decorator
 
 
+_STANDARD_RECORD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__)
+
+
+def _redact_log_record(record: logging.LogRecord) -> tuple[str, ...]:
+    """Remove credentials from messages, extras and cached exception text."""
+    message = record.getMessage()
+    command = getattr(record, "command", None)
+    secrets = (
+        *command_secrets(message),
+        *(command_secrets(command) if isinstance(command, (str, list, tuple)) else ()),
+    )
+    record.msg = redact_text(message, secrets)
+    record.args = ()
+    for key, value in tuple(record.__dict__.items()):
+        if key not in _STANDARD_RECORD_FIELDS:
+            setattr(record, key, redact_value(value, secrets))
+    if isinstance(command, (str, list, tuple)):
+        record.command = redact_text(safe_command(command), secrets)
+    if record.exc_info:
+        record.exc_text = redact_text(
+            logging.Formatter().formatException(record.exc_info), secrets
+        )
+        # A structured handler must not retain the original exception object.
+        record.exc_info = None
+    elif record.exc_text:
+        record.exc_text = redact_text(record.exc_text, secrets)
+    if record.stack_info:
+        record.stack_info = redact_text(record.stack_info, secrets)
+    return secrets
+
+
 class LogContextFilter(logging.Filter):
     """向每条日志记录注入固定字段和紧凑的可读后缀。"""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        context = get_log_context()
+        secrets = _redact_log_record(record)
+        context = redact_value(get_log_context(), secrets)
         for field in LOG_CONTEXT_FIELDS:
             setattr(record, field, context.get(field, "-"))
         record.context_suffix = "".join(
@@ -173,7 +206,8 @@ class ReadableFormatter(logging.Formatter):
     """移除第三方组件写入的 ANSI 控制符，避免污染文件日志。"""
 
     def format(self, record: logging.LogRecord) -> str:
-        formatted = super().format(record)
+        _redact_log_record(record)
+        formatted = redact_text(super().format(record))
         if Application.LOGGER_CONFIG.STRIP_ANSI:
             return _ANSI_ESCAPE_PATTERN.sub("", formatted)
         return formatted
@@ -458,7 +492,13 @@ def log_lifecycle_event(
     当前文件日志仍是人类可读格式，因此同时将字段写入消息和
     ``LogRecord``。后续切换 JSON formatter 时可直接复用这些字段。
     """
-    explicit_fields = {key: value for key, value in fields.items() if value is not None}
+    command = fields.get("command")
+    secrets = command_secrets(command) if isinstance(command, (str, list, tuple)) else ()
+    explicit_fields = redact_value(
+        {key: value for key, value in fields.items() if value is not None}, secrets
+    )
+    if isinstance(command, (str, list, tuple)):
+        explicit_fields["command"] = safe_command(command)
     max_field_length = max(
         50, int(Application.LOGGER_CONFIG.MAX_EVENT_FIELD_LENGTH)
     )

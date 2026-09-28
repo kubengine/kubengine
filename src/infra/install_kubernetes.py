@@ -1,10 +1,12 @@
 """安装kubernetes"""
 from io import StringIO
 import os
+import shlex
 from pyinfra.operations import server
 from pyinfra.context import host
 
 from _offline_transfer import YUM_OP_SECONDS, import_seconds, op_timeout, pull
+from _kubernetes_bootstrap import guarded_kubeadm
 
 data = host.data
 
@@ -40,9 +42,9 @@ server.yum.repo(
     present=False
 )
 server.systemd.service(
-    name="Disable and enable kubelet service (keep stopped initially)",
+    name="Ensure kubelet is enabled and running",
     service="kubelet",
-    running=False,
+    running=True,
     enabled=True
 )
 
@@ -104,14 +106,13 @@ if "master" in host.groups:
     cpe = data.control_plane_endpoint or master_ip
     server.shell(
         name="Initialize Kubernetes control plane",
-        commands=" ".join(["kubeadm", "init",
+        commands=guarded_kubeadm(shlex.join(["kubeadm", "init",
                            f"--apiserver-advertise-address={master_ip}",
                            f"--control-plane-endpoint={cpe}",
                            "--kubernetes-version=v1.34.0",
                            f"--service-cidr={service_cidr}",
                            f"--pod-network-cidr={pod_cidr}",
-                           "--upload-certs",
-                           "--ignore-preflight-errors=all"])
+                           "--upload-certs"]), "master")
     )
     server.files.line(
         name="Ensure KUBECONFIG is set in /etc/profile for master node",

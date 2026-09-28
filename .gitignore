@@ -102,9 +102,10 @@ Thumbs.db
 # FastAPI / ASGI
 *.pid
 
-# Config directory - only keep application.yaml
+# Keep the release template visible; runtime files remain ignored.
 config/*
 !config/application.yaml
+!config/application.example.yaml
 
 # Static files generated
 static/*.png

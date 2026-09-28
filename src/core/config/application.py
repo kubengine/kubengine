@@ -168,7 +168,7 @@ class RegistryConfig:
     包含镜像仓库用户名、密码等相关的配置参数。
     """
     USERNAME: ClassVar[str] = "admin"
-    PASSWORD: ClassVar[str] = "Harbor@123"
+    PASSWORD: ClassVar[str] = ""
 
 
 @map_config_to_class(

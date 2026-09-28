@@ -25,7 +25,6 @@ KubeEngine 统一命令行工具
 """
 
 import os
-import uuid
 import click
 
 from sqlalchemy import text
@@ -183,8 +182,7 @@ def set_password(password: str) -> None:
     """
     设置管理员密码
 
-    设置管理员账号的密码，并在首次设置或用户确认时生成 AK/SK 密钥对。
-    密码修改后会保存到配置文件中。
+    设置管理员账号密码，保存到实际加载的配置文件并使旧会话失效。
 
     Args:
         password: 新密码
@@ -194,33 +192,9 @@ def set_password(password: str) -> None:
 
     # 更新密码哈希
     config.auth.users.admin.password_hash = get_password_hash(password)
-    logger.info("管理员密码已更新")
-
-    # 判断是否需要生成 AK/SK
-    gen_ak_flag = False
-    if config.auth.users.admin.ak:
-        # 如果已有 AK，询问是否重新生成
-        gen_ak_flag = click.confirm("是否需要重新生成 AK/SK?")
-    else:
-        # 如果 AK 为空，说明是第一次设置密码，需要生成 AK 和 SK
-        gen_ak_flag = True
-
-    new_ak = ""
-    new_sk = ""
-
-    if gen_ak_flag:
-        # 生成新的 AK/SK
-        new_ak = f"AK{uuid.uuid4().hex.upper()[:8]}"
-        new_sk = f"SK{uuid.uuid4().hex.upper()[:16]}"
-        sk_hash = get_password_hash(new_sk)
-
-        config.auth.users.admin.ak = new_ak
-        config.auth.users.admin.sk_hash = sk_hash
-        logger.info("AK/SK 密钥对已生成")
 
     # 保存配置到文件
-    config_path = os.path.join(
-        Application.ROOT_DIR, "config", "application.yaml")
+    config_path = config._source_path
     config.save_to_file(config_path)
     logger.info(f"配置已保存到: {config_path}")
 
@@ -230,27 +204,7 @@ def set_password(password: str) -> None:
     _print_separator()
     click.echo()
 
-    # 如果生成了新的 AK/SK，输出密钥信息
-    if gen_ak_flag:
-        _print_separator()
-        click.echo(click.style("AK/SK 信息生成成功！", fg="green", bold=True))
-        click.echo(click.style(f"AK: {new_ak}", fg="green"))
-        click.echo(click.style(f"SK: {new_sk}", fg="green", bold=True))
-        click.echo(click.style("重要提示：", fg="yellow", bold=True))
-        click.echo(
-            click.style(
-                "1. SK 仅显示一次，已无法找回，请立即保存！",
-                fg="yellow",
-            )
-        )
-        click.echo(
-            click.style(
-                "2. 旧 AK/SK 已失效，请更新所有依赖服务的配置！",
-                fg="yellow",
-            )
-        )
-        _print_separator()
-        click.echo()
+    click.echo("旧登录会话已失效，请重新登录。旧 AK/SK 签名认证已停用，请使用 Bearer Token。")
 
 
 @app.command()

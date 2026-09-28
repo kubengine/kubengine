@@ -11,6 +11,8 @@ from core.logger import (
     log_lifecycle_event,
 )
 from typing import BinaryIO, Optional, Literal
+from collections.abc import Mapping, Sequence
+from core.redaction import command_secrets, redact_known_values, redact_text, safe_command
 import logging
 import os
 import signal
@@ -152,7 +154,7 @@ class CommandResult:
 class CommandError(Exception):
     """Exception raised when command execution fails."""
 
-    def __init__(self, command: str, result: CommandResult, message: Optional[str] = None):
+    def __init__(self, command: str | Sequence[str], result: CommandResult, message: Optional[str] = None):
         """Initialize command error.
 
         Args:
@@ -160,15 +162,15 @@ class CommandError(Exception):
             result: Command result object
             message: Custom error message
         """
-        self.command = command
+        self.command = safe_command(command)
         self.result = result
-        self.message = message or f"Command failed: {command}"
+        self.message = redact_text(message or f"Command failed: {self.command}", command_secrets(command))
 
         super().__init__(self.message)
 
 
 def execute_command(
-    cmd: str,
+    cmd: str | Sequence[str],
     timeout: float = 6000,
     log_output: bool = True,
     *,
@@ -178,11 +180,15 @@ def execute_command(
     error_message: Optional[str] = None,
     # 向后兼容参数
     exit: Optional[bool] = None,
+    env: Optional[Mapping[str, str]] = None,
+    sensitive_values: Sequence[str] = (),
 ) -> CommandResult:
     """Execute a shell command with comprehensive error handling.
 
     Args:
-        cmd: The shell command to execute.
+        cmd: Argument list (no shell), or a legacy trusted shell command.
+        env: Environment overrides for the child process.
+        sensitive_values: Additional values to remove from logs and results.
         timeout: Timeout in seconds, defaults to 6000.
         log_output: Whether to log output, defaults to True.
         fail_action: How to handle failure:
@@ -209,18 +215,21 @@ def execute_command(
     # 为并发命令分配独立标识，便于关联开始、结束及超时日志。
     command_id = f"local-{uuid4().hex[:12]}"
     with bind_log_context(command_id=command_id):
-        result = _execute_command_core(cmd, timeout, log_output)
+        result = _execute_command_core(cmd, timeout, log_output, env, sensitive_values)
         # 统一的错误处理也保留命令上下文。
         if result.is_failure() and fail_action != 'none':
             _handle_command_failure(
-                cmd, result, fail_action, exit_code, error_message)
+                safe_command(cmd), result, fail_action, exit_code,
+                redact_text(error_message, (*command_secrets(cmd), *sensitive_values)) if error_message else None)
         return result
 
 
 def _execute_command_core(
-    cmd: str,
+    cmd: str | Sequence[str],
     timeout: float,
-    log_output: bool
+    log_output: bool,
+    env: Optional[Mapping[str, str]] = None,
+    sensitive_values: Sequence[str] = (),
 ) -> CommandResult:
     """Execute a command and guarantee that a timeout kills all descendants.
 
@@ -263,13 +272,18 @@ def _execute_command_core(
         lines = [line.strip() for line in stderr.splitlines() if line.strip()]
         return lines[-1][:500] if lines else None
 
+    secrets = (*command_secrets(cmd), *sensitive_values)
+    display_command = redact_text(safe_command(cmd), sensitive_values)
+    child_env = log_context_environment(os.environ)
+    if env:
+        child_env.update(env)
     started_at = time.monotonic()
     log_lifecycle_event(
         log,
         "command_start",
         level=logging.DEBUG,
         executor="local",
-        command=cmd,
+        command=display_command,
         timeout_seconds=timeout,
     )
 
@@ -280,13 +294,13 @@ def _execute_command_core(
         ):
             process = subprocess.Popen(
                 cmd,
-                shell=True,
+                shell=isinstance(cmd, str),
                 stdout=stdout_file,
                 stderr=stderr_file,
                 start_new_session=True,
-                env=log_context_environment(os.environ),
+                env=child_env,
             )
-            log.debug("Executing command in process group %s: %s", process.pid, cmd)
+            log.debug("Executing command in process group %s: %s", process.pid, display_command)
             timed_out = False
             try:
                 return_code = process.wait(timeout=timeout)
@@ -294,7 +308,7 @@ def _execute_command_core(
                 timed_out = True
                 log.error(
                     "Execute command [%s] timeout [%s]s; terminating pgid=%s",
-                    cmd,
+                    display_command,
                     timeout,
                     process.pid,
                 )
@@ -314,17 +328,30 @@ def _execute_command_core(
                 if process.poll() is None:
                     process.wait()
                 return_code = 124
+            except BaseException:
+                _signal_group(process, signal.SIGTERM)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                if _group_exists(process):
+                    _signal_group(process, signal.SIGKILL)
+                if process.poll() is None:
+                    process.wait()
+                raise
 
-            stdout = _read_output(stdout_file)
-            stderr = _read_output(stderr_file)
+            stdout = redact_known_values(_read_output(stdout_file), secrets)
+            stderr = redact_known_values(_read_output(stderr_file), secrets)
             if timed_out:
                 timeout_message = f"execute command timeout after {timeout}s"
                 stderr = f"{stderr}\n{timeout_message}".strip()
 
             if log_output:
-                for line in stdout.splitlines():
+                # Match multiline secrets (such as generated PEM keys) before
+                # splitting. Keep generated output intact for the caller.
+                for line in redact_text(stdout).splitlines():
                     log.debug("[STDOUT] %s", line)
-                for line in stderr.splitlines():
+                for line in redact_text(stderr).splitlines():
                     log.debug("[STDERR] %s", line)
             result = CommandResult(return_code, stdout, stderr)
             log_lifecycle_event(
@@ -332,7 +359,7 @@ def _execute_command_core(
                 "command_end",
                 level=logging.INFO if result.is_success() else logging.ERROR,
                 executor="local",
-                command=cmd,
+                command=display_command,
                 status=(
                     "success"
                     if result.is_success()
@@ -344,28 +371,28 @@ def _execute_command_core(
                 process_id=process.pid,
                 stdout_bytes=len(stdout.encode("utf-8")),
                 stderr_bytes=len(stderr.encode("utf-8")),
-                error=_error_summary(stderr) if result.is_failure() else None,
+                error=_error_summary(redact_text(stderr)) if result.is_failure() else None,
             )
             return result
     except Exception as exc:
-        log.exception("Execute command [%s] got exception", cmd)
+        log.error("Execute command [%s] got exception: %s", display_command, redact_text(str(exc), secrets))
         log_lifecycle_event(
             log,
             "command_end",
             level=logging.ERROR,
             executor="local",
-            command=cmd,
+            command=display_command,
             status="failed",
             duration_ms=round((time.monotonic() - started_at) * 1000),
             exit_code=1,
             timed_out=False,
-            error=str(exc),
+            error=redact_text(str(exc), secrets),
         )
-        return CommandResult(1, "", f"execute command error: {exc}")
+        return CommandResult(1, "", f"execute command error: {redact_text(str(exc), secrets)}")
 
 
 def _handle_command_failure(
-    cmd: str,
+    cmd: str | Sequence[str],
     result: CommandResult,
     fail_action: Literal['exit', 'raise'],
     exit_code: int,

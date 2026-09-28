@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 import threading
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -357,7 +359,7 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
         self._frozen = False
 
     @classmethod
-    def load_from_file(cls: Type[T], file_path: str, format: Optional[str] = None) -> T:
+    def load_from_file(cls: Type[T], file_path: str, format: Optional[str] = None, *, use_cache: bool = True) -> T:
         """从文件加载配置（支持JSON/YAML/TOML）
 
         Args:
@@ -373,7 +375,7 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
         """
         # 缓存命中检查
         with _CACHE_LOCK:
-            if file_path in _FILE_CACHE:
+            if use_cache and file_path in _FILE_CACHE:
                 return cast(T, _FILE_CACHE[file_path])
 
         # 自动识别格式
@@ -409,10 +411,12 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
             raise FileNotFoundError(f"配置文件不存在：{file_path}") from e
 
         config = cls(data)
+        config._source_path = str(Path(file_path).resolve())
 
         # 缓存结果
-        with _CACHE_LOCK:
-            _FILE_CACHE[file_path] = config
+        if use_cache:
+            with _CACHE_LOCK:
+                _FILE_CACHE[file_path] = config
 
         return config
 
@@ -453,21 +457,28 @@ class ConfigDict(dict[str, Any], MutableMapping[str, Any]):
 
         raw_data = to_raw_dict(self)
 
-        # ===================== 新增：TOML 写入逻辑 =====================
-        # 写入文件
-        with open(file_path, "w", encoding="utf-8") as f:
-            if format == "json":
-                json.dump(raw_data, f, ensure_ascii=False, indent=indent)
-            elif format == "yaml":
-                yaml.safe_dump(raw_data, f, allow_unicode=True,
-                               sort_keys=False)
-            elif format == "toml":
-                # TOML写入依赖第三方toml库
-                if toml is None:
-                    raise ImportError("保存TOML文件需要安装toml库：pip install toml")
-                toml.dump(raw_data, f)
-            else:
-                raise ValueError(f"不支持的文件格式：{format}")
+        # Write completely before replacing the published configuration.
+        target = Path(file_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                if format == "json":
+                    json.dump(raw_data, stream, ensure_ascii=False, indent=indent)
+                elif format == "yaml":
+                    yaml.safe_dump(raw_data, stream, allow_unicode=True, sort_keys=False)
+                elif format == "toml":
+                    if toml is None:
+                        raise ImportError("保存TOML文件需要安装toml库：pip install toml")
+                    toml.dump(raw_data, stream)
+                else:
+                    raise ValueError(f"不支持的文件格式：{format}")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+
 
     def merge(
         self,

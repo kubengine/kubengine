@@ -147,11 +147,16 @@ class HelmResourceChecker:
 
         Returns:
             包含检查结果的字典：
-                - status: 整体状态（True/False）
+                - status: 是否已确认匹配的 Pod 健康（True/False）
                 - details: 详细信息列表
+
+            不创建 Pod 或已清理 Job Pod 的 Chart 无法通过此检查确认健康；
+            返回 False 和明确说明，需要使用相应资源类型的检查器。
         """
         poll_times = 0
-        overall_pod_result: dict[str, Any] = {"status": True, "details": []}
+        overall_pod_result: dict[str, Any] = {
+            "status": False, "details": ["尚未完成 Pod 健康检查"],
+        }
 
         logger.info(
             f"开始轮询 Pod 状态（间隔 {POLL_INTERVAL_SECONDS} 秒，"
@@ -176,8 +181,23 @@ class HelmResourceChecker:
                 return {"status": False, "details": [error_msg]}
 
             if not pods.items:
-                current_pod_result["details"].append("无 Pod 资源")
-                break
+                # Controllers may not have created Pods yet. An empty result
+                # is unverified, never proof that an application is healthy.
+                overall_pod_result = {
+                    "status": False,
+                    "reason": "no_matching_pods",
+                    "details": [
+                        "未发现匹配 Helm release 标签的 Pod，无法确认应用健康；"
+                        "不创建 Pod 或 Job Pod 已清理的 Chart 需要对应资源类型的健康检查",
+                    ],
+                }
+                if poll_times < MAX_POLL_TIMES:
+                    time.sleep(POLL_INTERVAL_SECONDS)
+                else:
+                    overall_pod_result["details"].append(
+                        f"已达到最大轮询次数 {MAX_POLL_TIMES}，仍未发现匹配的 Pod"
+                    )
+                continue
 
             # 2. 检查每个 Pod 的状态
             for pod in pods.items:  # type: ignore

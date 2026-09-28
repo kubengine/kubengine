@@ -206,7 +206,8 @@ def _validate_host_hostname_mapping(
 def _build_ssh_params(
     username: str,
     password: str,
-    key_file: str
+    key_file: str,
+    known_hosts: Optional[str] = None,
 ) -> Dict[str, Any]:
     """构建 SSH 连接参数
 
@@ -224,6 +225,8 @@ def _build_ssh_params(
         ssh_kwargs["password"] = password
     else:
         ssh_kwargs["client_keys"] = [os.path.expanduser(key_file)]
+    if known_hosts is not None:
+        ssh_kwargs["known_hosts"] = os.path.expanduser(known_hosts)
 
     return ssh_kwargs
 
@@ -257,11 +260,20 @@ async def configure_cluster_workflow(
 
         if unreachable_hosts:
             click.echo(
+                "SSH 使用严格主机密钥校验。首次纳管请通过可信渠道核对主机指纹，"
+                "并配置 ~/.ssh/known_hosts 或传入 --known-hosts <已核验的文件>；"
+                "主机密钥变化须人工核实，不能直接信任 ssh-keyscan 输出。",
+                err=True,
+            )
+            click.echo(
                 click.style(
                     f"警告: 不可达节点: {', '.join(unreachable_hosts)}",
                     fg="yellow"
                 )
             )
+
+            if not reachable_hosts:
+                raise click.ClickException("没有通过 SSH 认证和主机密钥校验的节点")
 
             if not click.confirm(
                 "是否继续仅配置可达节点？",
@@ -277,6 +289,8 @@ async def configure_cluster_workflow(
                 for host in reachable_hosts
                 if host in host_hostname_map
             }
+        if not hosts:
+            raise click.ClickException("没有通过 SSH 认证和主机密钥校验的节点")
 
         # 步骤 2: 设置主机名
         click.echo(click.style(
@@ -329,9 +343,7 @@ async def configure_cluster_workflow(
                 )
             )
 
-        # 步骤 3.1: 报告 known_hosts 刷新结果
-        # 这一步失败意味着在那些机器上，不带 -o StrictHostKeyChecking=no 的
-        # ssh 仍然会停在 yes 确认上（非交互场景直接失败），必须显式告知。
+        # Report failures without discarding or silently replacing prior trust.
         known_hosts_failures = trust_result.get('known_hosts_failures') or {}
         ssh_failures = trust_result.get('ssh_failures') or {}
         scan_missing = trust_result.get('scan_missing') or []
@@ -347,7 +359,7 @@ async def configure_cluster_workflow(
         if known_hosts_failures:
             click.echo(
                 click.style(
-                    "\n以下节点刷新 known_hosts 失败（普通 ssh 会卡在 yes 确认上）：",
+                    "\n以下节点更新 known_hosts 失败；已有信任记录保持不变，请核验冲突：",
                     fg="red"
                 )
             )
@@ -380,13 +392,12 @@ async def configure_cluster_workflow(
             await _verify_ssh_trust(ssh_client, hosts, **ssh_kwargs)
 
         # 步骤 5: 保存集群配置
+        if trust_result.get('error'):
+            raise click.ClickException(str(trust_result['error']))
         await _save_cluster_config(hosts, host_hostname_map)
 
     except Exception as e:
-        click.echo(
-            click.style(f"配置工作流失败: {str(e)}", fg="red"),
-            err=True
-        )
+        raise click.ClickException(f"配置工作流失败: {str(e)}") from e
     finally:
         await ssh_client.close_all_connections()
         click.echo(click.style(
@@ -616,13 +627,19 @@ def _display_command_result(result: Dict[str, Any]) -> None:
     default=False,
     help="跳过 SSH 互信验证"
 )
+@click.option(
+    "--known-hosts",
+    type=click.Path(exists=True, dir_okay=False),
+    help="首次纳管可指定经可信渠道核验的 SSH 主机公钥文件；默认严格使用 known_hosts",
+)
 def configure_cluster_command(
     hosts: Optional[List[str]],
     hostname_map: Optional[str],
     username: str,
     password: str,
     key_file: str,
-    skip_verify: bool
+    skip_verify: bool,
+    known_hosts: Optional[str] = None,
 ) -> None:
     """配置集群主机名和 SSH 互信
 
@@ -654,7 +671,7 @@ def configure_cluster_command(
         _validate_host_hostname_mapping(loaded_hosts, loaded_hostname_map)
 
         # 构建 SSH 连接参数
-        ssh_kwargs = _build_ssh_params(username, password, key_file)
+        ssh_kwargs = _build_ssh_params(username, password, key_file, known_hosts)
 
         # 执行配置工作流
         asyncio.run(

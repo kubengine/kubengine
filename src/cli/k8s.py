@@ -548,6 +548,7 @@ class K8sDeployer:
 
     def _filter_pending_files(self) -> List[Tuple[Path, str]]:
         """过滤出需要执行的文件（防幂等）"""
+        self._validate_bootstrap_state()
         # 过滤掉手动配置跳过的infra文件
         active_files = [
             (fp, desc) for fp, desc in self.deployment_files
@@ -594,6 +595,32 @@ class K8sDeployer:
                 f"检测到 {completed_count} 个组件已完成，{len(pending_files)} 个组件待部署")
 
         return pending_files
+
+    def _validate_bootstrap_state(self) -> None:
+        """Never reinterpret an existing control plane as a fresh deployment."""
+        if not self.deployment_state.should_force_redeploy(self.config.get_config_hash()):
+            return
+        markers = (
+            "/etc/kubernetes/admin.conf",
+            "/etc/kubernetes/kubelet.conf",
+            "/etc/kubernetes/manifests/kube-apiserver.yaml",
+            "/etc/kubernetes/pki/ca.crt",
+            "/var/lib/etcd/member",
+        )
+        for marker in markers:
+            try:
+                Path(marker).lstat()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise K8sDeploymentError(
+                    f"无法安全检查已有控制面状态 {marker}，已停止部署"
+                ) from exc
+            raise K8sDeploymentError(
+                "检测到已有 Kubernetes 控制面，但配置已变化或部署状态缺失。"
+                "deploy 不能自动重置状态并重新初始化；请恢复匹配的配置/部署状态后续跑，"
+                "新增 Worker 请使用 scale，其他配置变化需单独规划更新。"
+            )
 
     async def validate_environment(self) -> bool:
         """验证部署环境"""
@@ -729,6 +756,10 @@ class K8sDeployer:
     def _show_deployment_results(self) -> None:
         """显示部署成功结果"""
         loadbalancer_ip = self.config.get_loadbalancer_ip()
+        registry_credential_status = (
+            "已配置" if Application.REGISTRY.USERNAME and Application.REGISTRY.PASSWORD
+            else "未配置"
+        )
         # 高可用模式下优先使用控制面端点（VIP），否则用 master IP
         apiserver_endpoint = (
             Application.K8S_CONFIG.CONTROL_PLANE_ENDPOINT
@@ -772,9 +803,8 @@ class K8sDeployer:
     ├─ KubeBoard管理面板:     https://kuboard.{Application.DOMAIN}
     └─ K8s APIServer:         http://{apiserver_endpoint}:6443
 
-    默认账号密码（请及时修改！）：
-    ├─ Harbor默认账号:        {getattr(Application.REGISTRY, 'USERNAME', 'admin')}
-    ├─ Harbor默认密码:        {getattr(Application.REGISTRY, 'PASSWORD', 'Harbor@123')}
+    组件访问凭据：
+    ├─ Harbor凭据:            {registry_credential_status}（通过 registry.username/password 管理）
     ├─ Longhorn无默认密码     （基于K8s RBAC认证）
     └─ Dashboard令牌获取:     kubectl -n kubernetes-dashboard create token admin-user
 
@@ -787,7 +817,7 @@ class K8sDeployer:
 
     重要提醒：
     1. 请确保所有节点已配置上述域名映射（/etc/hosts）
-    2. 首次登录Harbor请立即修改默认密码
+    2. 请妥善管理组件访问凭据，Harbor改密后同步更新 registry.password
     3. 建议备份 {Application.TLS_CONFIG.ROOT_DIR} 证书目录
     4. 如访问面板异常，请检查节点防火墙/SELinux配置
     5. 请耐心等待10分钟左右，通过 kubectl get pods -A 检查所有Pod状态正常后即可使用
@@ -835,6 +865,8 @@ class K8sDeployer:
     async def deploy(self) -> bool:
         """执行完整的部署流程"""
         try:
+            # Run before certificate generation or any node mutation.
+            self._validate_bootstrap_state()
             # 环境验证
             if not await self.validate_environment():
                 return False

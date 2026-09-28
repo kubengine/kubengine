@@ -41,21 +41,21 @@ class HarborClient(BasicClient):
     def __init__(
         self,
         base_url: Optional[str] = None,
-        username: str = "admin",
-        password: str = "Harbor@123",
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ) -> None:
         """
         初始化 Harbor 客户端
 
         Args:
             base_url: Harbor 服务的基础 URL
-            username: Harbor 用户名
-            password: Harbor 密码
+            username: Harbor 用户名；未指定时使用 registry.username
+            password: Harbor 密码；未指定时使用 registry.password
         """
         super().__init__()
         self.base_url = base_url or f"https://{Application.DOMAIN}"
-        self.username = username
-        self.password = password
+        self.username = Application.REGISTRY.USERNAME if username is None else username
+        self.password = Application.REGISTRY.PASSWORD if password is None else password
         self.base_uri = "/api/v2.0"
 
     def get_projects(
