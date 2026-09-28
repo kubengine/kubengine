@@ -94,8 +94,8 @@ versions:
     - glibc-static
     - libstdc++-devel
     - boost-devel
-    - eigen3-devel
-    - openblas-devel
+    # - eigen3-devel
+    # - openblas-devel
     - lapack-devel
     - cmake3
     - make
