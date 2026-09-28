@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from jwt import JWT
-from core.orm.auth import revoke_token
+from core.orm.auth import revoke_session, revoke_token
 from starlette.concurrency import run_in_threadpool
 
 from web.utils.auth import (
@@ -51,12 +51,13 @@ async def login(form_data: LoginRequest):
 @router.post("/logout", summary="用户登出（失效令牌）")
 @auth_with_renew(renew_threshold=0)
 async def logout(request: Request, current_user: User):
-    """登出：持久化撤销当前 Token，不签发续期令牌。"""
+    """登出：持久化撤销整个登录会话及其续签令牌。"""
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
         try:
             payload = jwt.decode(token, signing_key, algorithms={ALGORITHM})
+            revoke_session(payload["sid"])
             revoke_token(token, int(payload["exp"]))
         except Exception as exc:
             raise HTTPException(status_code=503, detail="令牌撤销失败，请重试") from exc

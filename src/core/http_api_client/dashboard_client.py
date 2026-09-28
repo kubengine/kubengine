@@ -91,7 +91,7 @@ class DashboardClient(BasicClient):
         response = requests.get(
             url,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -113,7 +113,7 @@ class DashboardClient(BasicClient):
         response = requests.get(
             url,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -182,7 +182,7 @@ class DashboardClient(BasicClient):
             url,
             params=params,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -275,7 +275,7 @@ class DashboardClient(BasicClient):
             url,
             params=params,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -305,7 +305,7 @@ class DashboardClient(BasicClient):
         response = requests.get(
             url,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -344,6 +344,6 @@ class DashboardClient(BasicClient):
             url,
             params=params,
             headers={"Authorization": f"Bearer {self.token}"},
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return self.api_result(response)

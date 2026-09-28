@@ -80,9 +80,9 @@ def mock_commands(monkeypatch, refs, on_push=None):
 
     def run(argv, **kwargs):
         assert isinstance(argv, list)
-        if argv[:5] == ["ctr", "-n", "apps", "i", "ls"]:
+        if argv[0] == "ctr" and argv[3:5] == ["i", "ls"]:
             return CommandResult(0, "\n".join(refs), "")
-        if argv[:5] == ["ctr", "-n", "apps", "i", "push"]:
+        if argv[0] == "ctr" and argv[3:5] == ["i", "push"]:
             pushed.append(argv[-1])
             if on_push:
                 on_push(argv[-1])
@@ -227,7 +227,7 @@ def test_old_and_new_attempts_never_overlap_namespace_or_cleanup(image_queue, mo
 
     def run(argv, **kwargs):
         actor = local.actor
-        action = argv[4] if argv[0] == "ctr" else "proxy"
+        action = (argv[4] if argv[1] == "-n" else "namespace-" + argv[2]) if argv[0] == "ctr" else "proxy"
         operations.append((actor, action))
         if actor == "new":
             new_command.set()
@@ -258,7 +258,8 @@ def test_old_and_new_attempts_never_overlap_namespace_or_cleanup(image_queue, mo
             first.result(timeout=5)
         second.result(timeout=5)
     first_new = next(index for index, entry in enumerate(operations) if entry[0] == "new")
-    assert operations[first_new - 1] == ("old", "prune")
+    assert ("old", "prune") in operations[:first_new]
+    assert operations[first_new - 1][0] == "old"
     assert all(actor == "new" for actor, _ in operations[first_new:])
     final = find_image_import_task(task_id)
     assert final["status"] == "success"

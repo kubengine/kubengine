@@ -1,12 +1,10 @@
 from contextlib import contextmanager
-from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base, scoped_session
 from core.config import Application
+from core.private_files import prepare_database
 
-DB_PATH = Path(f"{Application.ROOT_DIR}/config/sqlite.db")
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-DB_PATH.touch(exist_ok=True)
+DB_PATH = prepare_database(Application.ROOT_DIR)
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 # 初始化引擎（先保留默认配置，后续优化）

@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from core.config import Application
 from core.auth_credentials import load_auth_users, load_signing_secret
-from core.orm.auth import is_token_revoked
+from core.orm.auth import is_token_revoked, issue_session, session_active
 from starlette.concurrency import run_in_threadpool
 from web.utils.response import StandardResponse
 from fastapi import Header, HTTPException, Request, status
@@ -153,6 +153,13 @@ def create_access_token(
     to_encode.update(
         {"exp": get_int_from_datetime(expire), "jti": str(uuid4())}
     )
+    session_id = data.get("sid") or uuid4().hex
+    try:
+        issue_session(session_id, str(data["sub"]), authenticated_version,
+                      to_encode["exp"], renew=bool(data.get("sid")))
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="登录会话已失效，请重新登录") from exc
+    to_encode["sid"] = session_id
     encoded_jwt = jwt_instance.encode(to_encode, signing_key, alg=ALGORITHM)
     return encoded_jwt, expire
 
@@ -195,6 +202,8 @@ async def get_current_user(
             raise ValueError("Invalid session")
         if is_token_blacklisted(token):
             raise ValueError("Revoked session")
+        if not session_active(str(payload.get("sid", "")), username, payload["credential_version"]):
+            raise ValueError("Expired or revoked login session")
         return User(username=username, **record), "token"
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Token 无效或已失效，请重新登录",
@@ -322,6 +331,7 @@ def auth_with_renew(
                     if remaining_minutes < renew_threshold:
                         new_token, _ = create_access_token(
                             data={"sub": current_user.username,
+                                  "sid": payload["sid"],
                                   "credential_version": payload["credential_version"]},
                             expires_delta=timedelta(
                                 minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -341,7 +351,7 @@ def auth_with_renew(
             response_data = convert_to_standard(res)
 
             # 添加新 Token（如果有）
-            if new_token:
+            if new_token and session_active(payload["sid"], current_user.username, payload["credential_version"]):
                 response_data.new_access_token = new_token  # type: ignore
                 response_data.token_type = "Bearer"  # type: ignore
 

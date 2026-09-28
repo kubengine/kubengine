@@ -328,10 +328,9 @@ class BaseBuilder(ABC):
             # 3. 创建构建上下文
             container_id = self._create_base_container(
                 config.get("base_image"))
-            mount_dir = self._mount_container(container_id)
-            context = BuildContext(container_id, mount_dir, version, config)
-
+            context = BuildContext(container_id, "", version, config)
             try:
+                context.mount_dir = self._mount_container(container_id)
                 # 4. 执行构建步骤
                 self._execute_build_steps(context)
 

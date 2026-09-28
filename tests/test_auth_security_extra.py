@@ -7,7 +7,7 @@ from fastapi import HTTPException, Request
 import pytest
 
 from core.config import ConfigDict
-from core.orm.auth import RevokedToken
+from core.orm.auth import AuthSession, RevokedToken
 from core.orm.engine import engine
 from web.api import auth_routes
 from web.utils import auth
@@ -24,6 +24,7 @@ def rotation_config(monkeypatch, tmp_path):
     config._source_path = str(path)
     monkeypatch.setattr(ConfigDict, "get_instance", lambda: config)
     RevokedToken.__table__.create(engine, checkfirst=True)
+    AuthSession.__table__.create(engine, checkfirst=True)
 
     def rotate():
         config.auth.users.admin.password_hash = bcrypt.hashpw(

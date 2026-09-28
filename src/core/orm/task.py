@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 from sqlalchemy import JSON, Column, DateTime, Enum, Integer, String, Text
-from sqlalchemy.orm import Query
+from sqlalchemy.orm import Query, Session
 
 from core.logger import get_logger, with_log_context
 from core.runtime_files import private_runtime_file
@@ -103,44 +103,39 @@ _TASK_HANDLERS = {
 
 
 def create_task_record(
-    task_func_path: str,
-    params: Dict[str, Any],
-    resource_id: int
+    task_func_path: str, params: Dict[str, Any], resource_id: int,
+    *, db: Optional[Session] = None,
 ) -> TaskSchema:
-    """Create a new task record in database.
+    """Bind a task to a resource incarnation in the caller's transaction."""
+    from core.orm.cluster import Cluster
+    from sqlalchemy import text
 
-    Args:
-        task_func_path: Path to task function to execute
-        params: Parameters for task execution
-        resource_id: Associated resource ID
-
-    Returns:
-        Created task schema with generated ID
-
-    Raises:
-        Exception: When database operation fails
-    """
     if task_func_path not in _TASK_HANDLERS:
         raise ValueError(f"Unknown task operation: {task_func_path}")
-    try:
-        with get_db() as db:
-            task = Task(
-                task_func_path=task_func_path,
-                params=params,
-                resource_id=resource_id,
-                status=TaskStatus.pending
-            )
-            db.add(task)
-            db.commit()
-            db.refresh(task)
-
-            logger.info(
-                f"Task created: ID {task.task_id}, function {task_func_path}")
-            return TaskSchema.model_validate(task)
-
-    except Exception as e:
-        logger.error(f"Failed to create task: {str(e)}")
-        raise
+    if db is None:
+        with get_db() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            result = create_task_record(task_func_path, params, resource_id, db=session)
+            session.commit()
+            return result
+    cluster = db.get(Cluster, resource_id)
+    if cluster is None or params.get("cluster_id") != resource_id:
+        raise ValueError("Task resource does not exist")
+    # Only derive identity from the row, never from client-supplied parameters.
+    bound = {"cluster_id": resource_id, "resource_uid": cluster.resource_uid,
+             "helm_name": cluster.helm_name}
+    if task_func_path == APP_CLEANUP_TASK:
+        existing = db.query(Task).filter_by(resource_id=resource_id, task_func_path=task_func_path).filter(
+            Task.status.in_([TaskStatus.pending, TaskStatus.running]),
+        ).all()
+        for row in existing:
+            if row.params == bound:
+                return TaskSchema.model_validate(row)
+    task = Task(task_func_path=task_func_path, params=bound,
+                resource_id=resource_id, status=TaskStatus.pending)
+    db.add(task)
+    db.flush()
+    return TaskSchema.model_validate(task)
 
 
 def update_task_record_status(
@@ -200,7 +195,7 @@ def find_unfinished_tasks() -> List[TaskSchema]:
             )
             tasks = query.all()
 
-            logger.info(f"Found {len(tasks)} unfinished tasks")
+            logger.debug(f"Found {len(tasks)} unfinished tasks")
             return [TaskSchema.model_validate(task) for task in tasks]
 
     except Exception as e:
@@ -301,29 +296,45 @@ def execute_task_function(
     The resource lock serializes deploy/delete actions for the same cluster.
     OS locks are released after crashes, so interrupted work can be reclaimed.
     """
+    from core.orm.cluster import find_cluster_by_id
+
     with _operation_lock(f"task-{int(task_id)}", blocking=False) as acquired:
         if not acquired:
             return
-        if not _claim_task(task_id, recover_running):
-            return
-        try:
-            if task_func_path == "api.app.deploy_app":
-                raise ValueError(
-                    "Legacy task operation is ambiguous (deployment or deletion). "
-                    "Resources and management records are retained; reconcile the release manually."
-                )
-            if task_func_path not in _TASK_HANDLERS:
-                raise ValueError(f"Unknown task operation: {task_func_path}")
-            cluster_id = task_params.get("cluster_id")
-            if not isinstance(cluster_id, int) or isinstance(cluster_id, bool) or cluster_id <= 0:
-                raise ValueError("Task requires a positive cluster_id")
-            module_name, function_name = _TASK_HANDLERS[task_func_path]
-            task_func = getattr(importlib.import_module(module_name), function_name)
-            with _operation_lock(f"cluster-{cluster_id}"):
-                task_func(task_id, **task_params)
-            update_task_record_status(task_id, TaskStatus.success)
-            logger.info("Task %s completed successfully", task_id)
-        except Exception as exc:
-            update_task_record_status(task_id, TaskStatus.failed, str(exc))
-            logger.exception("Task %s failed", task_id)
-            raise
+        with get_db() as db:
+            row = db.get(Task, task_id)
+            if row is None:
+                return
+            task_func_path = row.task_func_path
+            task_params = dict(row.params) if isinstance(row.params, dict) else {}
+        cluster_id = task_params.get("cluster_id")
+        # Invalid/legacy work must fail without touching a resource.
+        lock_key = f"cluster-{cluster_id}" if isinstance(cluster_id, int) else f"invalid-task-{task_id}"
+        with _operation_lock(lock_key, blocking=False) as resource_acquired:
+            if not resource_acquired or not _claim_task(task_id, recover_running):
+                return
+            try:
+                if task_func_path == "api.app.deploy_app":
+                    raise ValueError("Legacy task operation is ambiguous; resources retained for manual reconciliation")
+                if task_func_path not in _TASK_HANDLERS:
+                    raise ValueError(f"Unknown task operation: {task_func_path}")
+                if not isinstance(cluster_id, int) or isinstance(cluster_id, bool) or cluster_id <= 0:
+                    raise ValueError("Task requires a positive cluster_id")
+                if not task_params.get("resource_uid") or not task_params.get("helm_name"):
+                    raise ValueError("旧任务缺少资源身份，拒绝自动执行；请核实资源后重新提交")
+                cluster = find_cluster_by_id(cluster_id)
+                if cluster is None and _TASK_HANDLERS[task_func_path][1] == "clean_up_cluster":
+                    update_task_record_status(task_id, TaskStatus.success)
+                    return
+                if (cluster is None or cluster.resource_uid != task_params["resource_uid"]
+                        or cluster.helm_name != task_params["helm_name"]):
+                    raise ValueError("任务对应的资源身份已变化，拒绝操作当前资源")
+                module_name, function_name = _TASK_HANDLERS[task_func_path]
+                task_func = getattr(importlib.import_module(module_name), function_name)
+                task_func(task_id, cluster_id=cluster_id)
+                update_task_record_status(task_id, TaskStatus.success)
+                logger.info("Task %s completed successfully", task_id)
+            except Exception as exc:
+                update_task_record_status(task_id, TaskStatus.failed, str(exc))
+                logger.exception("Task %s failed", task_id)
+                raise

@@ -17,6 +17,9 @@ from uuid import uuid4
 from core.logger import get_logger, with_log_context
 from core.runtime_files import private_runtime_file, runtime_path
 from core.orm.engine import Base, engine
+from core.orm.cluster import ensure_cluster_schema
+from core.task_worker import AppTaskWorker
+from core.orm import notifications  # register shared notification table
 from core.orm.image_import import (
     ImageImportLease,
     ImageImportLeaseLost,
@@ -117,6 +120,12 @@ class ImageImportWorker:
         """Run until stopped, reclaiming expired leases automatically."""
         Base.metadata.create_all(bind=engine)
         ensure_image_import_schema()
+        ensure_cluster_schema()
+        app_worker = AppTaskWorker()
+        from core.image_maintenance import maintain_images
+        maintenance_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-maintenance")
+        maintenance_future = None
+        next_maintenance = 0.0
         logger.info(
             "Image-import worker %s started (concurrency=%s, lease=%ss)",
             self.worker_id,
@@ -125,6 +134,13 @@ class ImageImportWorker:
         )
         try:
             while not self._stop.is_set():
+                try:
+                    app_worker.poll()
+                except Exception:
+                    logger.exception("应用任务轮询失败，下轮重试")
+                if time.monotonic() >= next_maintenance and (maintenance_future is None or maintenance_future.done()):
+                    maintenance_future = maintenance_executor.submit(maintain_images)
+                    next_maintenance = time.monotonic() + 30
                 with private_runtime_file("image-import-worker.heartbeat", truncate=True) as heartbeat:
                     heartbeat.write(self.worker_id)
                 for future, task_id in list(self._futures.items()):
@@ -154,6 +170,8 @@ class ImageImportWorker:
                 self._stop.wait(self.poll_interval)
         finally:
             logger.info("Image-import worker stopping; waiting for active jobs")
+            maintenance_executor.shutdown(wait=True)
+            app_worker.close()
             self._executor.shutdown(wait=True, cancel_futures=False)
             try:
                 if WORKER_HEARTBEAT_PATH.read_text(encoding="utf-8") == self.worker_id:

@@ -16,6 +16,8 @@ from core.orm.app import AppSchema, find_applications_paginated, remove_applicat
 from core.orm.task import APP_CLEANUP_TASK, APP_DEPLOY_TASK, create_task_record, execute_task_function
 from web.utils.auth import auth_with_renew
 from core.orm.cluster import ClusterSchema, ClusterStatus, find_cluster_by_id, remove_cluster_by_id, update_cluster_name, update_cluster_status, create_cluster, find_clusters_paginated
+from core.orm.engine import get_db
+from sqlalchemy import text
 from web.utils.page import PageParams, pagination_params
 from core.misc.websocket import connection_manager
 from core.logger import get_logger, with_log_context
@@ -26,7 +28,7 @@ logger = get_logger(__name__)
 
 @router.get("/list", summary="获取应用配置")
 @auth_with_renew()
-async def list_apps(request: Request,
+def list_apps(request: Request,
                pagination: PageParams = Depends(pagination_params),
                name: Optional[str] = Query(None, description="模糊匹配名称"),
                category: Optional[str] = Query(None, description="按分类筛选")):
@@ -39,26 +41,26 @@ async def list_apps(request: Request,
 
 @router.get("/get/{app_id}", summary="获取应用配置")
 @auth_with_renew()
-async def get_app(request: Request, app_id: int = Path(..., description="应用id")):
+def get_app(request: Request, app_id: int = Path(..., description="应用id")):
     return find_application_by_id(app_id)
 
 
 @router.delete("/del/{app_id}", summary="删除应用")
 @auth_with_renew()
-async def delete(request: Request, app_id: str = Path(..., description="应用id")):
+def delete(request: Request, app_id: str = Path(..., description="应用id")):
     return remove_application_by_id(app_id)
 
 
 @router.post("/add", summary="创建新应用")
 @auth_with_renew()
-async def create_app(request: Request, app_in: AppSchema):
+def create_app(request: Request, app_in: AppSchema):
     """创建新应用（含关联的集群/环境配置项）"""
     return create_application(app_in)
 
 
 @router.put("/update", summary="更新应用")
 @auth_with_renew()
-async def update_app(request: Request, app_in: AppSchema):
+def update_app(request: Request, app_in: AppSchema):
     """更新应用（含关联的集群/环境配置项）"""
     return update_application(app_in)
 
@@ -174,7 +176,8 @@ def _find_helm_release(release_name: str) -> Optional[dict[str, Any]]:
 
 def _notify(message: dict[str, Any]) -> None:
     try:
-        connection_manager.broadcast_from_thread(message)
+        from core.orm.notifications import publish_cluster_change
+        publish_cluster_change()
     except Exception:
         logger.exception("集群通知发送失败")
 
@@ -195,32 +198,26 @@ def _mark_cluster_failed(cluster_id: int, status: ClusterStatus) -> None:
 
 @router.post("/deploy", summary="部署应用")
 @auth_with_renew()
-async def deploy(request: Request, data: ClusterSchema, background_tasks: BackgroundTasks):
+def deploy(request: Request, data: ClusterSchema, background_tasks: BackgroundTasks):
     if not data.name:
         raise HTTPException(status_code=500, detail="集群名称(name)不能为空")
     if not data.helm_chart:
         raise HTTPException(status_code=500, detail="Helm Chart(helm_chart)不能为空")
     if not data.helm_chart_version:
         raise HTTPException(status_code=500, detail="Chart版本(helm_chart_version)不能为空")
-    cluster = create_cluster(data)
-    if cluster:
-        # 提交后台任务，开始创建资源
-        task = create_task_record(APP_DEPLOY_TASK, {
-            "cluster_id": cluster.cluster_id}, cluster.cluster_id or -1)
-        # 添加后台任务（FastAPI自动异步执行）
-        background_tasks.add_task(
-            execute_task_function,
-            task_id=task.task_id or -1,
-            task_func_path=APP_DEPLOY_TASK,
-            task_params={"cluster_id": cluster.cluster_id},
-        )
-
-        return cluster
+    # Both rows commit together; the durable worker continuously claims them.
+    with get_db() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        cluster = create_cluster(data, db=db)
+        create_task_record(APP_DEPLOY_TASK, {"cluster_id": cluster.cluster_id}, cluster.cluster_id, db=db)
+        db.commit()
+    _notify({"action": "refresh_clusters"})
+    return cluster
 
 
 @router.get("/cluster", summary="获取集群配置")
 @auth_with_renew()
-async def cluster(request: Request,
+def cluster(request: Request,
                   pagination: PageParams = Depends(pagination_params),
                   name: Optional[str] = Query(None, description="模糊匹配名称"),):
     return find_clusters_paginated(
@@ -232,13 +229,13 @@ async def cluster(request: Request,
 
 @router.get("/cluster/{cluster_id}", summary="获取集群信息")
 @auth_with_renew()
-async def get_cluster_by_id(request: Request, cluster_id: int = Path(..., description="集群id")):
+def get_cluster_by_id(request: Request, cluster_id: int = Path(..., description="集群id")):
     return find_cluster_by_id(cluster_id)
 
 
 @router.get("/clusterInfo/{cluster_id}", summary="获取集群资源详情(helm 资源)")
 @auth_with_renew()
-async def cluster_info(request: Request, cluster_id: int = Path(..., description="集群id")):
+def cluster_info(request: Request, cluster_id: int = Path(..., description="集群id")):
     cluster = find_cluster_by_id(cluster_id)
     if cluster is None:
         return error_response(f"集群资源[{cluster_id}]不存在", 201, 200)
@@ -265,15 +262,9 @@ def update_cluster_name_api(request: Request, data: ClusterSchema, cluster_id: i
 
 @router.delete("/cluster/{cluster_ip}", summary="删除集群")
 @auth_with_renew()
-async def delete_cluster(request: Request, background_tasks: BackgroundTasks, cluster_ip: int = Path(..., description="集群id")):
-    # 提交后台任务，开始创建资源
-    task = create_task_record(APP_CLEANUP_TASK, {
-        "cluster_id": cluster_ip}, cluster_ip)
-    # 添加后台任务（FastAPI自动异步执行）
-    background_tasks.add_task(
-        execute_task_function,
-        task_id=task.task_id or -1,
-        task_func_path=APP_CLEANUP_TASK,
-        task_params={"cluster_id": cluster_ip},
-    )
+def delete_cluster(request: Request, background_tasks: BackgroundTasks, cluster_ip: int = Path(..., description="集群id")):
+    try:
+        create_task_record(APP_CLEANUP_TASK, {"cluster_id": cluster_ip}, cluster_ip)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="应用集群不存在") from exc
     return "processing"

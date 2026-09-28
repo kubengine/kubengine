@@ -9,6 +9,11 @@ SSH 远程操作 API 路由模块
 - 密码和密钥两种认证方式
 """
 
+import hashlib
+import os
+
+from core.config import Application
+from core.private_files import private_directory, private_file
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -52,7 +57,7 @@ class FileTransferRequest(BaseModel):
     """文件传输请求模型"""
 
     host: str = Field(..., description="目标主机地址")
-    local_path: str = Field(..., description="本地文件路径")
+    local_path: str = Field(..., description="用户专属传输目录内的文件名（不允许路径或覆盖已有文件）")
     remote_path: str = Field(..., description="远程文件路径")
     username: str = Field(..., description="SSH 登录用户名")
     password: str | None = Field(None, description="SSH 登录密码（与密钥二选一）")
@@ -201,30 +206,7 @@ async def upload_file(
     Raises:
         HTTPException: 当文件上传失败时抛出 500 错误
     """
-    client = AsyncSSHClient()
-    try:
-
-        # 构建连接参数
-        kwargs: dict[str, Any] = {"username": file_req.username}
-        if file_req.password:
-            kwargs["password"] = file_req.password
-        if file_req.client_keys:
-            kwargs["client_keys"] = file_req.client_keys
-
-        # 上传文件
-        result = await client.upload_file(
-            file_req.host,
-            file_req.local_path,
-            file_req.remote_path,
-            **kwargs
-        )
-        return result
-
-    except Exception as e:
-        logger.error(f"上传文件失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await client.close_all_connections()
+    return await _transfer_file(current_user, file_req, download=False)
 
 
 @router.post(
@@ -254,27 +236,50 @@ async def download_file(
     Raises:
         HTTPException: 当文件下载失败时抛出 500 错误
     """
+    return await _transfer_file(current_user, file_req, download=True)
+
+
+async def _transfer_file(current_user: User, file_req: FileTransferRequest, *, download: bool):
+    name = file_req.local_path
+    if (not name or name.startswith(".") or len(name.encode()) > 200
+            or any(c in name for c in ("/", "\\", "\x00"))):
+        raise HTTPException(status_code=400, detail="local_path 必须是用户传输目录内的文件名")
+    user_dir = hashlib.sha256(current_user.username.encode()).hexdigest()
     client = AsyncSSHClient()
     try:
-
-        # 构建连接参数
-        kwargs: dict[str, Any] = {"username": file_req.username}
-        if file_req.password:
-            kwargs["password"] = file_req.password
-        if file_req.client_keys:
-            kwargs["client_keys"] = file_req.client_keys
-
-        # 下载文件
-        result = await client.download_file(
-            file_req.host,
-            file_req.remote_path,
-            file_req.local_path,
-            **kwargs
-        )
-        return result
-
-    except Exception as e:
-        logger.error(f"下载文件失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        with private_directory(Application.ROOT_DIR, "tmp", "ssh-transfers", user_dir) as directory:
+            flags = os.O_RDWR | os.O_CREAT | os.O_EXCL if download else os.O_RDONLY
+            with private_file(directory, name, flags) as fd:
+                try:
+                    # The proc path is a trusted descriptor link to an already
+                    # validated inode, not a user-supplied filesystem symlink.
+                    kwargs = {"username": file_req.username, "follow_symlinks": True}
+                    if file_req.password:
+                        kwargs["password"] = file_req.password
+                    if file_req.client_keys:
+                        kwargs["client_keys"] = file_req.client_keys
+                    # Keep the validated inode open across every await; SFTP cannot
+                    # follow a replacement of the caller-visible filename.
+                    local_path = f"/proc/self/fd/{fd}"
+                    if download:
+                        result = await client.download_file(file_req.host, file_req.remote_path, local_path, **kwargs)
+                    else:
+                        result = await client.upload_file(file_req.host, local_path, file_req.remote_path, **kwargs)
+                    if result.get("error"):
+                        raise HTTPException(status_code=502, detail="远程文件传输失败")
+                    result["local_path"] = name
+                    return result
+                except BaseException:
+                    if download:
+                        os.unlink(name, dir_fd=directory)
+                    raise
+    except HTTPException:
+        raise
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="目标文件已存在，不允许覆盖") from None
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="传输文件不存在") from None
+    except OSError:
+        raise HTTPException(status_code=400, detail="不允许访问该传输文件") from None
     finally:
         await client.close_all_connections()

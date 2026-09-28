@@ -10,6 +10,12 @@ KubEngine FastAPI 应用主入口模块
 """
 
 import os
+import asyncio
+from contextlib import asynccontextmanager, suppress
+from starlette.concurrency import run_in_threadpool
+from core.orm.cluster import ensure_cluster_schema
+from core.orm.notifications import read_cluster_revision
+from core.misc.websocket import connection_manager
 import platform
 import re
 import sys
@@ -67,6 +73,7 @@ def print_kubengine_welcome() -> None:
 # ============================ 应用生命周期 ============================
 
 
+@asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     应用生命周期管理
@@ -85,9 +92,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 创建数据库表
     Base.metadata.create_all(bind=engine)
     ensure_image_import_schema()
+    ensure_cluster_schema()
     logger.info("数据库表已创建")
 
-    yield  # 分割线：启动完成，服务开始接收请求
+    async def relay():
+        revision = -1
+        while True:
+            try:
+                current = await run_in_threadpool(read_cluster_revision)
+                if current != revision:
+                    await connection_manager.broadcast({"action": "refresh_clusters"})
+                    revision = current
+            except Exception:
+                logger.exception("集群状态通知同步失败")
+            await asyncio.sleep(0.5)
+
+    relay_task = asyncio.create_task(relay())
+    try:
+        yield
+    finally:
+        relay_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await relay_task
 
     # 关闭逻辑（如需要可添加清理代码）
     logger.info("KubEngine 服务正在关闭...")

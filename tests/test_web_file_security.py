@@ -97,6 +97,10 @@ def chart_environment(tmp_path, monkeypatch):
         "REGISTRY",
         SimpleNamespace(USERNAME="configured-user", PASSWORD="configured-test-password"),
     )
+    from core.orm.auth import AuthSession, RevokedToken
+    from core.orm.engine import engine
+    AuthSession.__table__.create(engine, checkfirst=True)
+    RevokedToken.__table__.create(engine, checkfirst=True)
     token, _ = create_access_token({"sub": "admin"})
     return {"Authorization": f"Bearer {token}"}
 
@@ -109,7 +113,7 @@ def test_chart_filename_cannot_write_or_execute_outside_owned_temp_directory(
     observed_paths = []
     request_thread = threading.get_ident()
 
-    def fake_command(argv, *, env):
+    def fake_command(argv, *, env, timeout):
         assert isinstance(argv, list)
         assert argv[:2] == ["helm", "push"]
         path = Path(argv[2])
@@ -147,7 +151,7 @@ def test_concurrent_same_name_chart_uploads_keep_separate_files(
     barrier = threading.Barrier(2, timeout=5)
     observed = []
 
-    def fake_command(argv, *, env):
+    def fake_command(argv, *, env, timeout):
         path = Path(argv[2])
         content = path.read_bytes()
         observed.append((path, content))
@@ -180,7 +184,7 @@ def test_failed_chart_push_removes_temp_files_without_echoing_command_errors(
 ):
     observed_paths = []
 
-    def fake_command(argv, *, env):
+    def fake_command(argv, *, env, timeout):
         observed_paths.append(Path(argv[2]))
         return CommandResult(1, "", "configured-test-password")
 
@@ -199,6 +203,7 @@ def test_failed_chart_push_removes_temp_files_without_echoing_command_errors(
 @pytest.mark.parametrize(
     ("filename", "content"),
     [("chart.txt", b"invalid extension"), ("chart.tgz", b"x" * (2 * 1024 * 1024 + 1))],
+    ids=["invalid-extension", "size-limit"],
 )
 def test_invalid_chart_upload_never_runs_helm(
     tmp_path, monkeypatch, chart_environment, filename, content
@@ -213,7 +218,7 @@ def test_invalid_chart_upload_never_runs_helm(
             files={"file": (filename, content, "application/gzip")},
         )
     )
-    assert response.status_code == 400
+    assert response.status_code == (413 if filename == "chart.tgz" else 400)
     assert not list(tmp_path.iterdir())
 
 

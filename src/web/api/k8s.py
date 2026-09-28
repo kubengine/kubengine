@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Path, Query, Request
+from starlette.concurrency import run_in_threadpool
 
 from core.http_api_client.dashboard_client import DashboardClient
 from core.http_api_client.longhorn_client import LonghornClient
@@ -35,7 +36,7 @@ router = APIRouter(tags=["Kubernetes 集群管理"])
     description="获取指定 Kubernetes 节点的详细信息",
 )
 @auth_with_renew()
-async def get_node(
+def get_node(
     request: Request,
     name: str = Query(..., description="节点名称"),
 ):
@@ -93,7 +94,7 @@ async def get_overview(request: Request):
             - storage_capacity: 存储容量信息
     """
 
-    async def get_capacity() -> tuple[int, str, dict[str, Any]]:
+    def get_capacity() -> tuple[int, str, dict[str, Any]]:
         """
         异步获取存储容量信息
 
@@ -106,7 +107,7 @@ async def get_overview(request: Request):
         client = LonghornClient()
         return client.capacity()
 
-    async def process_node() -> tuple[int, str, dict[str, Any]]:
+    def process_node() -> tuple[int, str, dict[str, Any]]:
         """
         处理节点数据并计算集群统计信息
 
@@ -231,7 +232,7 @@ async def get_overview(request: Request):
 
     # 使用 asyncio.gather() 并发执行节点数据处理和存储容量获取
     # 提高接口响应速度，避免串行等待
-    node_res, capacity_res = await asyncio.gather(process_node(), get_capacity())
+    node_res, capacity_res = await asyncio.gather(run_in_threadpool(process_node), run_in_threadpool(get_capacity))
 
     # 检查节点数据处理结果，如果失败则直接返回错误
     if node_res[0] != 200:
@@ -257,7 +258,7 @@ async def get_overview(request: Request):
     description="通过 Dashboard API 获取 Kubernetes 资源列表，支持分页和过滤",
 )
 @auth_with_renew()
-async def get_resource_list(
+def get_resource_list(
     request: Request,
     type: str = Path(...,
                      description="资源类型（如 pod、service、deployment、statefulset 等）"),
@@ -304,7 +305,7 @@ async def get_resource_list(
     description="通过 Dashboard API 获取指定资源的完整配置信息",
 )
 @auth_with_renew()
-async def get_resource_detail(
+def get_resource_detail(
     request: Request,
     type: str = Path(..., description="资源类型"),
     name: str = Path(..., description="资源名称"),
@@ -338,7 +339,7 @@ async def get_resource_detail(
     description="通过 Dashboard API 获取与指定资源相关联的 Pod 列表",
 )
 @auth_with_renew()
-async def get_resource_pod(
+def get_resource_pod(
     request: Request,
     type: str = Path(..., description="父资源类型（如 deployment、statefulset）"),
     name: str = Path(..., description="父资源名称"),

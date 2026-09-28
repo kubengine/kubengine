@@ -50,7 +50,7 @@ class LonghornClient(BasicClient):
             标准化响应结果 (code, message, data)
         """
         url = f"{self.base_url}{self.base_uri}/nodes"
-        response = requests.get(url, verify=self.verify_file)
+        response = requests.get(url, verify=self.verify_file, timeout=(5, 30))
         return self.api_result(response)
 
     def capacity(self) -> Tuple[int, str, Dict[str, Any]]:
@@ -91,7 +91,7 @@ class LonghornClient(BasicClient):
             标准化响应结果 (code, message, data)
         """
         url = f"{self.base_url}{self.base_uri}/volumes"
-        response = requests.get(url, verify=self.verify_file)
+        response = requests.get(url, verify=self.verify_file, timeout=(5, 30))
         return self.api_result(response)
 
     def delete_volume(self, name: str) -> Tuple[int, str, Dict[str, Any]]:
@@ -105,5 +105,5 @@ class LonghornClient(BasicClient):
             标准化响应结果 (code, message, data)
         """
         url = f"{self.base_url}{self.base_uri}/volumes/{name}"
-        response = requests.delete(url, verify=self.verify_file)
+        response = requests.delete(url, verify=self.verify_file, timeout=(5, 30))
         return self.api_result(response)

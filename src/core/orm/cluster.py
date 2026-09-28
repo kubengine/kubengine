@@ -11,10 +11,11 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 from pydantic import BaseModel, field_serializer
-from sqlalchemy import JSON, Column, DateTime, Enum, Integer, String, asc, desc
+from sqlalchemy import JSON, Column, DateTime, Enum, Integer, String, asc, desc, inspect, text
+from sqlalchemy.orm import Session
 
 from core.misc.properties import convert_dot_notation_to_dict, split_key_levels
-from core.orm.app import find_application_by_id
+from core.orm.app import App, find_application_by_id
 from core.orm.engine import Base, get_db
 from core.logger import get_logger
 
@@ -40,6 +41,7 @@ class Cluster(Base):
 
     cluster_id = Column(Integer, primary_key=True,
                         index=True, comment="Cluster ID")
+    resource_uid = Column(String(32), nullable=False, default=lambda: uuid.uuid4().hex)
     name = Column(String, nullable=False, comment="Cluster name")
     helm_chart = Column(String, nullable=False, comment="Helm chart template")
     helm_chart_version = Column(
@@ -73,6 +75,7 @@ class ClusterSchema(BaseModel):
     """Pydantic model for cluster serialization."""
 
     cluster_id: Optional[int] = None
+    resource_uid: Optional[str] = None
     name: Optional[str] = None
     helm_chart: Optional[str] = None
     helm_chart_version: Optional[str] = None
@@ -140,7 +143,7 @@ def _format_helm_value(helm_type: str, helm_unit: str, value: Any) -> Any:
         return value
 
 
-def build_helm_config(cluster_schema: ClusterSchema) -> Dict[str, Any]:
+def build_helm_config(cluster_schema: ClusterSchema, *, db: Optional[Session] = None) -> Dict[str, Any]:
     """Build Helm configuration from application field configurations.
 
     Args:
@@ -154,7 +157,7 @@ def build_helm_config(cluster_schema: ClusterSchema) -> Dict[str, Any]:
     if cluster_schema.app_id is None:
         return helm_config
 
-    app = find_application_by_id(cluster_schema.app_id)
+    app = db.get(App, cluster_schema.app_id) if db is not None else find_application_by_id(cluster_schema.app_id)
     if not app:
         return helm_config
 
@@ -188,7 +191,7 @@ def build_helm_config(cluster_schema: ClusterSchema) -> Dict[str, Any]:
     return helm_config
 
 
-def create_cluster(cluster_schema: ClusterSchema) -> ClusterSchema:
+def create_cluster(cluster_schema: ClusterSchema, *, db: Optional[Session] = None) -> ClusterSchema:
     """Create a new cluster record.
 
     Args:
@@ -200,41 +203,63 @@ def create_cluster(cluster_schema: ClusterSchema) -> ClusterSchema:
     Raises:
         Exception: When database operation fails
     """
+    if db is None:
+        with get_db() as session:
+            result = create_cluster(cluster_schema, db=session)
+            session.commit()
+            return result
     try:
-        with get_db() as db:
-            # Generate unique Helm name
-            # 限制在12字符以内，避免与 chart 资源名拼接后超过 K8s 63 字符 label 限制
-            # （如 elasticsearch: {name}-elasticsearch-coordinating-{hash}）
-            # 首字符必须为字母：K8s 资源名遵循 DNS-1035 规范（如 8d22297b-etcd 会因
-            # 以数字开头被拒绝），把首位的 0-9 映射成 a-j，既保留随机性又满足规范
-            raw = uuid.uuid4().hex[:12]
-            if raw[0].isdigit():
-                raw = chr(ord("a") + int(raw[0])) + raw[1:]
-            helm_name = raw
+        # Generate unique Helm name
+        # 限制在12字符以内，避免与 chart 资源名拼接后超过 K8s 63 字符 label 限制
+        # （如 elasticsearch: {name}-elasticsearch-coordinating-{hash}）
+        # 首字符必须为字母：K8s 资源名遵循 DNS-1035 规范（如 8d22297b-etcd 会因
+        # 以数字开头被拒绝），把首位的 0-9 映射成 a-j，既保留随机性又满足规范
+        raw = uuid.uuid4().hex[:12]
+        if raw[0].isdigit():
+            raw = chr(ord("a") + int(raw[0])) + raw[1:]
+        helm_name = raw
 
-            # Build Helm configuration
-            helm_config = build_helm_config(cluster_schema)
+        # Build Helm configuration
+        helm_config = build_helm_config(cluster_schema, db=db)
 
-            # Create cluster record
-            cluster_orm = Cluster(
-                name=cluster_schema.name,
-                helm_chart=cluster_schema.helm_chart,
-                helm_chart_version=cluster_schema.helm_chart_version,
-                helm_name=helm_name,
-                config=cluster_schema.config,
-                helm_config=helm_config,
-                create_time=cluster_schema.create_time or datetime.now()
-            )
+        # Create cluster record
+        cluster_orm = Cluster(
+            name=cluster_schema.name,
+            helm_chart=cluster_schema.helm_chart,
+            helm_chart_version=cluster_schema.helm_chart_version,
+            helm_name=helm_name,
+            config=cluster_schema.config,
+            helm_config=helm_config,
+            create_time=cluster_schema.create_time or datetime.now()
+        )
 
-            db.add(cluster_orm)
-            db.commit()
-            db.refresh(cluster_orm)
+        db.add(cluster_orm)
+        db.flush()
+        db.refresh(cluster_orm)
 
-            return ClusterSchema.model_validate(cluster_orm)
+        return ClusterSchema.model_validate(cluster_orm)
 
     except Exception as e:
         logger.error(f"Failed to create cluster: {str(e)}")
         raise
+
+
+def ensure_cluster_schema() -> None:
+    """Assign identities to existing resources, without binding old tasks to them."""
+    import fcntl
+    from core.orm.engine import engine
+    from core.runtime_files import private_runtime_file
+
+    with private_runtime_file("cluster-schema.lock") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        with engine.begin() as connection:
+            if "resource_uid" not in {c["name"] for c in inspect(connection).get_columns("cluster")}:
+                connection.execute(text("ALTER TABLE cluster ADD COLUMN resource_uid VARCHAR(32)"))
+            rows = connection.execute(text("SELECT cluster_id FROM cluster WHERE resource_uid IS NULL OR resource_uid = ''"))
+            for row in rows.fetchall():
+                connection.execute(text("UPDATE cluster SET resource_uid = :uid WHERE cluster_id = :id"),
+                                   {"uid": uuid.uuid4().hex, "id": row[0]})
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_cluster_resource_uid ON cluster(resource_uid)"))
 
 
 def find_clusters_paginated(

@@ -78,7 +78,7 @@ class HarborClient(BasicClient):
         response = requests.get(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file
+            verify=self.verify_file, timeout=(5, 30)
         )
         return self.api_result(response)
 
@@ -110,7 +110,7 @@ class HarborClient(BasicClient):
             url,
             auth=(self.username, self.password),
             verify=self.verify_file,
-            params=params,
+            params=params, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -131,7 +131,7 @@ class HarborClient(BasicClient):
         response = requests.delete(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return response.status_code, "", {}
 
@@ -165,7 +165,7 @@ class HarborClient(BasicClient):
             url,
             auth=(self.username, self.password),
             verify=self.verify_file,
-            params=params,
+            params=params, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -187,7 +187,7 @@ class HarborClient(BasicClient):
         response = requests.get(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -209,7 +209,7 @@ class HarborClient(BasicClient):
         response = requests.delete(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         if response.status_code == 200:
             return 200, "success", {}
@@ -233,7 +233,7 @@ class HarborClient(BasicClient):
         response = requests.get(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return self.api_result_text(response)
 
@@ -265,7 +265,7 @@ class HarborClient(BasicClient):
             url,
             auth=(self.username, self.password),
             verify=self.verify_file,
-            params=params,
+            params=params, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -289,7 +289,7 @@ class HarborClient(BasicClient):
             url,
             auth=(self.username, self.password),
             verify=self.verify_file,
-            json={"name": tag_name},
+            json={"name": tag_name}, timeout=(5, 30),
         )
         if response.status_code == 201:
             return 200, "success", {}
@@ -314,7 +314,7 @@ class HarborClient(BasicClient):
         response = requests.delete(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         if response.status_code == 200:
             return 200, "success", {}
@@ -331,7 +331,7 @@ class HarborClient(BasicClient):
         response = requests.get(
             url,
             auth=(self.username, self.password),
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         return self.api_result(response)
 
@@ -358,7 +358,7 @@ class HarborClient(BasicClient):
             url,
             json=payload,
             auth=(self.username, self.password),
-            verify=self.verify_file,
+            verify=self.verify_file, timeout=(5, 30),
         )
         if response.status_code == 201:
             return True

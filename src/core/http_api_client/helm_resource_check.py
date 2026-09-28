@@ -153,6 +153,7 @@ class HelmResourceChecker:
             不创建 Pod 或已清理 Job Pod 的 Chart 无法通过此检查确认健康；
             返回 False 和明确说明，需要使用相应资源类型的检查器。
         """
+        deadline = time.monotonic() + POLL_INTERVAL_SECONDS * MAX_POLL_TIMES
         poll_times = 0
         overall_pod_result: dict[str, Any] = {
             "status": False, "details": ["尚未完成 Pod 健康检查"],
@@ -163,7 +164,7 @@ class HelmResourceChecker:
             f"最大 {MAX_POLL_TIMES} 次）..."
         )
 
-        while poll_times < MAX_POLL_TIMES:
+        while poll_times < MAX_POLL_TIMES and time.monotonic() < deadline:
             poll_times += 1
             uncertain_pod_names: List[str] = []
             current_pod_result: dict[str, Any] = {
@@ -173,7 +174,7 @@ class HelmResourceChecker:
             try:
                 pods = self.core_api.list_namespaced_pod(  # type: ignore
                     namespace=self.namespace,
-                    label_selector=self.helm_label_selector,
+                    label_selector=self.helm_label_selector, _request_timeout=(5, 30),
                 )
             except ApiException as e:
                 error_msg = f"轮询第 {poll_times} 次失败：{e.reason}({e.status})"
@@ -192,7 +193,7 @@ class HelmResourceChecker:
                     ],
                 }
                 if poll_times < MAX_POLL_TIMES:
-                    time.sleep(POLL_INTERVAL_SECONDS)
+                    time.sleep(min(POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
                 else:
                     overall_pod_result["details"].append(
                         f"已达到最大轮询次数 {MAX_POLL_TIMES}，仍未发现匹配的 Pod"
@@ -241,7 +242,7 @@ class HelmResourceChecker:
                     f"仍有 {len(uncertain_pod_names)} 个 Pod 状态未明确，"
                     f"{POLL_INTERVAL_SECONDS} 秒后继续轮询..."
                 )
-                time.sleep(POLL_INTERVAL_SECONDS)
+                time.sleep(min(POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
             else:
                 # 5. 达到最大轮询次数，终止并返回最终结果
                 timeout_msg = (
@@ -252,6 +253,8 @@ class HelmResourceChecker:
                 logger.warning(timeout_msg)
                 overall_pod_result = current_pod_result
 
+        if time.monotonic() >= deadline and not overall_pod_result["status"]:
+            overall_pod_result["details"].append("Pod 健康检查超过总等待时限")
         return overall_pod_result
 
 

@@ -441,7 +441,8 @@ class AsyncSSHClient:
         return reachable_hosts, not_reachable_hosts
 
     async def upload_file(
-        self, host: str, local_path: str, remote_path: str, **kwargs: Any
+        self, host: str, local_path: str, remote_path: str,
+        *, follow_symlinks: bool = False, **kwargs: Any,
     ) -> Dict[str, Union[str, None]]:
         """Upload file to remote host (using connection pool).
 
@@ -466,7 +467,7 @@ class AsyncSSHClient:
         async def transfer(conn: asyncssh.SSHClientConnection) -> None:
             async with conn.start_sftp_client() as sftp:
                 await asyncio.wait_for(
-                    sftp.put(local_path, remote_path), timeout=timeout
+                    sftp.put(local_path, remote_path, follow_symlinks=follow_symlinks), timeout=timeout
                 )
 
         result["error"] = await self._execute_transfer(
@@ -484,7 +485,8 @@ class AsyncSSHClient:
         return result
 
     async def download_file(
-        self, host: str, remote_path: str, local_path: str, **kwargs: Any
+        self, host: str, remote_path: str, local_path: str,
+        *, follow_symlinks: bool = False, **kwargs: Any,
     ) -> Dict[str, Union[str, None]]:
         """Download file from remote host (using connection pool).
 
@@ -509,7 +511,7 @@ class AsyncSSHClient:
         async def transfer(conn: asyncssh.SSHClientConnection) -> None:
             async with conn.start_sftp_client() as sftp:
                 await asyncio.wait_for(
-                    sftp.get(remote_path, local_path), timeout=timeout
+                    sftp.get(remote_path, local_path, follow_symlinks=follow_symlinks), timeout=timeout
                 )
 
         result["error"] = await self._execute_transfer(

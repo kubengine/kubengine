@@ -9,7 +9,7 @@ import pytest
 
 from core.auth_credentials import load_auth_users, load_signing_secret
 from core.config import Application, ConfigDict
-from core.orm.auth import RevokedToken
+from core.orm.auth import AuthSession, RevokedToken
 from core.orm.engine import engine
 from web.api.auth_routes import router
 from web.utils import auth
@@ -24,6 +24,7 @@ def auth_config(monkeypatch, tmp_path):
     config._source_path = str(config_path)
     monkeypatch.setattr(ConfigDict, "get_instance", lambda: config)
     RevokedToken.__table__.create(engine, checkfirst=True)
+    AuthSession.__table__.create(engine, checkfirst=True)
     return config, config_path
 
 

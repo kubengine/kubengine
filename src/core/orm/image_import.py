@@ -51,6 +51,11 @@ class ImageImportTask(Base):
     heartbeat_at = Column(DateTime)
     attempt_count = Column(Integer, default=0, nullable=False)
     retry_failed = Column(Boolean, default=False, nullable=False)
+    cleanup_pending = Column(Boolean, default=False, nullable=False)
+    cleanup_error = Column(Text)
+    cleanup_retry_at = Column(DateTime)
+    namespace = Column(String)
+
 
     items = relationship(
         "ImageImportItem",
@@ -123,9 +128,12 @@ def _task_to_dict(
         "completed_at": task.completed_at,
         "heartbeat_at": task.heartbeat_at,
         "attempt_count": task.attempt_count,
+        "cleanup_pending": task.cleanup_pending,
+        "cleanup_error": task.cleanup_error,
     }
     if include_file_path:
         result["file_path"] = task.file_path
+        result["namespace"] = task.namespace or "apps"
     if include_items:
         result["items"] = [_item_to_dict(item) for item in task.items]
     return result
@@ -146,6 +154,8 @@ def create_image_import_task(
             status="uploading",
         )
         db.add(task)
+        db.flush()
+        task.namespace = f"kubengine-import-{task.task_id}"
         db.commit()
         db.refresh(task)
         return _task_to_dict(task)
@@ -161,6 +171,10 @@ def ensure_image_import_schema() -> None:
         "heartbeat_at": "DATETIME",
         "attempt_count": "INTEGER NOT NULL DEFAULT 0",
         "retry_failed": "BOOLEAN NOT NULL DEFAULT 0",
+        "cleanup_pending": "BOOLEAN NOT NULL DEFAULT 0",
+        "cleanup_error": "TEXT",
+        "cleanup_retry_at": "DATETIME",
+        "namespace": "VARCHAR",
     }
     # Multiple Uvicorn workers start concurrently. Serialize the lightweight
     # SQLite compatibility migration across processes.
@@ -267,7 +281,9 @@ def requeue_image_import_task(task_id: int) -> bool:
             db.query(ImageImportTask)
             .filter(
                 ImageImportTask.task_id == task_id,
-                ImageImportTask.status.notin_(["pending", "processing"]),
+                ImageImportTask.status.in_(["failed", "success", "partial_success"]),
+                ImageImportTask.cleanup_pending == False,
+                ImageImportTask.file_path != "",
             )
             .update(
                 {
@@ -285,6 +301,50 @@ def requeue_image_import_task(task_id: int) -> bool:
         )
         db.commit()
         return bool(updated == 1)
+
+
+def request_cleanup_retry(task_id: int) -> None:
+    with get_db() as db:
+        db.query(ImageImportTask).filter(
+            ImageImportTask.task_id == task_id, ImageImportTask.cleanup_pending == True,
+            ImageImportTask.status.in_(["failed", "partial_success", "success"]),
+        ).update({"cleanup_retry_at": datetime.now()}, synchronize_session=False)
+        db.commit()
+
+
+def pending_cleanup_tasks():
+    with get_db() as db:
+        return [_task_to_dict(task, include_file_path=True) for task in db.query(ImageImportTask).filter(
+            ImageImportTask.cleanup_pending == True,
+            ImageImportTask.status.in_(["failed", "partial_success", "success"]),
+            ImageImportTask.cleanup_retry_at <= datetime.now(),
+        ).order_by(ImageImportTask.cleanup_retry_at, ImageImportTask.task_id).limit(1).all()]
+
+
+def record_cleanup_result(task_id: int, attempt: int, error: Optional[str]):
+    with get_db() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        task = db.query(ImageImportTask).filter(
+            ImageImportTask.task_id == task_id, ImageImportTask.attempt_count == attempt,
+            ImageImportTask.cleanup_pending == True,
+            ImageImportTask.status.in_(["failed", "partial_success", "success"]),
+        ).first()
+        if task is None:
+            return
+        if not error and task.error_message == task.cleanup_error:
+            task.error_message = None
+        task.cleanup_pending = bool(error)
+        task.cleanup_error = error
+        task.cleanup_retry_at = datetime.now() + timedelta(seconds=60) if error else None
+        if not error:
+            if task.items and all(item.status == "success" for item in task.items):
+                task.status = "success"
+            elif any(item.status == "success" for item in task.items):
+                task.status = "partial_success"
+            else:
+                task.status = "failed"
+        task.updated_at = datetime.now()
+        db.commit()
 
 
 def _owned_task_query(

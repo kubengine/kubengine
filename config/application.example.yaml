@@ -2,6 +2,14 @@
 # No installation's credentials, certificates, node list, or state belongs here.
 root_dir: /opt/kubengine
 domain: example.invalid
+security:
+  uploads:
+    image_bytes: 10737418240  # 单个镜像归档 10 GiB；Chart 固定为 2 MiB
+    archive_bytes: 53687091200  # 镜像归档总额 50 GiB
+    reserve_bytes: 1073741824  # 临时盘、归档盘至少预留 1 GiB
+    concurrency: 2  # 同一安装所有 API 进程合计
+    timeout_seconds: 3600
+    retention_seconds: 604800  # 终态归档保留 7 天供重试
 registry:
   username: ""
   password: ""
