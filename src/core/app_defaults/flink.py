@@ -28,8 +28,9 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                 name="jobmanagerReplicaCount",
                 label="JobManager副本数",
                 extra=(
-                    "JobManager 为集群协调节点，默认 1。"
-                    "多副本需额外配置高可用（如 Zookeeper）"
+                    "JobManager 为集群协调节点，默认 1。多副本会自动启用 "
+                    "Kubernetes 高可用，并使用共享存储（ReadWriteMany）"
+                    "保存 HA 元数据，请确保默认存储类支持 RWX"
                 ),
                 order=0,
                 form_item_props={"required": True},
@@ -74,14 +75,14 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                     "unit": "",
                 },
             ),
-            # CPU 配置
+            # JobManager CPU 配置
             AppFieldConfigSchema(
                 config_type=ConfigTypeEnum.cluster,
-                name="cpu",
-                label="cpu",
+                name="jobmanagerCpu",
+                label="JobManager cpu",
                 extra=(
-                    "每个节点的核数，JobManager 负责协调调度，TaskManager"
-                    " 执行实际计算，生产环境建议 2 核及以上"
+                    "JobManager 协调节点的 CPU 核数，负责任务调度与资源"
+                    "管理，生产环境建议 2 核及以上"
                 ),
                 order=2,
                 form_item_props={"required": True},
@@ -96,22 +97,19 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                     ]
                 },
                 helm_props={
-                    "keys": [
-                        "jobmanager.resources.requests.cpu",
-                        "taskmanager.resources.requests.cpu",
-                    ],
+                    "keys": ["jobmanager.resources.requests.cpu"],
                     "type": "number",
                     "unit": "",
                 },
             ),
-            # 内存配置
+            # JobManager 内存配置
             AppFieldConfigSchema(
                 config_type=ConfigTypeEnum.cluster,
-                name="memory",
-                label="内存",
+                name="jobmanagerMemory",
+                label="JobManager内存",
                 extra=(
-                    "内存大小(单位 Gi)，Flink 对内存敏感，TaskManager"
-                    " 建议不低于 2Gi"
+                    "JobManager 内存大小(单位 Gi)，用于作业调度与元数据"
+                    "管理，生产环境建议 2Gi 及以上"
                 ),
                 order=3,
                 form_item_props={"required": True},
@@ -127,10 +125,151 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                     ]
                 },
                 helm_props={
+                    "keys": ["jobmanager.resources.requests.memory"],
+                    "type": "number",
+                    "unit": "Gi",
+                },
+            ),
+            # JobManager 持久化存储大小
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="jobmanagerDisk",
+                label="JobManager存储大小",
+                extra=(
+                    "8Gi - 100Gi, JobManager 协调节点的持久化存储大小，"
+                    "用于存放作业元数据与检查点元信息，通常无需过大"
+                ),
+                order=4,
+                form_item_props={"required": True},
+                type="number",
+                initial_value=8,
+                rules=[
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 8 - 100",
+                        "min": 8,
+                        "max": 100,
+                    },
+                ],
+                field_props={"options": []},
+                helm_props={
+                    "keys": ["jobmanager.persistence.size"],
+                    "type": "number",
+                    "unit": "Gi",
+                },
+            ),
+            # JobManager 高可用元数据存储大小
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="highAvailabilityDisk",
+                label="HA元数据存储大小",
+                extra=(
+                    "1Gi - 50Gi, JobManager 高可用的共享元数据存储大小"
+                    "（ReadWriteMany），用于存放 job graph、作业 jar 与"
+                    "检查点元数据指针，全集群共用一份；仅当 JobManager"
+                    " 副本数大于 1 时生效，与各节点本地数据盘无关"
+                ),
+                order=5,
+                form_item_props={"required": True},
+                type="number",
+                initial_value=2,
+                rules=[
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 1 - 50",
+                        "min": 1,
+                        "max": 50,
+                    },
+                ],
+                field_props={"options": []},
+                helm_props={
                     "keys": [
-                        "jobmanager.resources.requests.memory",
-                        "taskmanager.resources.requests.memory",
+                        "jobmanager.highAvailability.persistence.size"
                     ],
+                    "type": "number",
+                    "unit": "Gi",
+                },
+            ),
+            # TaskManager CPU 配置
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="taskmanagerCpu",
+                label="TaskManager cpu",
+                extra=(
+                    "TaskManager 工作节点的 CPU 核数，负责执行实际计算，"
+                    "生产环境建议 2 核及以上"
+                ),
+                order=6,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="1",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "1", "value": "1"},
+                        {"label": "2", "value": "2"},
+                        {"label": "4", "value": "4"},
+                    ]
+                },
+                helm_props={
+                    "keys": ["taskmanager.resources.requests.cpu"],
+                    "type": "number",
+                    "unit": "",
+                },
+            ),
+            # TaskManager 内存配置
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="taskmanagerMemory",
+                label="TaskManager内存",
+                extra=(
+                    "TaskManager 内存大小(单位 Gi)，用于任务执行与状态"
+                    "存储，Flink 对内存敏感，建议不低于 2Gi"
+                ),
+                order=7,
+                form_item_props={"required": True},
+                type="radio",
+                initial_value="2",
+                rules=[],
+                field_props={
+                    "options": [
+                        {"label": "1", "value": "1"},
+                        {"label": "2", "value": "2"},
+                        {"label": "4", "value": "4"},
+                        {"label": "8", "value": "8"},
+                    ]
+                },
+                helm_props={
+                    "keys": ["taskmanager.resources.requests.memory"],
+                    "type": "number",
+                    "unit": "Gi",
+                },
+            ),
+            # TaskManager 持久化存储大小
+            AppFieldConfigSchema(
+                config_type=ConfigTypeEnum.cluster,
+                name="taskmanagerDisk",
+                label="TaskManager存储大小",
+                extra=(
+                    "8Gi - 100Gi, TaskManager 工作节点的持久化存储大小，"
+                    "用于存放本地状态（如 RocksDB）与中间结果，"
+                    "建议按状态规模评估"
+                ),
+                order=8,
+                form_item_props={"required": True},
+                type="number",
+                initial_value=8,
+                rules=[
+                    {
+                        "type": "number",
+                        "message": "仅允许设置 8 - 100",
+                        "min": 8,
+                        "max": 100,
+                    },
+                ],
+                field_props={"options": []},
+                helm_props={
+                    "keys": ["taskmanager.persistence.size"],
                     "type": "number",
                     "unit": "Gi",
                 },
@@ -144,7 +283,7 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                     "请选择 K8s Service 类型（ClusterIP 集群内用、LoadBalancer"
                     " 公网负载均衡）"
                 ),
-                order=4,
+                order=9,
                 form_item_props={"required": True},
                 type="radio",
                 initial_value="ClusterIP",
