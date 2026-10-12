@@ -57,6 +57,10 @@ from core.logger import (  # noqa: E402
 )
 from core.misc.ca import create_cert  # noqa: E402
 from core.misc.network import local_ips  # noqa: E402
+from core.registry_auth import (  # noqa: E402
+    RegistryCredentialsError,
+    format_registry_auth,
+)
 from core.ssh import AsyncSSHClient  # noqa: E402
 from infra.executor_wrapper import (  # noqa: E402
     InfraExecutionConfig,
@@ -1500,6 +1504,10 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
     domain = Application.DOMAIN
     registry_user = Application.REGISTRY.USERNAME
     registry_pass = Application.REGISTRY.PASSWORD
+    try:
+        registry_auth = format_registry_auth(registry_user, registry_pass)
+    except RegistryCredentialsError as exc:
+        raise click.ClickException(str(exc)) from None
 
     # 解析所有节点（@local 表示本机 Master）
     hosts = [
@@ -1646,7 +1654,7 @@ def push_images(dry_run: bool, image_timeout: int) -> None:
                 push_cmd = (
                     "ctr -n k8s.io i push --hosts-dir"
                     " /etc/containerd/certs.d/ -u"
-                    f" {registry_user}:{registry_pass} {ref}"
+                    f" {shlex.quote(registry_auth)} {shlex.quote(ref)}"
                 )
 
                 if push_host == "@local":
@@ -2394,6 +2402,20 @@ def _do_sync_import(
             _split_image_ref(img_ref)[0] for img_ref in resolved_images
         }
 
+    registry_auth = ""
+    if not dry_run and (tgzs or images_tar):
+        try:
+            registry_auth = format_registry_auth(registry_user, registry_pass)
+        except RegistryCredentialsError as exc:
+            click.echo(click.style(f"  ❌ {exc}", fg="red"), err=True)
+            return (
+                0,
+                len(tgzs),
+                0,
+                len(resolved_images),
+                needed_projects,
+            )
+
     # ---- 1. helm push 每个 chart 包 ----
     for tgz_str in tgzs:
         tgz_path = Path(tgz_str)
@@ -2469,7 +2491,8 @@ def _do_sync_import(
                 )
 
             import_res = execute_command(
-                f"ctr -n apps i import {shlex.quote(images_tar)}", timeout=600
+                "ctr -n apps i import --local " + shlex.quote(images_tar),
+                timeout=600,
             )
             if import_res.is_failure():
                 click.echo(
@@ -2494,7 +2517,7 @@ def _do_sync_import(
                     push_res = execute_command(
                         "ctr -n apps i push --hosts-dir"
                         " /etc/containerd/certs.d/ -u"
-                        f" {shlex.quote(registry_user + ':' + registry_pass)}"
+                        f" {shlex.quote(registry_auth)}"
                         f" {shlex.quote(img_ref)}",
                         timeout=image_timeout,
                     )

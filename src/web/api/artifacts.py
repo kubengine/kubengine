@@ -54,6 +54,7 @@ from core.orm.image_import import (
     update_image_import_item,
     update_image_import_task,
 )
+from core.registry_auth import RegistryCredentialsError, format_registry_auth
 from core.runtime_files import private_runtime_file
 from web.utils.auth import auth_with_renew
 from web.utils.page import PageParams, pagination_params
@@ -183,6 +184,10 @@ def _inspect_image_archive(file_path: str) -> dict[str, str]:
 
             errors: dict[str, list[str]] = {}
             if "index.json" in members:
+                if "oci-layout" not in members:
+                    raise ValueError(
+                        "OCI 镜像归档缺少根目录文件 oci-layout"
+                    )
                 index = read_json("index.json")
                 visited: set[tuple[str, str]] = set()
 
@@ -287,7 +292,42 @@ def _inspect_image_archive(file_path: str) -> dict[str, str]:
                     image_ref: "；".join(messages)
                     for image_ref, messages in errors.items()
                 }
-            return {}
+
+            chart_metadata = next(
+                (
+                    name
+                    for name in members
+                    if name == "Chart.yaml" or name.endswith("/Chart.yaml")
+                ),
+                None,
+            )
+            if chart_metadata:
+                raise ValueError(
+                    "检测到 Helm Chart 包，不是镜像归档；请上传由 "
+                    "`ctr images export` 或 `docker save` 生成的 "
+                    "*.images.tar 文件"
+                )
+
+            nested_metadata = next(
+                (
+                    name
+                    for name in members
+                    if name.endswith("/index.json")
+                    or name.endswith("/manifest.json")
+                ),
+                None,
+            )
+            if nested_metadata:
+                raise ValueError(
+                    "镜像归档被额外目录包裹；index.json 或 manifest.json "
+                    "必须直接位于归档根目录"
+                )
+
+            raise ValueError(
+                "不支持的镜像归档格式：根目录缺少 OCI index.json 或 "
+                "Docker manifest.json；请使用 `ctr images export` 或 "
+                "`docker save` 导出"
+            )
     except (
         tarfile.TarError,
         OSError,
@@ -903,7 +943,15 @@ def process_image_import_task(
                     raise RuntimeError(cleanup_error)
                 check_lease()
                 import_result = execute_command(
-                    ["ctr", "-n", namespace, "i", "import", file_path],
+                    [
+                        "ctr",
+                        "-n",
+                        namespace,
+                        "i",
+                        "import",
+                        "--local",
+                        file_path,
+                    ],
                     timeout=600,
                 )
                 check_lease()
@@ -986,6 +1034,22 @@ def process_image_import_task(
                         lease=lease,
                     )
 
+                registry_auth = ""
+                try:
+                    registry_auth = format_registry_auth(
+                        Application.REGISTRY.USERNAME,
+                        Application.REGISTRY.PASSWORD,
+                    )
+                except RegistryCredentialsError as exc:
+                    _mark_task_items_failed(
+                        task_id,
+                        target_refs,
+                        "credentials",
+                        str(exc),
+                        lease=lease,
+                    )
+                    target_refs = []
+
                 registries = {_split_image_ref(ref)[0] for ref in target_refs}
                 harbor_client = HarborClient()
                 invalid_registries: set[str] = set()
@@ -1052,10 +1116,6 @@ def process_image_import_task(
                         )
                         push_refs = []
 
-                registry_auth = (
-                    f"{Application.REGISTRY.USERNAME}:"
-                    f"{Application.REGISTRY.PASSWORD}"
-                )
                 for image_ref in push_refs:
                     check_lease()
                     update_image_import_item(

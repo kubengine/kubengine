@@ -484,11 +484,12 @@ Harbor 镜像仓库用户名。
 
 #### `registry.password`
 
-Harbor 镜像仓库密码。
+Harbor 镜像仓库密码。执行 Chart 或镜像推送前必须配置；空密码不会触发
+交互式密码输入，因为 Web 后台任务和自动化 CLI 没有可用终端。
 
 - **类型**：字符串
-- **默认值**：`Harbor@123`
-- **说明**：生产环境请及时修改
+- **默认值**：空
+- **说明**：填写 Harbor 的真实管理员或机器人账号密码，并在修改后重启服务
 
 ---
 
@@ -524,7 +525,7 @@ Harbor 镜像仓库密码。
 | `kubernetes.loadbalancer.ip-pools` | 负载均衡 IP 池 | `[]` | 否 |
 | `kubernetes.nameserver` | DNS 服务器 | `["8.8.8.8"]` | 否 |
 | `registry.username` | Harbor 用户名 | `admin` | 否 |
-| `registry.password` | Harbor 密码 | `Harbor@123` | 否 |
+| `registry.password` | Harbor 密码 | 空 | 推送时是 |
 
 ---
 

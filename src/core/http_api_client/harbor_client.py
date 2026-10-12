@@ -386,15 +386,38 @@ class HarborClient(BasicClient):
         return self.api_result(response)
 
     def create_project(self, project_name: str, public: bool = True) -> bool:
-        """在 Harbor 中创建新项目
+        """确保 Harbor 中存在指定项目
 
         Args:
             project_name: 要创建的项目名称
             public: 项目是否为公开项目
 
         Returns:
-            创建成功返回 True，失败返回 False
+            项目已存在或创建成功返回 True，失败返回 False
         """
+        project_url = (
+            f"{self.base_url}{self.base_uri}/projects/"
+            f"{quote(project_name, safe='')}"
+        )
+        lookup_response = requests.get(
+            project_url,
+            headers={"X-Is-Resource-Name": "true"},
+            auth=(self.username, self.password),
+            verify=self.verify_file,
+            timeout=(5, 30),
+        )
+        if lookup_response.status_code == 200:
+            self._logger.info(f"项目 '{project_name}' 已存在，跳过创建")
+            return True
+        if lookup_response.status_code != 404:
+            # 查询失败时仍尝试创建，以保持原有行为；例如部分 Harbor
+            # 权限配置允许创建项目，但不允许读取项目详情。
+            self._logger.warning(
+                "查询项目 '%s' 失败（%s），继续尝试创建",
+                project_name,
+                lookup_response.status_code,
+            )
+
         url = f"{self.base_url}{self.base_uri}/projects"
         payload: dict[str, Any] = {
             "project_name": project_name,

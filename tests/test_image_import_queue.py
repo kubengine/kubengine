@@ -83,6 +83,8 @@ def mock_commands(monkeypatch, refs, on_push=None):
 
     def run(argv, **kwargs):
         assert isinstance(argv, list)
+        if argv[0] == "ctr" and argv[3:5] == ["i", "import"]:
+            assert argv[5] == "--local"
         if argv[0] == "ctr" and argv[3:5] == ["i", "ls"]:
             return CommandResult(0, "\n".join(refs), "")
         if argv[0] == "ctr" and argv[3:5] == ["i", "push"]:
@@ -126,6 +128,27 @@ def test_import_push_keeps_containerd_available(image_queue, monkeypatch):
     assert pushed == [ref]
     assert final["status"] == "success"
     assert final["cleanup_pending"] is False
+
+
+def test_missing_registry_password_never_starts_interactive_push(
+    image_queue, monkeypatch
+):
+    _, archive = image_queue
+    task_id = queue_task(archive)
+    _, lease = claim()
+    ref = "docker.io/library/example:latest"
+    pushed = mock_commands(monkeypatch, [ref])
+    monkeypatch.setattr(Application.REGISTRY, "PASSWORD", "")
+
+    artifacts.process_image_import_task(task_id, lease=lease)
+
+    final = find_image_import_task(task_id)
+    item = final["items"][0]
+    assert pushed == []
+    assert final["status"] == "failed"
+    assert item["stage"] == "credentials"
+    assert "registry.password" in item["error_message"]
+    assert "console" not in item["error_message"]
 
 
 def test_expired_image_task_lease_can_be_reclaimed(image_queue):
