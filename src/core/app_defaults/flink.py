@@ -183,9 +183,7 @@ def get_flink_app(create_time: datetime) -> AppSchema:
                 ],
                 field_props={"options": []},
                 helm_props={
-                    "keys": [
-                        "jobmanager.highAvailability.persistence.size"
-                    ],
+                    "keys": ["jobmanager.highAvailability.persistence.size"],
                     "type": "number",
                     "unit": "Gi",
                 },

@@ -47,10 +47,7 @@ from test_image_import_queue import (
     claim,
 )
 from test_image_import_queue import image_queue as image_queue_fixture
-from test_image_import_queue import (
-    mock_commands,
-    queue_task,
-)
+from test_image_import_queue import mock_commands, queue_task
 from web.api import app as app_api
 from web.api import artifacts, auth_routes
 from web.api import ssh as ssh_api

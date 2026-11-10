@@ -185,9 +185,7 @@ def _inspect_image_archive(file_path: str) -> dict[str, str]:
             errors: dict[str, list[str]] = {}
             if "index.json" in members:
                 if "oci-layout" not in members:
-                    raise ValueError(
-                        "OCI 镜像归档缺少根目录文件 oci-layout"
-                    )
+                    raise ValueError("OCI 镜像归档缺少根目录文件 oci-layout")
                 index = read_json("index.json")
                 visited: set[tuple[str, str]] = set()
 
