@@ -13,7 +13,9 @@ master_ip = data.master_ip
 deploy_src = data.deploy_src
 domain = data.domain
 loadbalancer_ip = data.loadbalancer_ip
-images_path = os.path.join(deploy_src, "images", "kuboard.images.v4.tar.gz")
+images_path = os.path.join(
+    deploy_src, "images", "kuboard.images.v4.3.3.0.tar.gz"
+)
 helm_charts_dir = os.path.join(deploy_src, "charts", "kuboard")
 
 images_budget = import_seconds(images_path)
