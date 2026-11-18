@@ -671,7 +671,6 @@ class K8sDeployer:
             ("install_longhorn.py", "分布式存储"),
             ("install_harbor.py", "镜像仓库"),
             ("install_metrics_server.py", "监控组件"),
-            ("install_dashboard.py", "Dashboard"),
             ("install_kuboard.py", "KubeBoard"),
             ("install_cert_manager.py", "证书管理组件"),
         ]
@@ -773,7 +772,6 @@ class K8sDeployer:
     域名映射配置（需添加到 /etc/hosts）：
     {loadbalancer_ip:<15} {Application.DOMAIN}              # Harbor镜像仓库
     {loadbalancer_ip:<15} longhorn.{Application.DOMAIN}     # Longhorn存储管理
-    {loadbalancer_ip:<15} dashboard.{Application.DOMAIN}    # K8s Dashboard
     {loadbalancer_ip:<15} kuboard.{Application.DOMAIN}      # KubeBoard管理面板
     """
 
@@ -792,16 +790,14 @@ class K8sDeployer:
             " KubeConfig文件:  /root/.kube/config\n\n   "
             f" {domain_mappings.strip()}\n\n    组件访问地址：\n    ├─"
             f" Harbor镜像仓库:        https://{Application.DOMAIN}\n    ├─"
-            f" Longhorn管理面板:      https://longhorn.{Application.DOMAIN}\n "
-            "   ├─ K8s Dashboard:        "
-            f" https://dashboard.{Application.DOMAIN}\n    ├─"
+            f" Longhorn管理面板:      https://longhorn.{Application.DOMAIN}"
+            "\n    ├─"
             f" KubeBoard管理面板:     https://kuboard.{Application.DOMAIN}\n  "
             f"  └─ K8s APIServer:         http://{apiserver_endpoint}:6443\n\n"
             "    组件访问凭据：\n    ├─ Harbor凭据:           "
             f" {registry_credential_status}（通过 registry.username/password"
-            " 管理）\n    ├─ Longhorn无默认密码     （基于K8s RBAC认证）\n   "
-            " └─ Dashboard令牌获取:     kubectl -n kubernetes-dashboard"
-            " create token admin-user\n\n    常用操作提示：\n    ├─"
+            " 管理）\n    └─ Longhorn无默认密码     （基于K8s RBAC认证）"
+            "\n\n    常用操作提示：\n    ├─"
             " 查看节点状态:          kubectl get nodes\n    ├─ 查看集群组件: "
             "         kubectl get pods -A\n    ├─ 查看Longhorn状态:     "
             " kubectl get pods -n longhorn-system\n    ├─ 查看Harbor状态:    "

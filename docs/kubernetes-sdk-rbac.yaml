@@ -1,0 +1,57 @@
+# 后端以 Pod 运行时，可使用此只读身份访问工作台所需的 Kubernetes API。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubengine-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubengine-reader
+  namespace: kubengine-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubengine-reader
+rules:
+  - apiGroups: [""]
+    resources: [nodes, namespaces, pods, services, configmaps, secrets, persistentvolumes, persistentvolumeclaims, events]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, ingressclasses, networkpolicies]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubengine-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubengine-reader
+subjects:
+  - kind: ServiceAccount
+    name: kubengine-reader
+    namespace: kubengine-system

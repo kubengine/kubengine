@@ -70,6 +70,7 @@ include-package-data = true
 "builder.image.os_shell" = ["*.yaml"]
 "builder.image.redis" = ["*.yaml"]
 "web" = ["static/**/*"]
+"core.http_api_client" = ["pod_scripts/*.sh", "pod_scripts/*.ps1"]
 
 [tool.black]
 line-length = 79

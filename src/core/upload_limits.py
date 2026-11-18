@@ -2,6 +2,8 @@
 maintenance.
 """
 
+from typing import Any
+
 from core.config import ConfigDict
 
 DEFAULTS = {
@@ -10,12 +12,15 @@ DEFAULTS = {
     "reserve_bytes": 1024**3,
     "concurrency": 2,
     "timeout_seconds": 3600,
+    "pod_file_bytes": 100 * 1024**2,
+    "pod_timeout_seconds": 300,
     "retention_seconds": 7 * 86400,
 }
 
 
 def upload_limit(name: str) -> int:
-    config = ConfigDict.get_instance().get("security", {}).get("uploads", {})
+    application: dict[str, Any] = ConfigDict.get_instance()
+    config = application.get("security", {}).get("uploads", {})
     value = config.get(name, DEFAULTS[name])
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"security.uploads.{name} must be a positive integer")

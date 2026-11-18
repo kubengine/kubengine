@@ -17,7 +17,10 @@ KubeEngine 面向 Kylin Server V11（x86_64），提供 Kubernetes 集群离线�
 
 - 单控制面与多控制面高可用部署，支持 Keepalived VIP 和附加控制面节点加入。
 - Worker 节点扩容、部署状态续跑/重置、节点 SSH 互信与批量命令执行。
-- 自动安装 Chrony、containerd、CNI、Kubernetes、Calico、Helm、MetalLB、Ingress Nginx、Longhorn、Harbor、Metrics Server、Dashboard、Kuboard 和 cert-manager。
+- 自动安装 Chrony、containerd、CNI、Kubernetes、Calico、Helm、MetalLB、Ingress Nginx、Longhorn、Harbor、Metrics Server、Kuboard 和 cert-manager。
+- 工作台通过 Kubernetes Python SDK 直接查询集群，无需部署 Kubernetes Dashboard；连接及只读 RBAC 配置见 [API 文档](docs/API.md#kubernetes-sdk-连接与监控)。
+- 资源中心支持 20 类核心资源的全局浏览、关联 Pod、容器日志、事件与只读 YAML；迁移范围见 [Dashboard 迁移清单](docs/kubernetes-dashboard迁移清单.md)。
+- Pod 详情支持 Bash/sh/PowerShell 交互终端与容器文件管理，包括上传下载、新建、重命名和删除；见 [运维说明](docs/Pod终端与文件管理.md)。
 - 离线文件分发具备超时、停顿检测和重试机制。
 - Harbor 项目初始化、集群镜像归集，以及 Bitnami Chart/镜像的离线导出和导入。
 - 应用模板初始化与 Helm 部署；当前内置 Redis、Redis Cluster、MySQL、PostgreSQL、Kafka、RabbitMQ、Elasticsearch、etcd、Nacos、Flink、Flink Operator、APISIX 和 XXL-JOB Admin 等模板。

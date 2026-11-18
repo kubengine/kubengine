@@ -1,7 +1,7 @@
 """
 Kubernetes 集群管理 API 路由模块
 
-提供与 Kubernetes Dashboard API 和 Longhorn 存储系统交互的 HTTP API 接口，支持：
+提供与 Kubernetes SDK 和 Longhorn 存储系统交互的 HTTP API 接口，支持：
 - 节点信息查询
 - 集群总览数据获取（包含 CPU、内存、Pod、存储容量等指标）
 - 资源列表查询（Pod、Service、Deployment、StatefulSet 等）
@@ -11,12 +11,14 @@ Kubernetes 集群管理 API 路由模块
 
 import asyncio
 from datetime import datetime
+from functools import lru_cache
 from typing import Any
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from kubernetes.config import ConfigException
 from starlette.concurrency import run_in_threadpool
 
-from core.http_api_client.dashboard_client import DashboardClient
+from core.http_api_client.kubernetes_view_client import KubernetesViewClient
 from core.http_api_client.longhorn_client import LonghornClient
 from core.logger import get_logger
 from web.utils.auth import auth_with_renew
@@ -25,6 +27,18 @@ from web.utils.page import PageParams, pagination_params
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["Kubernetes 集群管理"])
+
+
+@lru_cache(maxsize=1)
+def get_kubernetes_client() -> KubernetesViewClient:
+    """复用 SDK 连接池，配置只在成功初始化后缓存。"""
+    try:
+        return KubernetesViewClient()
+    except (ConfigException, OSError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="无法加载 Kubernetes 连接配置，请配置 KUBECONFIG 或集群内服务账号",
+        ) from exc
 
 
 # ============================ 节点管理 ============================
@@ -43,7 +57,7 @@ def get_node(
     """
     获取指定节点的详细信息
 
-    通过 Dashboard API 查询指定 Kubernetes 节点的详细信息，包括节点状态、
+    通过 Kubernetes SDK 查询指定 Kubernetes 节点的详细信息，包括节点状态、
     资源分配、标签等元数据信息。
 
     Args:
@@ -53,7 +67,7 @@ def get_node(
     Returns:
         节点详细信息，包含状态、资源分配、标签等数据
     """
-    client = DashboardClient()
+    client = get_kubernetes_client()
     return client.node(name=name)
 
 
@@ -112,7 +126,7 @@ async def get_overview(request: Request):
         处理节点数据并计算集群统计信息
 
         该函数执行以下操作：
-        1. 从 Dashboard API 获取原始节点数据
+        1. 从 Kubernetes SDK 获取原始节点数据
         2. 解析并转换 CPU 和内存使用率的时间序列数据
         3. 计算集群级别的 CPU、内存、Pod 资源汇总统计
         4. 转换节点列表数据格式，提取关键字段并保留 2 位小数
@@ -120,13 +134,17 @@ async def get_overview(request: Request):
         Returns:
             (code, message, data) 格式的处理结果
         """
-        client = DashboardClient()
+        client = get_kubernetes_client()
         code, msg, data = client.node()
 
         if code != 200:
             return code, msg, data
 
-        result_data: dict[str, Any] = {}
+        result_data: dict[str, Any] = {
+            "cpuUsageRate": [],
+            "memoryUsageRate": [],
+            "errors": data.get("errors", []),
+        }
 
         # 获取累积指标数据，包含 CPU 和内存的时间序列数据
         cumulative_metrics = data.get("cumulativeMetrics", [])
@@ -194,12 +212,7 @@ async def get_overview(request: Request):
                 "memoryCapacity", 0
             )
             total_allocated_pods += allocated_resources.get("allocatedPods", 0)
-
-        # Pod 总容量（取最后一个节点的 podCapacity）
-        if nodes:
-            total_pod_capacity = (
-                nodes[-1].get("allocatedResources", {}).get("podCapacity", 0)
-            )
+            total_pod_capacity += allocated_resources.get("podCapacity", 0)
 
         # 转换节点数据格式，提取并重组关键字段
         new_nodes = []
@@ -279,10 +292,11 @@ async def get_overview(request: Request):
 # ============================ 资源管理 ============================
 
 
+@router.get("/dashboard/resource/{type}", include_in_schema=False)
 @router.get(
-    "/dashboard/resource/{type}",
+    "/resource/{type}",
     summary="查询资源列表",
-    description="通过 Dashboard API 获取 Kubernetes 资源列表，支持分页和过滤",
+    description="通过 Kubernetes SDK 获取 Kubernetes 资源列表，支持分页和过滤",
 )
 @auth_with_renew()
 def get_resource_list(
@@ -296,11 +310,14 @@ def get_resource_list(
         None, description="资源名称过滤（如 StatefulSet 名称）"
     ),
     namespace: str | None = Query(None, description="命名空间过滤"),
+    label_selector: str | None = Query(None, max_length=1024),
+    field_selector: str | None = Query(None, max_length=1024),
+    sort_by: str = Query("d,creationTimestamp"),
 ):
     """
     查询 Kubernetes 资源列表
 
-    通过 Dashboard API 获取指定类型的资源列表，支持分页和过滤功能。
+    通过 Kubernetes SDK 获取指定类型的资源列表，支持分页和过滤功能。
     可查询的资源类型包括：Pod、Service、Deployment、StatefulSet 等。
 
     Args:
@@ -313,27 +330,34 @@ def get_resource_list(
     Returns:
         资源列表数据，包含分页信息
     """
-    client = DashboardClient()
+    client = get_kubernetes_client()
 
     # 构建过滤条件，如果指定了 name 参数则设置 filterBy
     filter_by = None
     if name is not None:
         filter_by = f"name,{name}"  # 格式为 "name,资源名称"
 
-    # 调用 Dashboard API 获取资源列表
+    # 调用 Kubernetes SDK 获取资源列表
     return client.resource_list(
         resource_type=type,
         namespace=namespace,
         items_per_page=pagination.page_size,
         page=pagination.page,
         filter_by=filter_by,
+        label_selector=label_selector,
+        field_selector=field_selector,
+        sort_by=sort_by,
     )
 
 
 @router.get(
     "/dashboard/resourcedetail/{type}/{namespace}/{name}",
+    include_in_schema=False,
+)
+@router.get(
+    "/resourcedetail/{type}/{namespace}/{name}",
     summary="查询资源详情",
-    description="通过 Dashboard API 获取指定资源的完整配置信息",
+    description="通过 Kubernetes SDK 获取指定资源的完整配置信息",
 )
 @auth_with_renew()
 def get_resource_detail(
@@ -345,7 +369,7 @@ def get_resource_detail(
     """
     查询指定 Kubernetes 资源的详细信息
 
-    通过 Dashboard API 获取指定资源的完整配置信息，包括：
+    通过 Kubernetes SDK 获取指定资源的完整配置信息，包括：
     - 元数据（metadata）
     - 规格信息（spec）
     - 状态信息（status）
@@ -360,14 +384,17 @@ def get_resource_detail(
     Returns:
         资源详情数据，包含完整配置对象
     """
-    client = DashboardClient()
+    client = get_kubernetes_client()
     return client.resource_detail(type, namespace, name)
 
 
 @router.get(
-    "/dashboard/resourcepod/{type}/{namespace}/{name}",
+    "/dashboard/resourcepod/{type}/{namespace}/{name}", include_in_schema=False
+)
+@router.get(
+    "/resourcepod/{type}/{namespace}/{name}",
     summary="查询资源关联的 Pod 列表",
-    description="通过 Dashboard API 获取与指定资源相关联的 Pod 列表",
+    description="通过 Kubernetes SDK 获取与指定资源相关联的 Pod 列表",
 )
 @auth_with_renew()
 def get_resource_pod(
@@ -382,7 +409,7 @@ def get_resource_pod(
     """
     查询指定资源关联的 Pod 列表
 
-    通过 Dashboard API 获取与指定资源相关联的 Pod 列表。
+    通过 Kubernetes SDK 获取与指定资源相关联的 Pod 列表。
     例如：查询 Deployment 管理的所有 Pod，或 StatefulSet 管理的所有 Pod。
 
     Args:
@@ -395,11 +422,66 @@ def get_resource_pod(
     Returns:
         Pod 列表数据，包含分页信息和 Pod 详情
     """
-    client = DashboardClient()
+    client = get_kubernetes_client()
     return client.resource_pod(
         resource_type=type,
         namespace=namespace,
         resource_name=name,
         items_per_page=pagination.page_size,
         page=pagination.page,
+    )
+
+
+@router.get("/manifest/{type}/{namespace}/{name}", summary="查看资源原始 YAML")
+@auth_with_renew()
+def get_resource_manifest(
+    request: Request,
+    type: str,
+    namespace: str,
+    name: str,
+    reveal_secret: bool = Query(False, description="显式查看 Secret 值"),
+):
+    return get_kubernetes_client().resource_manifest(
+        type, namespace, name, reveal_secret=reveal_secret
+    )
+
+
+@router.get("/events/{type}/{namespace}/{name}", summary="查看资源关联事件")
+@auth_with_renew()
+def get_resource_events(
+    request: Request,
+    type: str,
+    namespace: str,
+    name: str,
+    pagination: PageParams = Depends(pagination_params),
+):
+    return get_kubernetes_client().resource_events(
+        type,
+        namespace,
+        name,
+        page=pagination.page,
+        items_per_page=pagination.page_size,
+    )
+
+
+@router.get("/pods/{namespace}/{name}/logs", summary="查看容器日志")
+@auth_with_renew()
+def get_pod_logs(
+    request: Request,
+    namespace: str,
+    name: str,
+    container: str | None = Query(None, max_length=253),
+    tail_lines: int = Query(200, ge=1, le=2000),
+    since_seconds: int | None = Query(None, ge=1, le=604800),
+    previous: bool = Query(False),
+    timestamps: bool = Query(True),
+):
+    return get_kubernetes_client().pod_logs(
+        namespace,
+        name,
+        container=container,
+        tail_lines=tail_lines,
+        since_seconds=since_seconds,
+        previous=previous,
+        timestamps=timestamps,
     )

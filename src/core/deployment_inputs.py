@@ -48,10 +48,6 @@ INPUTS = {
         "images/metrics-server.images.v0.8.0.tar.gz",
         "charts/metrics-server",
     ],
-    "install_dashboard.py": [
-        "images/dashboard.images.1.7.0.tar.gz",
-        "charts/kubernetes-dashboard",
-    ],
     "install_kuboard.py": [
         "images/kuboard.images.v4.tar.gz",
         "charts/kuboard",

@@ -39,6 +39,7 @@ from web.api.artifacts import router as artifacts_router
 from web.api.auth_routes import router as auth_router
 from web.api.health import router as health_router
 from web.api.k8s import router as k8s_router
+from web.api.pod_operations import router as pod_operations_router
 from web.api.ssh import router as ssh_router
 from web.api.websocket import router as websocket_router
 from web.utils.response import error_response
@@ -163,6 +164,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(ssh_router, prefix="/api/v1/ssh")
 app.include_router(k8s_router, prefix="/api/v1/k8s")
+app.include_router(pod_operations_router, prefix="/api/v1/k8s")
 app.include_router(apps_router, prefix="/api/v1/app")
 app.include_router(artifacts_router, prefix="/api/v1/artifacts")
 app.include_router(websocket_router, prefix="/api/v1")

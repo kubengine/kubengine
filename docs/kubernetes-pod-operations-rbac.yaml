@@ -1,0 +1,26 @@
+# 可选的 Pod 运维权限；与只读 kubengine-reader 角色分开维护。
+# ServiceAccount 沿用 kubernetes-sdk-rbac.yaml 中的 kubengine-reader。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubengine-pod-operator
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubengine-pod-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubengine-pod-operator
+subjects:
+  - kind: ServiceAccount
+    name: kubengine-reader
+    namespace: kubengine-system

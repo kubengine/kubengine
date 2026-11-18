@@ -44,6 +44,7 @@ class SecureUploadRoute(APIRoute):
             "upload_chart",
             "create_image_import_api",
             "upload_image",
+            "upload_pod_file",
         }:
             return handler
 
@@ -51,10 +52,15 @@ class SecureUploadRoute(APIRoute):
             await auth.get_current_user(
                 authorization=request.headers.get("authorization")
             )
+            pod_upload = self.endpoint.__name__ == "upload_pod_file"
             file_limit = (
-                2 * 1024**2
-                if self.endpoint.__name__ == "upload_chart"
-                else upload_limit("image_bytes")
+                upload_limit("pod_file_bytes")
+                if pod_upload
+                else (
+                    2 * 1024**2
+                    if self.endpoint.__name__ == "upload_chart"
+                    else upload_limit("image_bytes")
+                )
             )
             body_limit = file_limit + 64 * 1024
             try:
@@ -76,7 +82,9 @@ class SecureUploadRoute(APIRoute):
                     status_code=415, detail="请使用 multipart/form-data 上传"
                 )
 
-            deadline = time.monotonic() + upload_limit("timeout_seconds")
+            deadline = time.monotonic() + upload_limit(
+                "pod_timeout_seconds" if pod_upload else "timeout_seconds"
+            )
 
             async def stream():
                 size = 0
