@@ -21,7 +21,7 @@ KubeEngine 面向 Kylin Server V11（x86_64），提供 Kubernetes 集群离线�
 - Worker 节点扩容、部署状态续跑/重置、节点 SSH 互信与批量命令执行。
 - 自动安装 Chrony、containerd、CNI、Kubernetes、Calico、Helm、MetalLB、Ingress Nginx、Longhorn、Harbor、Metrics Server、Kuboard 和 cert-manager。
 - 工作台通过 Kubernetes Python SDK 直接查询集群，无需部署 Kubernetes Dashboard；连接及只读 RBAC 配置见 [API 文档](docs/API.md#kubernetes-sdk-连接与监控)。
-- 资源中心支持 20 类核心资源的全局浏览、关联 Pod、容器日志、事件与只读 YAML；迁移范围见 [Dashboard 迁移清单](docs/kubernetes-dashboard迁移清单.md)。
+- 资源中心支持 20 类核心资源的全局浏览、关联 Pod、容器日志、事件与只读 YAML；范围和接口见 [资源中心说明](docs/API.md#资源中心排障接口)。
 - Pod 详情支持 Bash/sh/PowerShell 交互终端与容器文件管理，包括上传下载、新建、重命名和删除；见 [运维说明](docs/Pod终端与文件管理.md)。
 - 资源 YAML 支持编辑、服务端校验、差异预览和应用，并保存加密版本快照、操作人及字段变更；见 [版本说明](docs/资源YAML编辑与版本历史.md)。
 - 离线文件分发具备超时、停顿检测和重试机制。
@@ -133,7 +133,7 @@ kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles/
 | [手动部署文档](docs/手动部署文档.md) | 不依赖 KubeEngine 的手工部署流程 |
 | [CLI 文档](docs/CLI.md) | 平台、集群、镜像和 Kubernetes 命令 |
 | [用户权限与操作审计](docs/用户权限与操作审计使用指南.md) | 用户、角色、敏感权限、审计及迁移运维 |
-| [用户权限与审计部署验收](docs/部署记录-2026-11-19-用户权限与审计.md) | 完整版本验证、正式环境备份及回滚边界 |
+| [Deployment 运维](docs/Deployment运维.md) | 扩缩容、滚动重启、发布状态及故障恢复 |
 | [配置说明](docs/CONFIGURATION.md) | 配置路径、字段和生产建议 |
 | [API 文档](docs/API.md) | 鉴权、响应格式和当前路由概览 |
 | [NFS 存储对接教程](docs/NFS存储对接教程.md) | 通过 external provisioner 提供 NFS StorageClass |

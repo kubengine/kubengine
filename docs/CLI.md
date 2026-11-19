@@ -39,16 +39,20 @@ python -m cli.app run --host 0.0.0.0 --port 8080 --workers 4
 kubengine app run --host 0.0.0.0 --port 8080 --workers 4
 ```
 
-### 启动镜像导入 Worker
+### 启动统一任务 Worker
 
-镜像导入由独立持久化 worker 执行，生产环境应交给 systemd 托管：
+应用、镜像导入及 Deployment 运维由独立持久化 worker 执行，生产环境交给 systemd 托管：
 
 ```bash
+kubengine app task-worker --concurrency 1
+
+# 兼容命令，执行同一个 worker
 kubengine app image-worker --concurrency 1
 ```
 
 `--concurrency` 控制同时处理的镜像包数量，默认为 `1`；任务通过数据库租约、
-心跳和过期接管机制在 worker 重启后自动恢复。
+心跳和过期接管机制在 worker 重启后恢复。原 `kubengine-image-worker.service`
+名称保持不变。各类任务的恢复边界见 [API 说明](API.md#任务恢复与清理)。
 
 ---
 
@@ -371,6 +375,21 @@ kubengine-k8s deploy -vvv
 ```
 
 ---
+
+#### 检查点与失败续跑
+
+`deploy`、`scale`、`reset-state` 共用安装目录内的互斥锁。
+`${root_dir}/config/.k8s_deployment_state.json` 使用版本 2，记录组件 owner、attempt、
+阶段和输入摘要，以 0600 临时文件、fsync 和原子替换保存；损坏或不支持的状态会报错。
+
+组件输入摘要覆盖脚本、共享 helper、执行包装器、SSH/配置代码、部署参数，以及声明的
+模板、Chart 和离线包。只有已成功且输入未变化的组件才跳过，执行中输入变化拒绝写入
+成功检查点；新增输入须维护 `core/deployment_inputs.py`。检查点不负责持续检测外部漂移。
+
+已有控制面且状态缺失或配置变化时，不会自动重新 bootstrap。Worker 扩容改变配置后，
+旧 deploy 检查点不能证明新拓扑完成；不要删除状态文件绕过保护。扩容节点已加入但配置
+写回失败时，修复存储问题后可重复相同 scale 请求补齐。主机信任与初始化边界见
+[SSH 与发布说明](security-bootstrap-release.md)。
 
 #### 显示和验证配置
 

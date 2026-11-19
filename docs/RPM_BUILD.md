@@ -150,11 +150,11 @@ find ~/rpmbuild/RPMS -name "kubengine-*.rpm"
 
 | 文件 | 说明 |
 |------|------|
-| [`kubengine.spec`](kubengine.spec) | RPM spec 文件，定义打包规则 |
-| [`setup.py`](setup.py) | Cython 编译配置（当前使用） |
-| [`setup_install.py`](setup_install.py) | 标准安装配置（备用） |
-| [`scripts/cython_compile.py`](scripts/cython_compile.py) | 独立 Cython 编译脚本 |
-| [`scripts/build_rpm.sh`](scripts/build_rpm.sh) | RPM 构建脚本 |
+| [`kubengine.spec`](../kubengine.spec) | RPM spec 文件，定义打包规则 |
+| [`setup.py`](../setup.py) | Cython 编译配置（当前使用） |
+| [`setup_install.py`](../setup_install.py) | 标准安装配置（备用） |
+| [`scripts/cython_compile.py`](../scripts/cython_compile.py) | 独立 Cython 编译脚本 |
+| [`scripts/build_rpm.sh`](../scripts/build_rpm.sh) | RPM 构建脚本 |
 
 ### Spec 文件配置
 

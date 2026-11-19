@@ -65,7 +65,7 @@ JWT 使用 `${root_dir}/config/jwt-signing.key` 中独立生成的私钥（权�
 应用、制品、基础设施、集群级管理与用户管理仍仅限管理员，操作统一进入审计。
 权限矩阵、迁移与回滚要求见[用户权限与审计设计](用户权限与审计设计.md)。
 
-WebSocket 保持现有 `token=Bearer ...` 查询参数接入方式，每次广播和回复发送前重新验证会话，客户端消息处理前也进行验证。空闲连接每 30 秒复核，失效时以 1008 关闭。升级步骤及任务恢复边界见[安全边界与资源管理修复说明](安全边界与资源管理修复-2026-09-28.md)。
+WebSocket 保持现有 `token=Bearer ...` 查询参数接入方式，每次广播和回复发送前重新验证会话，客户端消息处理前也进行验证。空闲连接每 30 秒复核，失效时以 1008 关闭。升级步骤见[部署文档](部署文档.md#十平台版本升级与恢复)，Pod 终端使用单独的首帧认证协议。
 
 ## 标准响应
 
@@ -126,6 +126,11 @@ role 可选 `platform_admin`、`namespace_operator`、`readonly`；默认 readon
 | `GET` | `/api/v1/k8s/resourcedetail/{type}/{namespace}/{name}` | 查询资源详情 |
 | `GET` | `/api/v1/k8s/resourcepod/{type}/{namespace}/{name}` | 查询资源关联 Pod |
 
+Web SSH 文件传输的 `local_path` 只接受单个文件名，不能使用绝对路径或目录。
+文件位于 `${root_dir}/tmp/ssh-transfers/<用户名 UTF-8 的 SHA-256 十六进制>/`；
+目录为 0700、文件为 0600，要求服务账号所有且不是链接，不覆盖已有下载目标。
+首次主机信任配置见 [SSH 与发布说明](security-bootstrap-release.md)。
+
 ### 应用与集群记录
 
 | 方法 | 路径 | 说明 |
@@ -143,7 +148,33 @@ role 可选 `platform_admin`、`namespace_operator`、`readonly`；默认 readon
 | `PUT` | `/api/v1/app/cluster/{cluster_id}/name` | 修改集群名称 |
 | `DELETE` | `/api/v1/app/cluster/{cluster_ip}` | 删除集群记录 |
 
-部署提交支持 `Idempotency-Key` 请求头（1–128 位字母、数字及 `._:-`）。同一用户使用同一键与相同参数重复提交时返回原应用；参数冲突返回 409，原应用已删除返回 410。省略该头保持旧版每次创建的行为。失败部署使用上表的 retry 接口；清理失败继续调用 DELETE 重试。应用与镜像任务均由 `kubengine app task-worker` 执行，原 `image-worker` 命令保持兼容。恢复边界和升级要求见[统一任务恢复与部署幂等](统一任务恢复与部署幂等-2026-09-28.md)。
+部署提交支持 `Idempotency-Key` 请求头（1–128 位字母、数字及 `._:-`）。同一用户使用同一键与相同参数重复提交时返回原应用；参数冲突返回 409，原应用已删除或身份变化返回 410。省略该头保持旧版每次创建的行为。失败部署使用上表的 retry 接口；清理失败继续调用 DELETE 重试。
+
+键按用户和操作隔离，参数摘要包含名称、模板 ID、Chart、版本和提交配置；幂等记录与
+应用、任务同事务保存，删除后的防重放记录不自动过期。客户端对同一份未确认成功的
+表单复用原键，网络错误或刷新后不能改用新键盲目重试；确认成功后再清除待确认键。
+
+#### 任务恢复与清理
+
+应用、镜像及 Deployment 运维由 `kubengine app task-worker` 执行，原 `image-worker`
+命令和服务名称保持兼容。业务失败等待显式重试；执行中断且租约到期后恢复观察或执行。
+应用和镜像任务只有 owner、attempt 和有效租约都匹配的执行者可以更新，陈旧 worker
+不能覆盖新状态。
+
+应用任务还绑定资源 UUID、Helm release 和 `operation_version`，后续清理请求会替代旧
+部署意图。本机文件锁串行化外部操作，租约到期不能绕过尚未释放的锁。恢复部署先查询
+Helm，已部署 release 须匹配 Chart、版本和自定义 values，并重新通过健康检查；名称
+相同但配置不同、发布未完成或查询失败时，保留记录并报告错误。
+
+卸载成功后先持久化 `cleanup_confirmed`，再删除管理记录；后续恢复须再次确认 release
+不存在。缺少该检查点时，仅凭 release 消失不能证明资源已删除，不自动移除记录。
+缺少稳定资源身份或操作意图不明的旧任务不自动执行，也不直接补写当前资源身份。
+
+镜像清理失败会保留成功明细和 `cleanup_pending`，后台重试只做清理。归档过期后仍保留
+任务与镜像结果，原任务重试返回 410，需要重新上传；配置见[上传配额](CONFIGURATION.md#上传与归档配额)。
+这些协调机制仅覆盖共享同一安装目录的本机进程，不能事务回滚已开始的外部命令，
+不承诺数据库与 Helm 间严格只执行一次。Deployment 的不重放写入规则另见
+[Deployment 运维](Deployment运维.md)，升级流程见[部署文档](部署文档.md#十平台版本升级与恢复)。
 
 ### Harbor 制品
 
@@ -244,8 +275,15 @@ CPU、内存使用量由 Metrics Server 的 Metrics API 提供。Metrics API 不
 
 ### 资源中心排障接口
 
-资源列表新增 Job、CronJob、HPA（`horizontalpodautoscaler` / `hpa`）、
-IngressClass、NetworkPolicy、Event，共支持 20 类资源。
+资源中心支持以下 20 类资源；HPA 的类型参数可用 `horizontalpodautoscaler` 或 `hpa`。
+
+| 类别 | 资源 |
+| --- | --- |
+| 工作负载与伸缩 | Pod、Deployment、StatefulSet、DaemonSet、ReplicaSet、Job、CronJob、HPA |
+| 服务与网络 | Service、Ingress、IngressClass、NetworkPolicy |
+| 配置与存储 | ConfigMap、Secret、PVC、PV、StorageClass |
+| 集群与事件 | Node、Namespace、Event |
+
 `GET /api/v1/k8s/resource/{type}` 继续支持 `namespace`、`name`、`page`、
 `page_size`，并新增以下可选参数：
 
@@ -276,7 +314,10 @@ IngressClass、NetworkPolicy、Event，共支持 20 类资源。
 节点按实际调度字段查询；CronJob 以 Owner UID 逐层关联 Job 与 Pod，不猜测标签。
 事件或指标读取受限时在 `errors` 中说明，其他资源信息仍然可看。
 
-完整迁移范围见 [Dashboard 迁移清单](kubernetes-dashboard迁移清单.md)。
+资源中心的筛选和分页条件保存在 URL；资源列表可手动刷新或开启 15 秒刷新。
+日志每 5 秒有界刷新，离开页面取消请求和定时器；显示过滤不改变下载的原始日志。
+Secret 的 data、stringData 和注解值默认由服务端隐藏，获得 `secret.read` 授权后才可
+显式显示，切换资源重新隐藏。YAML 编辑、创建和 Pod 操作见后续专节。
 
 ### 资源 YAML 编辑与版本历史
 
