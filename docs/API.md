@@ -160,9 +160,17 @@ role 可选 `platform_admin`、`namespace_operator`、`readonly`；默认 readon
 | --- | --- | --- |
 | `POST` | `/api/v1/artifacts/image-import-tasks` | 上传离线镜像文件并创建后台任务 |
 | `POST` | `/api/v1/artifacts/upload/image` | 上一接口的兼容入口 |
-| `GET` | `/api/v1/artifacts/image-import-tasks` | 分页查询任务 |
+| `GET` | `/api/v1/artifacts/image-import-tasks` | 分页查询任务，可按 `status` 筛选 |
 | `GET` | `/api/v1/artifacts/image-import-tasks/{task_id}` | 查询任务及镜像明细 |
 | `POST` | `/api/v1/artifacts/image-import-tasks/{task_id}/retry` | 重试失败镜像 |
+
+列表接口接受可选的 `status` 参数，合法值为 `uploading`、`pending`、`processing`、
+`success`、`partial_success`、`failed`。不传时查询全部状态；非法值（包括空字符串）
+按统一参数校验格式返回 HTTP 422。结果按创建时间倒序，先筛选再统计 `total` 和分页；
+无匹配时返回 `data: []`、`total: 0`，保留请求的 `page` 和 `page_size`。
+
+例如：`GET /api/v1/artifacts/image-import-tasks?status=failed&page=1&page_size=10`。
+列表分页结果位于标准响应的 `data` 字段中。
 
 上传示例：
 

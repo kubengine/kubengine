@@ -2,7 +2,7 @@
 
 import fcntl
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy import (
     JSON,
@@ -24,6 +24,15 @@ from core.orm.task_lease import owned_query, renew_lease
 from core.runtime_files import private_runtime_file
 from core.task_runtime import TaskLease as ImageImportLease
 from core.task_runtime import TaskLeaseLost
+
+ImageImportTaskStatus = Literal[
+    "uploading",
+    "pending",
+    "processing",
+    "success",
+    "partial_success",
+    "failed",
+]
 
 
 class ImageImportLeaseLost(TaskLeaseLost):
@@ -445,11 +454,17 @@ def find_image_import_task(
         )
 
 
-def find_image_import_tasks(page: int, page_size: int) -> Dict[str, Any]:
+def find_image_import_tasks(
+    page: int,
+    page_size: int,
+    status: Optional[ImageImportTaskStatus] = None,
+) -> Dict[str, Any]:
     with get_db() as db:
         query = db.query(ImageImportTask).order_by(
             desc(ImageImportTask.created_at)
         )
+        if status is not None:
+            query = query.filter(ImageImportTask.status == status)
         total = query.count()
         tasks = query.offset((page - 1) * page_size).limit(page_size).all()
         return {

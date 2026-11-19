@@ -45,6 +45,7 @@ from core.logger import get_logger, with_log_context
 from core.orm.image_import import (
     ImageImportLease,
     ImageImportLeaseLost,
+    ImageImportTaskStatus,
     assert_image_import_lease,
     create_image_import_task,
     find_image_import_task,
@@ -1275,8 +1276,13 @@ async def upload_image(
 def list_image_import_tasks_api(
     request: Request,
     pagination: PageParams = Depends(pagination_params),
+    status: Optional[ImageImportTaskStatus] = Query(
+        None, description="按镜像导入任务状态筛选，不提供则返回全部状态"
+    ),
 ):
-    return find_image_import_tasks(pagination.page, pagination.page_size)
+    return find_image_import_tasks(
+        pagination.page, pagination.page_size, status=status
+    )
 
 
 @router.get("/image-import-tasks/{task_id}", summary="获取镜像导入详情")
