@@ -31,6 +31,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from core.logger import bind_log_context, get_logger
 from core.misc.websocket import connection_manager
 from core.orm.cluster import ensure_cluster_schema
+from core.orm.deployment_operation import ensure_deployment_operation_schema
 from core.orm.engine import Base, engine
 from core.orm.identity import ensure_identity_schema
 from core.orm.image_import import ensure_image_import_schema
@@ -40,6 +41,9 @@ from web.api.app import router as apps_router
 from web.api.artifacts import router as artifacts_router
 from web.api.audit import router as audit_router
 from web.api.auth_routes import router as auth_router
+from web.api.deployment_operations import (
+    router as deployment_operations_router,
+)
 from web.api.health import router as health_router
 from web.api.k8s import router as k8s_router
 from web.api.pod_operations import router as pod_operations_router
@@ -101,6 +105,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 创建数据库表
     ensure_identity_schema()
+    ensure_deployment_operation_schema()
     Base.metadata.create_all(bind=engine)
     ensure_image_import_schema()
     ensure_cluster_schema()
@@ -174,6 +179,7 @@ app.include_router(ssh_router, prefix="/api/v1/ssh")
 app.include_router(k8s_router, prefix="/api/v1/k8s")
 app.include_router(pod_operations_router, prefix="/api/v1/k8s")
 app.include_router(resource_yaml_router, prefix="/api/v1/k8s")
+app.include_router(deployment_operations_router, prefix="/api/v1/k8s")
 app.include_router(apps_router, prefix="/api/v1/app")
 app.include_router(artifacts_router, prefix="/api/v1/artifacts")
 app.include_router(websocket_router, prefix="/api/v1")

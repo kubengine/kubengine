@@ -151,6 +151,12 @@ class TaskWorker:
         """Run until stopped, reclaiming expired leases
         automatically.
         """
+        from core.orm.deployment_operation import (
+            ensure_deployment_operation_schema,
+        )
+        from core.services.deployment_operations import poll_operations
+
+        ensure_deployment_operation_schema()
         Base.metadata.create_all(bind=engine)
         ensure_image_import_schema()
         ensure_cluster_schema()
@@ -159,6 +165,12 @@ class TaskWorker:
             owner=self.worker_id, lease_seconds=self.lease_seconds
         )
         from core.image_maintenance import maintain_images
+        from web.api.k8s import get_kubernetes_client
+
+        deployment_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="deployment-operations"
+        )
+        deployment_future = None
 
         maintenance_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="image-maintenance"
@@ -177,6 +189,15 @@ class TaskWorker:
                     app_worker.poll()
                 except Exception:
                     logger.exception("应用任务轮询失败，下轮重试")
+                if deployment_future is None or deployment_future.done():
+                    if (
+                        deployment_future is not None
+                        and deployment_future.exception()
+                    ):
+                        logger.error("Deployment 运维轮询失败，下轮恢复")
+                    deployment_future = deployment_executor.submit(
+                        poll_operations, get_kubernetes_client
+                    )
                 if time.monotonic() >= next_maintenance and (
                     maintenance_future is None or maintenance_future.done()
                 ):
@@ -223,6 +244,7 @@ class TaskWorker:
         finally:
             logger.info("Task worker stopping; waiting for active jobs")
             maintenance_executor.shutdown(wait=True)
+            deployment_executor.shutdown(wait=True)
             app_worker.close()
             self._executor.shutdown(wait=True, cancel_futures=False)
             try:

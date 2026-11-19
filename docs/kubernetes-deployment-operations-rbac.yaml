@@ -1,0 +1,35 @@
+# 可选的 Deployment 运维权限，按需改成命名空间 Role/RoleBinding。
+# 诊断读取需要已有 reader 权限；不会自动应用到集群。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubengine-deployment-operator
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    verbs: [get, update]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods, events]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubengine-deployment-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubengine-deployment-operator
+subjects:
+  - kind: ServiceAccount
+    name: kubengine-reader
+    namespace: kubengine-system

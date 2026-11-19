@@ -357,6 +357,8 @@ def auth_with_renew(
     *,
     admin_only: bool = True,
     permission: Optional[str] = None,
+    resource_kind: Optional[str] = None,
+    audit_action: Optional[str] = None,
 ) -> Callable[[F], F]:
     """
     鉴权装饰器：Bearer Token 鉴权、自动刷新和统一响应
@@ -501,13 +503,19 @@ def auth_with_renew(
                 )
             elif permission == "pod.files.read":
                 action = "pod.file.list"
+            action = audit_action or action
+            access_arguments = dict(func_kwargs)
+            if resource_kind:
+                access_arguments["kind"] = resource_kind
             operation = access.begin(
-                request, current_user, action, func_kwargs
+                request, current_user, action, access_arguments
             )
             try:
                 with bind_actor(current_user, operation):
                     if permission:
-                        access.authorize(current_user, permission, func_kwargs)
+                        access.authorize(
+                            current_user, permission, access_arguments
+                        )
                     elif admin_only:
                         require_admin(current_user)
                     if asyncio.iscoroutinefunction(func):

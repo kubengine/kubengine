@@ -4,6 +4,8 @@ KubeEngine 的 HTTP API 由 FastAPI 提供，默认前缀为 `/api/v1`。本页�
 
 ## 访问入口
 
+Deployment 的扩缩容、重启与进度 API 见 [Deployment 运维](Deployment运维.md)。写入接口返回 202 只表示受理，最终结果须按操作标识查询。集群最小权限增量示例见 [Deployment 运维 RBAC](kubernetes-deployment-operations-rbac.yaml)。
+
 启动服务：
 
 ```bash

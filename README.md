@@ -15,6 +15,8 @@ KubeEngine 面向 Kylin Server V11（x86_64），提供 Kubernetes 集群离线�
 
 ## 当前能力
 
+- Deployment 详情支持扩缩容、滚动重启与持久化发布观察，含 HPA 保护、幂等恢复、权限和审计关联，见 [Deployment 运维](docs/Deployment运维.md)。
+
 - 单控制面与多控制面高可用部署，支持 Keepalived VIP 和附加控制面节点加入。
 - Worker 节点扩容、部署状态续跑/重置、节点 SSH 互信与批量命令执行。
 - 自动安装 Chrony、containerd、CNI、Kubernetes、Calico、Helm、MetalLB、Ingress Nginx、Longhorn、Harbor、Metrics Server、Kuboard 和 cert-manager。

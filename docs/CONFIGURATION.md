@@ -1,5 +1,9 @@
 # 配置说明
 
+Deployment 运维的独立平台观察时限可通过 `deployment_operations.observation_seconds`
+配置，默认 600 秒，范围 30–86400 秒。超时后保留操作并只读核实，不自动重放或回滚；
+与 Kubernetes `progressDeadlineSeconds` 的关系见 [Deployment 运维](Deployment运维.md)。
+
 ## 配置文件位置
 
 KubeEngine 支持多种配置文件路径，按优先级从高到低：
