@@ -21,6 +21,7 @@ KubeEngine 面向 Kylin Server V11（x86_64），提供 Kubernetes 集群离线�
 - 工作台通过 Kubernetes Python SDK 直接查询集群，无需部署 Kubernetes Dashboard；连接及只读 RBAC 配置见 [API 文档](docs/API.md#kubernetes-sdk-连接与监控)。
 - 资源中心支持 20 类核心资源的全局浏览、关联 Pod、容器日志、事件与只读 YAML；迁移范围见 [Dashboard 迁移清单](docs/kubernetes-dashboard迁移清单.md)。
 - Pod 详情支持 Bash/sh/PowerShell 交互终端与容器文件管理，包括上传下载、新建、重命名和删除；见 [运维说明](docs/Pod终端与文件管理.md)。
+- 资源 YAML 支持编辑、服务端校验、差异预览和应用，并保存加密版本快照、操作人及字段变更；见 [版本说明](docs/资源YAML编辑与版本历史.md)。
 - 离线文件分发具备超时、停顿检测和重试机制。
 - Harbor 项目初始化、集群镜像归集，以及 Bitnami Chart/镜像的离线导出和导入。
 - 应用模板初始化与 Helm 部署；当前内置 Redis、Redis Cluster、MySQL、PostgreSQL、Kafka、RabbitMQ、Elasticsearch、etcd、Nacos、Flink、Flink Operator、APISIX 和 XXL-JOB Admin 等模板。

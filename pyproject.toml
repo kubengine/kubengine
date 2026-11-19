@@ -21,6 +21,7 @@ dependencies = [
   "uvicorn>=0.38.0",
   "pyinfra==3.6.1",
   "asyncssh>=2.21.1",
+  "cryptography>=41.0.0",
   "python-multipart>=0.0.20",
   "PyYAML>=6.0.3",
   "requests>=2.32.5",

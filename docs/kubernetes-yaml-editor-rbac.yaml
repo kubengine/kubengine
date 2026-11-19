@@ -1,0 +1,38 @@
+# 可选的现有资源 YAML 编辑权限；不会创建、删除资源或写 status 子资源。
+# 按需应用，生产环境可缩小为命名空间 Role。依赖已有 kubengine-reader ServiceAccount。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubengine-yaml-editor
+rules:
+  - apiGroups: [""]
+    resources: [nodes, namespaces, pods, services, configmaps, secrets, persistentvolumes, persistentvolumeclaims]
+    verbs: [get, update]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, update]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, update]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, update]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, ingressclasses, networkpolicies]
+    verbs: [get, update]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubengine-yaml-editor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubengine-yaml-editor
+subjects:
+  - kind: ServiceAccount
+    name: kubengine-reader
+    namespace: kubengine-system

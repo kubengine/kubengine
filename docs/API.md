@@ -211,7 +211,7 @@ CPU、内存使用量由 Metrics Server 的 Metrics API 提供。Metrics API 不
 `dashboard` 前缀路径。Pod/Service 关联查询及 Deployment 的新 ReplicaSet
 查询也保留兼容响应结构。存储容量继续从独立的 Longhorn 服务查询。
 
-### 资源中心只读排障接口
+### 资源中心排障接口
 
 资源列表新增 Job、CronJob、HPA（`horizontalpodautoscaler` / `hpa`）、
 IngressClass、NetworkPolicy、Event，共支持 20 类资源。
@@ -246,6 +246,24 @@ IngressClass、NetworkPolicy、Event，共支持 20 类资源。
 事件或指标读取受限时在 `errors` 中说明，其他资源信息仍然可看。
 
 完整迁移范围见 [Dashboard 迁移清单](kubernetes-dashboard迁移清单.md)。
+
+### 资源 YAML 编辑与版本历史
+
+在 `/api/v1/k8s/manifest/{type}/{namespace}/{name}` 后增加以下接口，均要求 Bearer 登录身份。
+现有 YAML 查看接口保持原样。编辑仅更新当前 UID 的既有对象，Event 保持只读。
+
+| 方法 | 后缀 | 用途 |
+| --- | --- | --- |
+| GET | `/edit?reveal_secret=false` | 可编辑 YAML、UID、resourceVersion 及是否可编辑 |
+| POST | `/preview` | dry-run 校验，返回字段差异与 previewHash，不写集群 |
+| POST | `/apply` | 校验 resourceVersion / previewHash 后应用，记录操作人及加密快照 |
+| GET | `/versions?page=1&page_size=20` | 当前资源版本列表 |
+| GET | `/versions/{id}?reveal_secret=false` | 修改前后、提交 YAML 及新增/删除/修改字段 |
+
+预览 JSON：`{yaml_text, uid, resource_version, comment?, reveal_secret?}`；应用另需
+`{request_id, preview_hash}`。请求标识用于幂等，版本状态为 pending / applied / failed / unknown。
+冲突不强制覆盖，结果未知不自动重放；Secret 历史默认隐藏值。
+历史只记录 KubeEngine YAML 应用，未订阅外部修改；详见 [编辑与版本说明](资源YAML编辑与版本历史.md)。
 
 ### Pod 终端与文件管理接口
 
