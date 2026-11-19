@@ -6,7 +6,9 @@ import bcrypt
 import pytest
 from fastapi import HTTPException, Request
 
+from core.auth_credentials import load_auth_user
 from core.config import ConfigDict
+from core.orm import identity
 from core.orm.auth import AuthSession, RevokedToken
 from core.orm.engine import engine
 from web.api import auth_routes
@@ -14,7 +16,7 @@ from web.utils import auth
 
 
 @pytest.fixture
-def rotation_config(monkeypatch, tmp_path):
+def rotation_config(monkeypatch, tmp_path, identity_database):
     path = tmp_path / "rotation.yaml"
     config = ConfigDict(
         {
@@ -36,13 +38,17 @@ def rotation_config(monkeypatch, tmp_path):
     monkeypatch.setattr(ConfigDict, "get_instance", lambda: config)
     RevokedToken.__table__.create(engine, checkfirst=True)
     AuthSession.__table__.create(engine, checkfirst=True)
+    identity.ensure_identity_schema()
 
     def rotate():
-        config.auth.users.admin.password_hash = bcrypt.hashpw(
+        password_hash = bcrypt.hashpw(
             b"new-password",
             bcrypt.gensalt(rounds=4),
         ).decode()
-        config.save_to_file(str(path))
+        user = load_auth_user("admin")
+        identity.change_password(
+            user["user_id"], password_hash, actor_id=user["user_id"]
+        )
 
     return rotate
 

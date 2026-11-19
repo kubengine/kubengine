@@ -78,9 +78,36 @@ WORKLOADS = {"deployment", "statefulset", "daemonset", "replicaset"}
 
 
 def resource_kind(value: str) -> str:
-    value = ALIASES.get(value.lower(), value.lower())
+    from core.authorization import kind_name
+
+    value = kind_name(value)
     if value not in RESOURCES:
         raise ValueError(f"不支持的资源类型：{value}")
+    return value
+
+
+def hide_secret(value):
+    import copy
+
+    value = copy.deepcopy(value)
+    for field in ("data", "stringData", "binaryData"):
+        if field in value:
+            value[field] = {key: "<已隐藏>" for key in value[field] or {}}
+    for field in ("metadata", "objectMeta"):
+        if field in value:
+            meta = value[field]
+            # 注解和标签可能携带 last-applied 或凭据，只保留安全的身份字段。
+            value[field] = {
+                key: meta[key]
+                for key in (
+                    "name",
+                    "namespace",
+                    "uid",
+                    "resourceVersion",
+                    "creationTimestamp",
+                )
+                if key in meta
+            }
     return value
 
 
@@ -1100,6 +1127,8 @@ class KubernetesViewClient:
         filter_by: str | None = None,
         label_selector: str | None = None,
         field_selector: str | None = None,
+        allowed_namespaces: list[str] | None = None,
+        reveal_secret: bool = True,
     ) -> Raw:
         kind = resource_kind(resource_type)
         selectors = {
@@ -1110,7 +1139,16 @@ class KubernetesViewClient:
             }.items()
             if value
         }
-        items = self._list(kind, namespace, **selectors)
+        if allowed_namespaces is None:
+            items = self._list(kind, namespace, **selectors)
+        elif kind == "namespace":
+            items = [{"metadata": {"name": ns}} for ns in allowed_namespaces]
+        else:
+            items = [
+                row
+                for ns in allowed_namespaces
+                for row in self._list(kind, ns, **selectors)
+            ]
         if filter_by:
             field, _, needle = filter_by.partition(",")
             if field not in {"name", "namespace"}:
@@ -1124,6 +1162,8 @@ class KubernetesViewClient:
             self._format(kind, r, context)
             for r in items[(page - 1) * items_per_page : page * items_per_page]
         ]
+        if kind == "secret" and not reveal_secret:
+            rows = [hide_secret(row) for row in rows]
         return {
             "listMeta": {"totalItems": len(items)},
             RESOURCES[kind][2]: rows,
@@ -1132,7 +1172,11 @@ class KubernetesViewClient:
 
     @api_call
     def resource_detail(
-        self, resource_type: str, namespace: str | None, name: str
+        self,
+        resource_type: str,
+        namespace: str | None,
+        name: str,
+        reveal_secret: bool = True,
     ) -> Raw:
         kind = resource_kind(resource_type)
         # 保留现有客户端编码的关联资源路径，并严格白名单分派。
@@ -1157,7 +1201,11 @@ class KubernetesViewClient:
         else:
             result = self._format(kind, raw, context, detail=True)
         result["errors"] = context.errors
-        return result
+        return (
+            hide_secret(result)
+            if kind == "secret" and not reveal_secret
+            else result
+        )
 
     def _relation(
         self, kind: str, raw: Raw, relation: str, context: ReadContext

@@ -473,14 +473,22 @@ def api_app(monkeypatch):
     ops = Ops()
     monkeypatch.setattr(routes, "get_operations", lambda: ops)
     valid = {"active": True}
-    original_auth = auth.get_current_user
+    original_auth = routes.download_identity
 
     async def identity(authorization=None, **kwargs):
         from fastapi import HTTPException
 
         if authorization != "Bearer valid" or not valid["active"]:
             raise HTTPException(401, "invalid")
-        return SimpleNamespace(username="admin"), "test-identity"
+        return (
+            SimpleNamespace(
+                username="admin",
+                role=valid.get("role", "platform_admin"),
+                namespaces=["apps"],
+                sensitive_permissions=valid.get("grants", []),
+            ),
+            "test-identity",
+        )
 
     monkeypatch.setattr(auth, "get_current_user", identity)
 
@@ -838,3 +846,24 @@ def test_running_init_container_is_accessible_while_pod_is_pending():
     )
     with pytest.raises(PodOperationError):
         PodOperations(view).target("apps", "example", "main")
+
+
+def test_terminal_rechecks_sensitive_grant_before_input(api_app):
+    app, socket, valid, _, _ = api_app
+    valid["role"] = "namespace_operator"
+    valid["grants"] = ["pod.terminal"]
+    with TestClient(app) as http:
+        with http.websocket_connect(
+            "/api/v1/k8s/pods/apps/example/terminal?container=main"
+        ) as ws:
+            ws.send_json({"type": "auth", "token": "Bearer valid"})
+            while ws.receive_json()["type"] != "ready":
+                pass
+            valid["grants"] = []
+            ws.send_json({"type": "input", "data": "id\r"})
+            while True:
+                value = ws.receive_json()
+                if value["type"] == "error":
+                    break
+            assert "授权" in value["message"]
+    assert socket.closed.wait(2) and "executed:id" not in socket.output

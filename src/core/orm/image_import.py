@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -35,6 +36,7 @@ class ImageImportTask(Base):
     __tablename__ = "image_import_task"
 
     task_id = Column(Integer, primary_key=True, index=True)
+    auth_context = Column(JSON)
     filename = Column(String, nullable=False)
     content_type = Column(String)
     file_path = Column(String, nullable=False)
@@ -117,6 +119,8 @@ def _task_to_dict(
 ) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "task_id": task.task_id,
+        "actor_id": (task.auth_context or {}).get("actor_id"),
+        "audit_id": (task.auth_context or {}).get("audit_id"),
         "filename": task.filename,
         "content_type": task.content_type,
         "file_size": task.file_size,
@@ -147,7 +151,10 @@ def create_image_import_task(
     file_path: str,
 ) -> Dict[str, Any]:
     with get_db() as db:
+        from core.authorization import snapshot
+
         task = ImageImportTask(
+            auth_context=snapshot(),
             filename=filename,
             content_type=content_type,
             file_path=file_path,
@@ -180,6 +187,7 @@ def ensure_image_import_schema() -> None:
         "cleanup_error": "TEXT",
         "cleanup_retry_at": "DATETIME",
         "namespace": "VARCHAR",
+        "auth_context": "JSON",
     }
     # Multiple Uvicorn workers start concurrently. Serialize the
     # lightweight SQLite compatibility migration across processes.
@@ -276,6 +284,8 @@ def requeue_image_import_task(task_id: int) -> bool:
     """Atomically queue a completed task for retry without duplicate
     scheduling.
     """
+    from core.authorization import snapshot
+
     with get_db() as db:
         updated = (
             db.query(ImageImportTask)
@@ -291,6 +301,7 @@ def requeue_image_import_task(task_id: int) -> bool:
                 {
                     "status": "pending",
                     "retry_failed": True,
+                    "auth_context": snapshot(),
                     "completed_at": None,
                     "error_message": None,
                     "lease_owner": None,

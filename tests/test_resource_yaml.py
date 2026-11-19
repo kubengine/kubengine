@@ -513,7 +513,10 @@ def test_routes_auth_preview_apply_and_version_access(store, monkeypatch):
     async def identity(authorization=None, **kwargs):
         if authorization != "Bearer test":
             raise HTTPException(401, "login required")
-        return SimpleNamespace(username="operator"), "test"
+        return (
+            SimpleNamespace(username="operator", role="platform_admin"),
+            "test",
+        )
 
     monkeypatch.setattr(auth, "get_current_user", identity)
     app = FastAPI()

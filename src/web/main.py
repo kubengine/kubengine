@@ -32,17 +32,20 @@ from core.logger import bind_log_context, get_logger
 from core.misc.websocket import connection_manager
 from core.orm.cluster import ensure_cluster_schema
 from core.orm.engine import Base, engine
+from core.orm.identity import ensure_identity_schema
 from core.orm.image_import import ensure_image_import_schema
 from core.orm.notifications import read_cluster_revision
 from core.orm.task import ensure_task_schema
 from web.api.app import router as apps_router
 from web.api.artifacts import router as artifacts_router
+from web.api.audit import router as audit_router
 from web.api.auth_routes import router as auth_router
 from web.api.health import router as health_router
 from web.api.k8s import router as k8s_router
 from web.api.pod_operations import router as pod_operations_router
 from web.api.resource_yaml import router as resource_yaml_router
 from web.api.ssh import router as ssh_router
+from web.api.users import router as users_router
 from web.api.websocket import router as websocket_router
 from web.utils.response import error_response
 
@@ -97,6 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     print_kubengine_welcome()
 
     # 创建数据库表
+    ensure_identity_schema()
     Base.metadata.create_all(bind=engine)
     ensure_image_import_schema()
     ensure_cluster_schema()
@@ -163,6 +167,8 @@ async def request_log_context(
 
 # 挂载 API 路由
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(audit_router, prefix="/api/v1")
+app.include_router(users_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(ssh_router, prefix="/api/v1/ssh")
 app.include_router(k8s_router, prefix="/api/v1/k8s")
@@ -298,7 +304,20 @@ async def business_exception_handler(
     """
     logger.warning(f"业务异常: {exc.status_code} - {exc.detail}")
     return error_response(
-        message=exc.detail if isinstance(exc.detail, str) else "请求处理失败",
+        message=(
+            exc.detail
+            if isinstance(exc.detail, str)
+            else (
+                exc.detail.get("message", "请求处理失败")
+                if isinstance(exc.detail, dict)
+                else "请求处理失败"
+            )
+        ),
+        error_code=(
+            exc.detail.get("error_code")
+            if isinstance(exc.detail, dict)
+            else None
+        ),
         code=exc.status_code,
         status_code=exc.status_code,
         details=exc.detail if not isinstance(exc.detail, str) else None,

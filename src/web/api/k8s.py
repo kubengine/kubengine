@@ -18,10 +18,11 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from kubernetes.config import ConfigException
 from starlette.concurrency import run_in_threadpool
 
+from core import authorization as policy
 from core.http_api_client.kubernetes_view_client import KubernetesViewClient
 from core.http_api_client.longhorn_client import LonghornClient
 from core.logger import get_logger
-from web.utils.auth import auth_with_renew
+from web.utils.auth import User, auth_with_renew
 from web.utils.page import PageParams, pagination_params
 
 logger = get_logger(__name__)
@@ -298,7 +299,7 @@ async def get_overview(request: Request):
     summary="查询资源列表",
     description="通过 Kubernetes SDK 获取 Kubernetes 资源列表，支持分页和过滤",
 )
-@auth_with_renew()
+@auth_with_renew(permission="resource.list")
 def get_resource_list(
     request: Request,
     type: str = Path(
@@ -313,6 +314,7 @@ def get_resource_list(
     label_selector: str | None = Query(None, max_length=1024),
     field_selector: str | None = Query(None, max_length=1024),
     sort_by: str = Query("d,creationTimestamp"),
+    current_user: User = None,
 ):
     """
     查询 Kubernetes 资源列表
@@ -337,7 +339,18 @@ def get_resource_list(
     if name is not None:
         filter_by = f"name,{name}"  # 格式为 "name,资源名称"
 
-    # 调用 Kubernetes SDK 获取资源列表
+    scope = policy.resource_scope(current_user, type, namespace)
+    namespace = policy.namespace_name(namespace)
+    options = (
+        {}
+        if scope is None
+        else {
+            "allowed_namespaces": scope,
+            "reveal_secret": "secret.read"
+            in current_user.sensitive_permissions,
+        }
+    )
+    # 范围查询在 SDK 内聚合后再搜索、排序与分页。
     return client.resource_list(
         resource_type=type,
         namespace=namespace,
@@ -347,6 +360,7 @@ def get_resource_list(
         label_selector=label_selector,
         field_selector=field_selector,
         sort_by=sort_by,
+        **options,
     )
 
 
@@ -359,12 +373,13 @@ def get_resource_list(
     summary="查询资源详情",
     description="通过 Kubernetes SDK 获取指定资源的完整配置信息",
 )
-@auth_with_renew()
+@auth_with_renew(permission="resource.read")
 def get_resource_detail(
     request: Request,
     type: str = Path(..., description="资源类型"),
     name: str = Path(..., description="资源名称"),
     namespace: str = Path(..., description="命名空间"),
+    current_user: User = None,
 ):
     """
     查询指定 Kubernetes 资源的详细信息
@@ -385,7 +400,15 @@ def get_resource_detail(
         资源详情数据，包含完整配置对象
     """
     client = get_kubernetes_client()
-    return client.resource_detail(type, namespace, name)
+    options = (
+        {}
+        if policy.is_admin(current_user)
+        else {
+            "reveal_secret": "secret.read"
+            in current_user.sensitive_permissions,
+        }
+    )
+    return client.resource_detail(type, namespace, name, **options)
 
 
 @router.get(
@@ -396,7 +419,7 @@ def get_resource_detail(
     summary="查询资源关联的 Pod 列表",
     description="通过 Kubernetes SDK 获取与指定资源相关联的 Pod 列表",
 )
-@auth_with_renew()
+@auth_with_renew(permission="resource.read")
 def get_resource_pod(
     request: Request,
     type: str = Path(
@@ -433,7 +456,7 @@ def get_resource_pod(
 
 
 @router.get("/manifest/{type}/{namespace}/{name}", summary="查看资源原始 YAML")
-@auth_with_renew()
+@auth_with_renew(permission="resource.read")
 def get_resource_manifest(
     request: Request,
     type: str,
@@ -447,7 +470,7 @@ def get_resource_manifest(
 
 
 @router.get("/events/{type}/{namespace}/{name}", summary="查看资源关联事件")
-@auth_with_renew()
+@auth_with_renew(permission="resource.read")
 def get_resource_events(
     request: Request,
     type: str,
@@ -465,7 +488,7 @@ def get_resource_events(
 
 
 @router.get("/pods/{namespace}/{name}/logs", summary="查看容器日志")
-@auth_with_renew()
+@auth_with_renew(permission="resource.read")
 def get_pod_logs(
     request: Request,
     namespace: str,

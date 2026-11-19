@@ -21,9 +21,15 @@ class YamlRoute(APIRoute):
 
         async def bounded(request):
             if request.method == "POST":
-                await auth.get_current_user(
+                identity, _ = await auth.get_current_user(
                     authorization=request.headers.get("authorization")
                 )
+                if identity.role not in {
+                    "platform_admin",
+                    "namespace_operator",
+                    "readonly",
+                }:
+                    raise HTTPException(403, "权限不足")
                 chunks, size = [], 0
                 async for chunk in request.stream():
                     size += len(chunk)
@@ -68,25 +74,30 @@ class YamlCreate(YamlCreatePreview):
 
 
 @router.post("/resources/preview", summary="预检 YAML 创建资源")
-@auth_with_renew()
+@auth_with_renew(permission="resource.create.batch")
 def preview_create(
     request: Request, body: YamlCreatePreview, current_user: User
 ):
     return execute(
         "batch",
         lambda: ResourceCreator(
-            get_kubernetes_client(), current_user.username
+            get_kubernetes_client(),
+            current_user.username,
+            authorizer=current_authorizer(),
         ).preview(body),
     )
 
 
 @router.post("/resources/create", summary="通过 YAML 批量创建资源")
-@auth_with_renew()
+@auth_with_renew(permission="resource.create.batch")
 def create_resources(request: Request, body: YamlCreate, current_user: User):
     return execute(
         "batch",
         lambda: ResourceCreator(
-            get_kubernetes_client(), current_user.username, seconds=90
+            get_kubernetes_client(),
+            current_user.username,
+            seconds=90,
+            authorizer=current_authorizer(),
         ).create(body),
     )
 
@@ -122,12 +133,27 @@ def execute(kind, action):
         )
 
 
+def current_authorizer():
+    from core.authorization import actor_context, authorizer
+
+    user = actor_context.get()
+    if user is None:
+        raise HTTPException(401, "缺少认证上下文")
+    return authorizer(user)
+
+
 def operations(kind, namespace, name):
-    return ResourceYaml(get_kubernetes_client(), kind, namespace, name)
+    return ResourceYaml(
+        get_kubernetes_client(),
+        kind,
+        namespace,
+        name,
+        authorizer=current_authorizer(),
+    )
 
 
 @router.get("/manifest/{kind}/{namespace}/{name}/edit")
-@auth_with_renew()
+@auth_with_renew(permission="resource.read")
 def get_editor(
     request: Request,
     kind: str,
@@ -141,7 +167,7 @@ def get_editor(
 
 
 @router.post("/manifest/{kind}/{namespace}/{name}/preview")
-@auth_with_renew()
+@auth_with_renew(permission="resource.update")
 def preview(
     request: Request, kind: str, namespace: str, name: str, body: YamlChange
 ):
@@ -151,7 +177,7 @@ def preview(
 
 
 @router.post("/manifest/{kind}/{namespace}/{name}/apply")
-@auth_with_renew()
+@auth_with_renew(permission="resource.update")
 def apply(
     request: Request,
     kind: str,
@@ -169,7 +195,7 @@ def apply(
 
 
 @router.get("/manifest/{kind}/{namespace}/{name}/versions")
-@auth_with_renew()
+@auth_with_renew(permission="resource.read")
 def versions(
     request: Request,
     kind: str,
@@ -185,7 +211,7 @@ def versions(
 
 
 @router.get("/manifest/{kind}/{namespace}/{name}/versions/{version_id}")
-@auth_with_renew()
+@auth_with_renew(permission="resource.read")
 def version(
     request: Request,
     kind: str,

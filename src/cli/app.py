@@ -32,7 +32,7 @@ from sqlalchemy import text
 from cli.cluster import cli as cluster_cli
 from cli.image import cli as image_cli
 from core.app_defaults import get_default_apps
-from core.config import Application, ConfigDict
+from core.config import Application
 from core.logger import get_logger, setup_cli_logging
 from core.orm.app import App, create_application
 from core.orm.engine import Base, engine, get_db
@@ -171,6 +171,27 @@ def image_worker(
 app.add_command(image_worker, name="image-worker")
 
 
+@app.command("audit-archive")
+@click.option(
+    "--prune", is_flag=True, help="完整归档并校验后清理已过保留期的审计记录"
+)
+@click.option(
+    "--days",
+    type=click.IntRange(1, 3650),
+    default=None,
+    help="保留天数，默认读取 audit.retention_days（90）",
+)
+def audit_archive(prune, days):
+    """将已结束且超过保留期的审计归档到私有 config/audit-archives。"""
+    import json
+
+    from core.audit_archive import archive_audit
+
+    click.echo(
+        json.dumps(archive_audit(prune=prune, days=days), ensure_ascii=False)
+    )
+
+
 @app.command()
 @click.option(
     "-p",
@@ -184,21 +205,24 @@ def set_password(password: str) -> None:
     """
     设置管理员密码
 
-    设置管理员账号密码，保存到实际加载的配置文件并使旧会话失效。
+    设置数据库中 admin 管理员的密码，并使旧会话失效。
 
     Args:
         password: 新密码
     """
-    # 获取配置实例
-    config = ConfigDict.get_instance()
+    from core.orm import audit
+    from core.orm.identity import reset_admin_password
 
-    # 更新密码哈希
-    config.auth.users.admin.password_hash = get_password_hash(password)
-
-    # 保存配置到文件
-    config_path = config._source_path
-    config.save_to_file(config_path)
-    logger.info(f"配置已保存到: {config_path}")
+    event = audit.begin_event(
+        username="system:local-cli", action="identity.admin.password.reset"
+    )
+    try:
+        reset_admin_password(get_password_hash(password))
+    except Exception:
+        audit.finish_event(event, 500)
+        raise
+    audit.finish_event(event, 200)
+    logger.info("数据库管理员密码已更新")
 
     # 输出成功消息
     _print_separator()

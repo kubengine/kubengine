@@ -7,8 +7,9 @@ import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 
-from core.auth_credentials import load_auth_users, load_signing_secret
+from core.auth_credentials import load_auth_user, load_signing_secret
 from core.config import Application, ConfigDict
+from core.orm import identity
 from core.orm.auth import AuthSession, RevokedToken
 from core.orm.engine import engine
 from web.api.auth_routes import router
@@ -16,7 +17,7 @@ from web.utils import auth
 
 
 @pytest.fixture
-def auth_config(monkeypatch, tmp_path):
+def auth_config(monkeypatch, tmp_path, identity_database):
     config_path = tmp_path / "custom.yaml"
     record = {
         "password_hash": bcrypt.hashpw(
@@ -31,6 +32,7 @@ def auth_config(monkeypatch, tmp_path):
     monkeypatch.setattr(ConfigDict, "get_instance", lambda: config)
     RevokedToken.__table__.create(engine, checkfirst=True)
     AuthSession.__table__.create(engine, checkfirst=True)
+    identity.ensure_identity_schema()
     return config, config_path
 
 
@@ -68,17 +70,17 @@ async def test_rotation_rejects_existing_session_without_restart(auth_config):
     token, _ = auth.create_access_token({"sub": "admin"})
     user, _ = await auth.get_current_user(authorization=f"Bearer {token}")
     assert user.username == "admin"
-    config.auth.users.admin.password_hash = bcrypt.hashpw(
+    new_hash = bcrypt.hashpw(
         b"new-password", bcrypt.gensalt(rounds=4)
     ).decode()
-    config.save_to_file(str(path))
+    user = load_auth_user("admin")
+    identity.change_password(
+        user["user_id"], new_hash, actor_id=user["user_id"]
+    )
     with pytest.raises(HTTPException) as error:
         await auth.get_current_user(authorization=f"Bearer {token}")
     assert error.value.status_code == 401
-    assert (
-        load_auth_users()["admin"]["password_hash"]
-        == config.auth.users.admin.password_hash
-    )
+    assert load_auth_user("admin")["password_hash"] == new_hash
 
 
 @pytest.mark.asyncio
@@ -97,12 +99,13 @@ async def test_legacy_aksk_fails_closed_without_default_secret(
     assert error.value.status_code == 401
 
 
-def test_revocation_is_visible_in_another_process(auth_config):
+def test_revocation_is_visible_in_another_process():
     import time
 
     from core.orm.auth import revoke_token
 
     token = "fake-process-token"
+    RevokedToken.__table__.create(engine, checkfirst=True)
     revoke_token(token, int(time.time()) + 300)
     result = subprocess.run(
         [
@@ -139,15 +142,16 @@ def test_signing_key_rejects_symlink(monkeypatch, tmp_path):
         load_signing_secret()
 
 
-def test_password_change_writes_back_to_source_path(auth_config, monkeypatch):
+def test_cli_password_change_updates_database_only(auth_config):
     from cli.app import set_password
 
     config, path = auth_config
+    before = path.read_bytes()
     set_password.callback("new-test-password")
-    reloaded = ConfigDict.load_from_file(str(path), use_cache=False)
     assert bcrypt.checkpw(
-        b"new-test-password", reloaded.auth.users.admin.password_hash.encode()
+        b"new-test-password", load_auth_user("admin")["password_hash"].encode()
     )
+    assert path.read_bytes() == before
     assert path.stat().st_mode & 0o777 == 0o600
 
 

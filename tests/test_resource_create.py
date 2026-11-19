@@ -582,7 +582,10 @@ async def test_api_auth_and_create_use_standard_response(store, monkeypatch):
     async def identity(**kwargs):
         if kwargs.get("authorization") != "Bearer test":
             raise HTTPException(401, "请先登录")
-        return SimpleNamespace(username="api-user"), "preflight"
+        return (
+            SimpleNamespace(username="api-user", role="platform_admin"),
+            "preflight",
+        )
 
     monkeypatch.setattr(api, "ResourceCreator", factory)
     monkeypatch.setattr(api, "get_kubernetes_client", lambda: cluster)

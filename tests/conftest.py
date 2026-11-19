@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,35 @@ _config_path.write_text(
     )
 )
 os.environ["KUBEENGINE_CONFIG"] = str(_config_path)
+
+
+@pytest.fixture
+def identity_database(monkeypatch, tmp_path_factory):
+    """身份与会话测试使用独立数据库，不依赖测试顺序或本机用户。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from core.orm import auth, identity
+
+    database_path = tmp_path_factory.mktemp("identity-store") / "identity.db"
+    test_engine = create_engine(f"sqlite:///{database_path}")
+    factory = sessionmaker(bind=test_engine)
+
+    @contextmanager
+    def database():
+        with factory() as db:
+            try:
+                yield db
+            except Exception:
+                db.rollback()
+                raise
+
+    monkeypatch.setattr(identity, "engine", test_engine)
+    monkeypatch.setattr(identity, "get_db", database)
+    monkeypatch.setattr(auth, "get_db", database)
+    auth.RevokedToken.__table__.create(test_engine)
+    yield test_engine
+    test_engine.dispose()
 
 
 # These modules deliberately exercise the standalone gevent CLI runtime.

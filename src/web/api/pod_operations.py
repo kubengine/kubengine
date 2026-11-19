@@ -76,7 +76,7 @@ class FileOperation(BaseModel):
 
 
 @router.get("/pods/{namespace}/{name}/files", summary="浏览 Pod 容器目录")
-@auth_with_renew()
+@auth_with_renew(permission="pod.files.read")
 def list_pod_files(
     request: Request,
     namespace: str,
@@ -99,7 +99,7 @@ def list_pod_files(
     "/pods/{namespace}/{name}/files/operations",
     summary="新建、重命名和删除容器文件",
 )
-@auth_with_renew()
+@auth_with_renew(permission="pod.files.write")
 def operate_pod_file(
     request: Request,
     namespace: str,
@@ -134,7 +134,7 @@ def operate_pod_file(
 @router.post(
     "/pods/{namespace}/{name}/files/upload", summary="上传文件到 Pod 容器"
 )
-@auth_with_renew()
+@auth_with_renew(permission="pod.files.write")
 async def upload_pod_file(
     request: Request,
     namespace: str,
@@ -179,15 +179,43 @@ async def upload_pod_file(
         await file.close()
 
 
+async def download_identity(request: Request):
+    from core.orm import audit
+    from web.utils import access
+
+    try:
+        return await auth.get_current_user(
+            authorization=request.headers.get("authorization")
+        )
+    except HTTPException as exc:
+        operation = access.begin(
+            request, None, "pod.file.download", request.path_params
+        )
+        audit.finish_event(operation["audit_id"], exc.status_code)
+        raise
+
+
 @router.get("/pods/{namespace}/{name}/files/download", summary="下载容器文件")
 def download_pod_file(
     namespace: str,
     name: str,
     path: str = Query(..., max_length=4096),
     container: str | None = Query(None),
-    identity: tuple = Depends(auth.get_current_user),
+    identity: tuple = Depends(download_identity),
+    request: Request = None,
 ):
+    from core.authorization import authorize
+    from core.orm import audit
+    from web.utils import access
+
+    operation = access.begin(
+        request,
+        identity[0],
+        "pod.file.download",
+        {"namespace": namespace, "name": name, "type": "pod"},
+    )
     try:
+        authorize(identity[0], "pod.files.read", "pod", namespace)
         ops = get_operations()
         target = ops.target(namespace, name, container)
         size = ops.download_size(target, path)
@@ -195,7 +223,24 @@ def download_pod_file(
         code, message, _ = api_error(exc)
         if code == 401:
             code, message = 502, "集群认证失败，请检查 Kubernetes 连接凭据"
+        audit.finish_event(operation["audit_id"], code)
         raise HTTPException(code, message) from exc
+    except HTTPException as exc:
+        audit.finish_event(operation["audit_id"], exc.status_code)
+        raise
+    except Exception:
+        audit.finish_event(operation["audit_id"], 500)
+        raise
+
+    def content():
+        try:
+            yield from ops.download(target, path)
+        except BaseException:
+            audit.finish_event(operation["audit_id"], 500)
+            raise
+        else:
+            audit.finish_event(operation["audit_id"], 200)
+
     filename = (path.replace("\\", "/") if target.windows else path).rstrip(
         "/"
     ).rsplit("/", 1)[-1] or "download"
@@ -207,7 +252,7 @@ def download_pod_file(
         path,
     )
     return StreamingResponse(
-        ops.download(target, path),
+        content(),
         media_type="application/octet-stream",
         headers={
             "Content-Disposition": "attachment; filename*=UTF-8''"
@@ -229,6 +274,8 @@ async def pod_terminal(
     """首条消息鉴权，JWT 不进入 URL；每个连接拥有独立 SDK exec。"""
     await websocket.accept()
     token = ""
+    audit_id = None
+    audit_status = 200
     stop = threading.Event()
     incoming: queue.Queue = queue.Queue(maxsize=128)
     outgoing: asyncio.Queue = asyncio.Queue(maxsize=64)
@@ -237,7 +284,11 @@ async def pod_terminal(
     async def authenticate(value):
         if not isinstance(value, str):
             raise HTTPException(401, "请先登录")
-        return await auth.get_current_user(authorization=value)
+        identity = await auth.get_current_user(authorization=value)
+        from core.authorization import authorize
+
+        authorize(identity[0], "pod.terminal", "pod", namespace)
+        return identity
 
     try:
         hello = await asyncio.wait_for(websocket.receive_text(), 10)
@@ -247,7 +298,21 @@ async def pod_terminal(
         if not isinstance(initial, dict) or initial.get("type") != "auth":
             raise HTTPException(401, "首条消息必须进行鉴权")
         token = initial.get("token")
-        identity, _ = await authenticate(token)
+        from core.authorization import value
+        from core.orm import audit
+
+        # 身份验证和动作检查分开，拒绝的连接同样留痕。
+        identity, _ = await auth.get_current_user(authorization=token)
+        audit_id = audit.begin_event(
+            actor_id=value(identity, "user_id", ""),
+            username=identity.username,
+            action="pod.terminal",
+            namespace=namespace,
+            resource_type="pod",
+            resource_name=name,
+            source_ip=websocket.client.host if websocket.client else "",
+        )
+        await authenticate(token)
         ops = get_operations()
         target = await run_in_threadpool(
             ops.target, namespace, name, container
@@ -442,6 +507,11 @@ async def pod_terminal(
             output.cancel()
             await asyncio.gather(receive, output, return_exceptions=True)
     except (HTTPException, ApiException) as exc:
+        audit_status = (
+            exc.status_code
+            if isinstance(exc, HTTPException)
+            else exc.status or 502
+        )
         message = (
             exc.detail if isinstance(exc, HTTPException) else api_error(exc)[1]
         )
@@ -452,6 +522,7 @@ async def pod_terminal(
         with suppress(Exception):
             await websocket.close(code=1008)
     except (ValueError, TypeError, KeyError, queue.Full, asyncio.TimeoutError):
+        audit_status = 400
         with suppress(Exception):
             await websocket.close(code=1008, reason="终端消息无效或连接超时")
     except WebSocketDisconnect:
@@ -464,3 +535,14 @@ async def pod_terminal(
                 await asyncio.wait_for(asyncio.shield(worker), 2)
         with suppress(Exception):
             await websocket.close()
+        from core.orm import audit
+
+        if not audit_id:
+            audit_id = audit.begin_event(
+                action="pod.terminal",
+                namespace=namespace,
+                resource_type="pod",
+                resource_name=name,
+                source_ip=websocket.client.host if websocket.client else "",
+            )
+        audit.finish_event(audit_id, audit_status)

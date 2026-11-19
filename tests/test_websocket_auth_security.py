@@ -6,7 +6,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 
 from core.misc.websocket import ConnectionManager
-from core.orm.auth import RevokedToken, revoke_token
+from core.orm.auth import AuthSession, RevokedToken, revoke_token
 from core.orm.engine import engine
 from web.api import websocket as routes
 from web.utils import auth
@@ -37,9 +37,19 @@ class Socket:
 
 @pytest.fixture
 def session(monkeypatch):
-    record = {"password_hash": "isolated-password-hash", "ak": "isolated-ak"}
-    monkeypatch.setattr(auth, "load_auth_users", lambda: {"admin": record})
+    record = {
+        "password_hash": "isolated-password-hash",
+        "ak": "isolated-ak",
+        "user_id": "test-admin",
+        "username": "admin",
+        "enabled": True,
+        "role": "platform_admin",
+        "auth_revision": 1,
+        "revision": 1,
+    }
+    monkeypatch.setattr(auth, "load_auth_user", lambda username: record)
     RevokedToken.__table__.create(engine, checkfirst=True)
+    AuthSession.__table__.create(engine, checkfirst=True)
     token, _ = auth.create_access_token({"sub": "admin"})
     manager = ConnectionManager(send_timeout=0.2)
     monkeypatch.setattr(routes, "connection_manager", manager)

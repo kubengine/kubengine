@@ -92,6 +92,11 @@ def check_application_attempt(db=None, cluster_id=None):
         raise TaskLeaseLost("任务租约已失效，停止旧执行")
     if cluster_id is not None and cluster_id != attempt.cluster_id:
         raise TaskSuperseded("任务不拥有该资源")
+    from core.authorization import check_task
+    from core.orm.task import Task
+
+    task = db.get(Task, attempt.task_id)
+    check_task(task.auth_context, db)
     cluster = db.get(Cluster, attempt.cluster_id)
     if (
         cluster is None

@@ -1,7 +1,7 @@
 from datetime import timedelta
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request
 from jwt import JWT
 from starlette.concurrency import run_in_threadpool
 
@@ -15,7 +15,7 @@ from web.utils.auth import (
     auth_with_renew,
     create_access_token,
     credential_version,
-    load_auth_users,
+    load_identity,
     signing_key,
     verify_password,
 )
@@ -27,24 +27,42 @@ jwt = JWT()
 @router.post(
     "/login", response_model=TokenResponse, summary="用户登录（获取 JWT 令牌）"
 )
-async def login(form_data: LoginRequest):
-    """用户登录接口，验证用户名密码后返回 JWT 访问令牌"""
-    user_dict = load_auth_users().get(form_data.username)
-    if not user_dict or not await run_in_threadpool(
-        verify_password, form_data.password, user_dict.get("password_hash", "")
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户名或密码错误",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token, expires_at = create_access_token(
-        data={
-            "sub": form_data.username,
-            "credential_version": credential_version(user_dict),
-        },
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+async def login(form_data: LoginRequest, request: Request = None):
+    from core.logger import get_log_context
+    from core.orm import audit
+
+    user_dict = load_identity(form_data.username)
+    event = audit.begin_event(
+        actor_id=(user_dict or {}).get("user_id", ""),
+        username=form_data.username,
+        action="identity.login",
+        source_ip=request.client.host if request and request.client else "",
+        request_id=get_log_context().get("request_id", ""),
     )
+    try:
+        if (
+            not user_dict
+            or not user_dict.get("enabled", False)
+            or not await run_in_threadpool(
+                verify_password,
+                form_data.password,
+                user_dict.get("password_hash", ""),
+            )
+        ):
+            raise HTTPException(
+                401, "用户名或密码错误", headers={"WWW-Authenticate": "Bearer"}
+            )
+        access_token, expires_at = create_access_token(
+            data={
+                "sub": form_data.username,
+                "credential_version": credential_version(user_dict),
+            },
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        )
+    except HTTPException as exc:
+        audit.finish_event(event, exc.status_code)
+        raise
+    audit.finish_event(event, 200)
     return TokenResponse(
         name=form_data.username,
         access_token=access_token,
@@ -55,7 +73,7 @@ async def login(form_data: LoginRequest):
 
 
 @router.post("/logout", summary="用户登出（失效令牌）")
-@auth_with_renew(renew_threshold=0)
+@auth_with_renew(renew_threshold=0, admin_only=False)
 async def logout(request: Request, current_user: User):
     """登出：持久化撤销整个登录会话及其续签令牌。"""
     auth_header = request.headers.get("Authorization")
@@ -76,7 +94,7 @@ async def logout(request: Request, current_user: User):
 
 
 @router.get("/protected/unified", summary="Bearer Token 鉴权保护接口")
-@auth_with_renew()
+@auth_with_renew(admin_only=False)
 async def unified_protected_route(
     request: Request, current_user: User
 ) -> dict[str, Any]:

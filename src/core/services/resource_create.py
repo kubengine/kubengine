@@ -218,7 +218,8 @@ def failure(exc):
 
 
 class ResourceCreator:
-    def __init__(self, view, actor, seconds=60):
+    def __init__(self, view, actor, seconds=60, authorizer=None):
+        self.authorizer = authorizer
         self.view = view
         self.actor = actor
         self.cluster = cluster_identity(view)
@@ -301,6 +302,17 @@ class ResourceCreator:
                     "path": path,
                 }
             )
+        # 完整解析后逐项授权；此处尚未发生任何 dry-run 或真实写入。
+        if self.authorizer:
+            for target in targets:
+                self.authorizer(
+                    "resource.create",
+                    target["kind"],
+                    target["namespace"],
+                    bool(target["namespace"]),
+                    api_version=target["apiVersion"],
+                    manifest=target["body"],
+                )
         return targets
 
     def signature(self, data, expires):
@@ -427,6 +439,28 @@ class ResourceCreator:
             key=lambda t: t["kind"] != "Namespace" or t["apiVersion"] != "v1",
         )
         for target in ordered:
+            from core.authorization import (
+                actor_context,
+                operation_context,
+                value,
+            )
+            from core.orm import audit
+
+            event = None
+            user = actor_context.get()
+            if user is not None:
+                operation = operation_context.get() or {}
+                event = audit.begin_event(
+                    actor_id=value(user, "user_id", ""),
+                    username=value(user, "username", ""),
+                    action="resource.create",
+                    namespace=target["namespace"],
+                    resource_type=target["kind"],
+                    resource_name=target["name"],
+                    parent_id=operation.get("audit_id", ""),
+                    request_id=operation.get("request_id", ""),
+                    batch_id=data.request_id,
+                )
             try:
                 result = self.create_one(
                     data, target, hashes[target["index"]], cipher
@@ -438,6 +472,16 @@ class ResourceCreator:
                     "status": "unknown",
                     "message": "创建记录未完成，请先查看资源状态，勿重复提交",
                 }
+            if event:
+                audit.finish_event(
+                    event,
+                    (
+                        200
+                        if result["status"] in {"created", "replayed"}
+                        else 500
+                    ),
+                    revision_id=(result.get("revision") or {}).get("id", ""),
+                )
             results.append(result)
         results.sort(key=lambda item: item["index"])
         created = sum(item["status"] == "created" for item in results)

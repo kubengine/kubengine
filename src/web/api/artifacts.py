@@ -897,6 +897,12 @@ def process_image_import_task(
                 f"Image-import task {task_id} lease was lost"
             )
         assert_image_import_lease(task_id, lease)
+        from core.authorization import check_task
+        from core.orm.engine import get_db
+        from core.orm.image_import import ImageImportTask
+
+        with get_db() as db:
+            check_task(db.get(ImageImportTask, task_id).auth_context, db)
 
     check_lease()
     task = find_image_import_task(task_id, include_file_path=True)

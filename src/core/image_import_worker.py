@@ -20,6 +20,7 @@ from core.logger import get_logger, with_log_context
 
 # Register the shared notification table before creating ORM metadata.
 from core.orm import notifications  # noqa: F401
+from core.orm import audit, identity  # noqa: F401
 from core.orm.cluster import ensure_cluster_schema
 from core.orm.engine import Base, engine
 from core.orm.image_import import (
@@ -86,12 +87,42 @@ class TaskWorker:
             interval=max(10.0, self.lease_seconds / 3),
         ) as lease_lost:
             try:
-                process_image_import_task(
-                    task_id,
-                    retry_failed=retry_failed,
-                    lease=lease,
-                    lease_lost=lease_lost,
+                from core.authorization import check_task
+                from core.orm.engine import get_db
+                from core.orm.image_import import ImageImportTask
+
+                with get_db() as db:
+                    context = db.get(ImageImportTask, task_id).auth_context
+                event = audit.begin_event(
+                    actor_id=(context or {}).get("actor_id", ""),
+                    username=(context or {}).get(
+                        "username", (context or {}).get("service_actor", "")
+                    ),
+                    action="image.execute",
+                    task_id=str(task_id),
+                    parent_id=(context or {}).get("audit_id", ""),
+                    request_id=(context or {}).get("request_id", ""),
                 )
+                try:
+                    check_task(context)
+                    process_image_import_task(
+                        task_id,
+                        retry_failed=retry_failed,
+                        lease=lease,
+                        lease_lost=lease_lost,
+                    )
+                except Exception as exc:
+                    audit.finish_event(event, getattr(exc, "status_code", 500))
+                    update_image_import_task(
+                        task_id,
+                        lease=lease,
+                        status="failed",
+                        error_message="任务执行中断；请核对审计与已完成步骤",
+                        completed_at=datetime.now(),
+                    )
+                    raise
+                else:
+                    audit.finish_event(event, 200)
             except ImageImportLeaseLost:
                 logger.warning(
                     "Stopped stale image-import attempt for task %s", task_id

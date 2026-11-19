@@ -1,6 +1,4 @@
-"""Private signing material and freshly loaded authentication
-configuration.
-"""
+"""私有签名密钥、配置迁移来源与数据库身份读取。"""
 
 import base64
 import os
@@ -13,7 +11,7 @@ from typing import Any
 from core.config import Application, ConfigDict
 
 
-def load_auth_users() -> dict[str, dict[str, Any]]:
+def load_config_auth_users() -> dict[str, dict[str, Any]]:
     source = ConfigDict.get_instance()._source_path
     config = ConfigDict.load_from_file(source, use_cache=False)
     users = config.get("auth", {}).get("users", {})
@@ -22,6 +20,13 @@ def load_auth_users() -> dict[str, dict[str, Any]]:
         for name, record in users.items()
         if isinstance(record, dict)
     }
+
+
+def load_auth_user(username: str) -> dict[str, Any] | None:
+    """迁移完成后只查询数据库，不允许配置用户回退认证。"""
+    from core.orm.identity import authentication_record
+
+    return authentication_record(username)
 
 
 def load_signing_secret() -> str:

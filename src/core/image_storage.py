@@ -217,6 +217,13 @@ def maintain_archives():
                     fcntl.flock(quota.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     continue
+                from core.orm import audit
+
+                event = audit.begin_event(
+                    username="system:image-maintenance",
+                    action="image.archive.cleanup",
+                    task_id=str(task_id),
+                )
                 with get_db() as db:
                     from sqlalchemy import text
 
@@ -237,3 +244,4 @@ def maintain_archives():
                         remove_archive(task_id)
                         task.file_path = ""
                     db.commit()
+                audit.finish_event(event, 200)

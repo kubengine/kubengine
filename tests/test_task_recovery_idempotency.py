@@ -94,12 +94,14 @@ def test_idempotency_key_is_scoped_and_parameter_bound(lifecycle):
 
 
 def test_authenticated_http_deployment_reuses_the_users_submission(
-    lifecycle, monkeypatch
+    lifecycle, monkeypatch, identity_database
 ):
+    from core.orm.identity import ensure_identity_schema
     from web.main import app
     from web.utils.auth import create_access_token
 
     monkeypatch.setattr(api, "_notify", lambda message: None)
+    ensure_identity_schema()
     token, _ = create_access_token({"sub": "admin"})
     expected = submit("http-replay", name="from-api")
 

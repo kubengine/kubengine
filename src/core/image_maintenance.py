@@ -31,7 +31,21 @@ def maintain_images():
                         or current["attempt_count"] != task["attempt_count"]
                     ):
                         continue
-                    error = _cleanup_image_namespace(current["namespace"])
+                    from core.orm import audit
+
+                    namespace = current["namespace"]
+                    event = audit.begin_event(
+                        username="system:image-maintenance",
+                        action="image.cleanup",
+                        namespace=namespace,
+                        task_id=str(task["task_id"]),
+                    )
+                    # 系统维护身份只处理任务记录绑定的临时 namespace，不代替原用户部署。
+                    if namespace != f"kubengine-import-{task['task_id']}":
+                        audit.finish_event(event, 403)
+                        continue
+                    error = _cleanup_image_namespace(namespace)
+                    audit.finish_event(event, 500 if error else 200)
                     record_cleanup_result(
                         task["task_id"], task["attempt_count"], error
                     )

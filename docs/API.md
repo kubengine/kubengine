@@ -55,9 +55,13 @@ curl -X POST 'http://localhost:8080/api/v1/logout' \
   -H 'Authorization: Bearer <JWT>'
 ```
 
-管理员密码通过 `kubengine app set-password` 设置或轮换，配置中只保存密码哈希。旧 AK/SK 签名协议无法使用所保存的哈希安全验证 HMAC，现已关闭该认证入口，并停止生成新的 AK/SK；API 调用请使用 Bearer Token。
+用户首次从实际配置幂等迁入数据库，之后数据库为唯一认证来源，修改旧配置不会覆盖或重新启用用户。管理员密码通过 `kubengine app set-password` 轮换，只修改数据库中的启用 admin；密码仅保存哈希。旧 AK/SK 签名协议继续关闭；API 调用请使用 Bearer Token。
 
-JWT 使用 `${root_dir}/config/jwt-signing.key` 中独立生成的私钥（权限 0600），不再复用 TLS CA 私钥。升级后已有令牌失效，需要重新登录。登出记录保存在数据库中，对同一安装的多个 API 进程和重启生效；密码或 AK/SK 轮换后，旧令牌也会失效。此文件属于运行数据，不得加入发布包。
+JWT 使用 `${root_dir}/config/jwt-signing.key` 中独立生成的私钥（权限 0600），不再复用 TLS CA 私钥。身份迁移后已有令牌失效，需要重新登录。登出记录保存在数据库中，对同一安装的多个 API 进程和重启生效；停用和密码变更撤销全部会话，重新启用不会恢复旧令牌。角色与授权变更在下一次请求生效，权限不足返回 403 并保持登录。此文件属于运行数据，不得加入发布包。
+
+当前为 RBAC 版本：普通用户可在授权命名空间内按角色读取/修改普通资源；Secret 明文、终端与文件操作分别授权。
+应用、制品、基础设施、集群级管理与用户管理仍仅限管理员，操作统一进入审计。
+权限矩阵、迁移与回滚要求见[用户权限与审计设计](用户权限与审计设计.md)。
 
 WebSocket 保持现有 `token=Bearer ...` 查询参数接入方式，每次广播和回复发送前重新验证会话，客户端消息处理前也进行验证。空闲连接每 30 秒复核，失效时以 1008 关闭。升级步骤及任务恢复边界见[安全边界与资源管理修复说明](安全边界与资源管理修复-2026-09-28.md)。
 
@@ -88,6 +92,23 @@ WebSocket 保持现有 `token=Bearer ...` 查询参数接入方式，每次广�
 | `POST` | `/api/v1/login` | 登录并获取 JWT |
 | `POST` | `/api/v1/logout` | 注销当前 JWT |
 | `GET` | `/api/v1/protected/unified` | 鉴权连通性检查 |
+
+### 用户与授权
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v1/me` | 当前身份、配置授权及当前有效能力 |
+| `POST` | `/api/v1/me/password` | `current_password`、`password`；成功后撤销本人全部会话 |
+| `GET` | `/api/v1/roles` | 管理员查询三个内置角色与四个敏感权限 |
+| `GET` | `/api/v1/users` | 管理员分页查询；page 从 1 开始，page_size 为 1～100 |
+| `POST` | `/api/v1/users` | 创建用户：username、password、role、namespaces、sensitive_permissions |
+| `PUT` | `/api/v1/users/{user_id}` | enabled、role、namespaces、sensitive_permissions、revision；版本冲突或撤销最后管理员返回 409 |
+| `POST` | `/api/v1/users/{user_id}/password` | 管理员重置密码，撤销目标用户全部会话 |
+
+role 可选 `platform_admin`、`namespace_operator`、`readonly`；默认 readonly、空范围及空敏感授权。
+敏感权限为 `secret.read`、`pod.terminal`、`pod.files.read`、`pod.files.write`。
+密码至少 12 字符、UTF-8 不超过 72 字节；现有配置密码哈希迁移不改变。
+用户 ID 和用户名不可修改，不提供删除接口。查询不返回密码/旧 SK 哈希与凭据版本。
 
 ### SSH 与集群资源
 
@@ -339,3 +360,15 @@ IngressClass、NetworkPolicy、Event，共支持 20 类资源。
 
 支持集群发现的可创建资源，每批最多 20 个、2 MiB；已有资源编辑及版本接口保持不变。
 详见 [通过 YAML 创建资源](通过YAML创建资源.md)。
+
+
+### 操作审计
+
+`GET /api/v1/audit-events` 仅平台管理员可用。支持 page、page_size、username、actor_id、
+action、namespace、resource_type、resource_name、result、request_id、task_id、batch_id，
+以及 Unix 秒 since/until；返回 items 与 total。没有编辑或删除审计的 HTTP 接口。
+
+写操作不能建立审计时返回 503 且不执行；审计收尾失败返回
+`AUDIT_FINALIZE_UNCERTAIN`、审计编号与结果待核实说明，先核对状态再决定后续操作。
+
+完整操作说明、归档命令及工作负载准入边界见[使用指南](用户权限与操作审计使用指南.md)。

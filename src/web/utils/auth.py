@@ -17,10 +17,11 @@ import bcrypt
 from fastapi import Header, HTTPException, Request, Response, status
 from jwt import JWT, jwk_from_dict
 from jwt.utils import get_int_from_datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
-from core.auth_credentials import load_auth_users, load_signing_secret
+from core.auth_credentials import load_auth_user, load_signing_secret
 from core.config import Application
 from core.logger import get_log_context
 from core.orm.auth import is_token_revoked, issue_session, session_active
@@ -52,7 +53,13 @@ def credential_version(record: Dict[str, Any]) -> str:
     material = json.dumps(
         {
             key: record.get(key, "")
-            for key in ("password_hash", "ak", "sk_hash")
+            for key in (
+                "password_hash",
+                "ak",
+                "sk_hash",
+                "user_id",
+                "auth_revision",
+            )
         },
         sort_keys=True,
     )
@@ -83,9 +90,37 @@ class User(BaseModel):
     """用户模型"""
 
     username: str
-    ak: str
+    user_id: str
+    enabled: bool
+    role: str
+    namespaces: list[str] = Field(default_factory=list)
+    sensitive_permissions: list[str] = Field(default_factory=list)
+    revision: int
+    auth_revision: int = Field(exclude=True)
+    ak: str = ""
     ak_sk_expire_at: Optional[datetime] = None
-    password_hash: str
+    password_hash: str = Field(exclude=True, repr=False)
+
+
+def load_identity(username: str) -> Dict[str, Any] | None:
+    try:
+        return load_auth_user(username)
+    except SQLAlchemyError as exc:
+        raise HTTPException(503, "身份存储不可用，请稍后重试") from exc
+
+
+def require_admin(user: User) -> None:
+    """未接入细粒度授权的业务入口默认只允许管理员。"""
+    if getattr(user, "role", None) != "platform_admin":
+        raise HTTPException(403, "需要平台管理员权限")
+
+
+async def get_platform_admin(
+    authorization: Optional[str] = Header(None),
+) -> Tuple[User, str]:
+    identity = await get_current_user(authorization=authorization)
+    require_admin(identity[0])
+    return identity
 
 
 class TokenResponse(BaseModel):
@@ -152,8 +187,8 @@ def create_access_token(
         (access_token, expire_time) 元组
     """
     to_encode = data.copy()
-    record = load_auth_users().get(str(data.get("sub", "")))
-    if not record:
+    record = load_identity(str(data.get("sub", "")))
+    if not record or not record.get("enabled", False):
         raise HTTPException(status_code=401, detail="未知用户")
     current_version = credential_version(record)
     authenticated_version = data.get("credential_version", current_version)
@@ -166,6 +201,7 @@ def create_access_token(
     # check must invalidate this token, rather than upgrade the old
     # session.
     to_encode["credential_version"] = authenticated_version
+    to_encode["uid"] = record["user_id"]
     expire = datetime.now() + (expires_delta or timedelta(minutes=15))
     to_encode.update(
         {"exp": get_int_from_datetime(expire), "jti": str(uuid4())}
@@ -183,6 +219,8 @@ def create_access_token(
         raise HTTPException(
             status_code=401, detail="登录会话已失效，请重新登录"
         ) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(503, "会话存储不可用，请稍后重试") from exc
     to_encode["sid"] = session_id
     encoded_jwt = jwt_instance.encode(to_encode, signing_key, alg=ALGORITHM)
     return encoded_jwt, expire
@@ -229,11 +267,18 @@ async def get_current_user(
         payload = jwt_instance.decode(
             token, signing_key, algorithms={ALGORITHM}
         )
+        if not isinstance(payload.get("sub"), str):
+            raise ValueError("Invalid subject")
+    except Exception as exc:
+        raise HTTPException(401, "Token 无效或已失效，请重新登录") from exc
+    record = await run_in_threadpool(load_identity, payload.get("sub", ""))
+    try:
         username = payload.get("sub", "")
-        record = load_auth_users().get(username)
         if (
             not token
             or not record
+            or not record.get("enabled", False)
+            or payload.get("uid") != record.get("user_id")
             or not payload.get("exp")
             or not hmac.compare_digest(
                 str(payload.get("credential_version", "")),
@@ -249,7 +294,9 @@ async def get_current_user(
             payload["credential_version"],
         ):
             raise ValueError("Expired or revoked login session")
-        return User(username=username, **record), "token"
+        return User(**record), "token"
+    except SQLAlchemyError as exc:
+        raise HTTPException(503, "身份存储不可用，请稍后重试") from exc
     except Exception as exc:
         raise HTTPException(
             status_code=401,
@@ -307,6 +354,9 @@ def convert_to_standard(
 
 def auth_with_renew(
     renew_threshold: int = TOKEN_RENEW_THRESHOLD_MINUTES,
+    *,
+    admin_only: bool = True,
+    permission: Optional[str] = None,
 ) -> Callable[[F], F]:
     """
     鉴权装饰器：Bearer Token 鉴权、自动刷新和统一响应
@@ -350,13 +400,23 @@ def auth_with_renew(
             request: Request, *args: Any, **kwargs: Any
         ) -> StandardResponse[Any]:
             headers = request.headers
-            current_user, auth_type = await get_current_user(
-                authorization=headers.get("authorization"),
-                ak=headers.get("ak"),
-                timestamp=headers.get("timestamp"),
-                nonce=headers.get("nonce"),
-                signature=headers.get("signature"),
-            )
+            try:
+                current_user, auth_type = await get_current_user(
+                    authorization=headers.get("authorization"),
+                    ak=headers.get("ak"),
+                    timestamp=headers.get("timestamp"),
+                    nonce=headers.get("nonce"),
+                    signature=headers.get("signature"),
+                )
+            except HTTPException as exc:
+                from core.orm import audit
+                from web.utils import access
+
+                operation = access.begin(
+                    request, None, "authentication.denied", request.path_params
+                )
+                audit.finish_event(operation["audit_id"], exc.status_code)
+                raise
 
             token: Optional[str] = None
             token_expire: Optional[datetime] = None
@@ -418,12 +478,44 @@ def auth_with_renew(
             api_response = func_kwargs.pop("_api_response", None)
             if "current_user" in endpoint_signature.parameters:
                 func_kwargs["current_user"] = current_user
+            from core.authorization import bind_actor
+            from core.orm import audit
+            from web.utils import access
+
+            action = (
+                permission
+                or f"{func.__module__.rsplit('.', 1)[-1]}.{func.__name__}"
+            )
+            if permission == "resource.update":
+                action = (
+                    "resource.apply"
+                    if func.__name__ == "apply"
+                    else "resource.preview"
+                )
+            elif permission == "pod.files.write":
+                action = (
+                    "pod.file.upload"
+                    if func.__name__ == "upload_pod_file"
+                    else "pod.file."
+                    + str(getattr(func_kwargs.get("body"), "action", "write"))
+                )
+            elif permission == "pod.files.read":
+                action = "pod.file.list"
+            operation = access.begin(
+                request, current_user, action, func_kwargs
+            )
             try:
-                if asyncio.iscoroutinefunction(func):
-                    res = await func(**func_kwargs)
-                else:
-                    res = await run_in_threadpool(func, **func_kwargs)
+                with bind_actor(current_user, operation):
+                    if permission:
+                        access.authorize(current_user, permission, func_kwargs)
+                    elif admin_only:
+                        require_admin(current_user)
+                    if asyncio.iscoroutinefunction(func):
+                        res = await func(**func_kwargs)
+                    else:
+                        res = await run_in_threadpool(func, **func_kwargs)
             except HTTPException as exc:
+                audit.finish_event(operation["audit_id"], exc.status_code)
                 if (
                     new_token
                     and exc.status_code != 401
@@ -439,6 +531,11 @@ def auth_with_renew(
                         "X-Token-Type": "Bearer",
                     }
                 raise
+            except BaseException:
+                audit.finish_event(operation["audit_id"], 500)
+                raise
+
+            access.finish(operation["audit_id"], res)
 
             if isinstance(res, Response):
                 if new_token and session_active(
@@ -488,6 +585,8 @@ def auth_with_renew(
         wrapper.__annotations__.pop("current_user", None)
         wrapper.__annotations__["return"] = StandardResponse[Any]
         wrapper.__annotations__["_api_response"] = Response
+        wrapper.__admin_only__ = admin_only
+        wrapper.__permission__ = permission
         return wrapper  # type: ignore
 
     return decorator

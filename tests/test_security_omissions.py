@@ -253,7 +253,7 @@ async def test_chunked_upload_limit_closes_spool(monkeypatch):
         return f
 
     async def authenticated(**kwargs):
-        return SimpleNamespace(username="admin"), "test"
+        return SimpleNamespace(username="admin", role="platform_admin"), "test"
 
     monkeypatch.setattr(auth, "get_current_user", authenticated)
     monkeypatch.setattr(parsers, "SpooledTemporaryFile", spool)

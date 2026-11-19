@@ -24,7 +24,10 @@ def contract_app(monkeypatch):
             raise HTTPException(
                 401, "请重新登录", headers={"WWW-Authenticate": "Bearer"}
             )
-        return SimpleNamespace(username="operator"), "test"
+        return (
+            SimpleNamespace(username="operator", role="platform_admin"),
+            "test",
+        )
 
     monkeypatch.setattr(auth, "get_current_user", identity)
     app = FastAPI()

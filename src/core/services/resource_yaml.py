@@ -279,7 +279,8 @@ def revision_summary(row):
 
 
 class ResourceYaml:
-    def __init__(self, view, kind, namespace, name):
+    def __init__(self, view, kind, namespace, name, authorizer=None):
+        self.authorizer = authorizer
         try:
             self.kind = resource_kind(kind)
         except ValueError as exc:
@@ -290,6 +291,14 @@ class ResourceYaml:
         self.cluster = cluster_identity(view)
 
     def call(self, body=None, dry_run=False):
+        if self.authorizer:
+            self.authorizer(
+                "resource.read" if body is None else "resource.update",
+                self.kind,
+                self.namespace,
+                RESOURCES[self.kind][3],
+                manifest=body,
+            )
         api, stem, _, namespaced = RESOURCES[self.kind]
         kwargs = {
             "name": self.name,

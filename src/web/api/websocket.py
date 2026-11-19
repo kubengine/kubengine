@@ -16,9 +16,9 @@ from typing import Any
 from fastapi import (
     APIRouter,
     BackgroundTasks,
-    Depends,
     HTTPException,
     Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -27,7 +27,12 @@ from pydantic import BaseModel, Field
 from core.logger import get_logger, with_log_context, with_new_log_context
 from core.misc.websocket import connection_manager
 from core.orm.task import TaskStatus
-from web.utils.auth import get_current_user
+from web.utils.auth import (
+    User,
+    auth_with_renew,
+    get_current_user,
+    require_admin,
+)
 
 logger = get_logger(__name__)
 
@@ -101,6 +106,7 @@ async def create_resource_task(
     resource_name: str,
     resource_type: str,
     config: dict[str, Any] | None = None,
+    authorization_context: dict | None = None,
 ) -> None:
     """
     后台异步创建资源，仅更新全局状态，不主动推送
@@ -117,6 +123,9 @@ async def create_resource_task(
         resource_type: 资源类型
         config: 资源配置
     """
+    from core.authorization import check_task
+
+    check_task(authorization_context)
     # 初始化任务状态
     await update_task_status(task_id, TaskStatus.pending, "任务待执行")
 
@@ -135,6 +144,7 @@ async def create_resource_task(
             f"校验 {resource_type} 配置：{config_desc}",
         )
 
+        check_task(authorization_context)
         # 模拟步骤2：创建基础资源（耗时2秒）
         await asyncio.sleep(2)
         await update_task_status(
@@ -143,6 +153,7 @@ async def create_resource_task(
             f"创建 {resource_name} 基础资源成功",
         )
 
+        check_task(authorization_context)
         # 模拟步骤3：初始化资源（耗时1.5秒）
         await asyncio.sleep(1.5)
         await update_task_status(
@@ -175,11 +186,13 @@ async def create_resource_task(
     "/create-resource",
     summary="创建资源",
     description="接收创建资源请求，返回 task_id，后台异步执行任务",
-    dependencies=[Depends(get_current_user)],
 )
+@auth_with_renew()
 async def trigger_resource_create(
-    request: ResourceCreateRequest,
+    request: Request,
+    body: ResourceCreateRequest,
     background_tasks: BackgroundTasks,
+    current_user: User,
 ):
     """
     接收创建资源请求，返回 task_id，后台异步执行任务
@@ -206,14 +219,15 @@ async def trigger_resource_create(
     background_tasks.add_task(
         create_resource_task,
         task_id=task_id,
-        resource_name=request.resource_name,
-        resource_type=request.resource_type,
-        config=request.config,
+        resource_name=body.resource_name,
+        resource_type=body.resource_type,
+        config=body.config,
+        authorization_context=__import__(
+            "core.authorization", fromlist=["snapshot"]
+        ).snapshot(),
     )
 
-    logger.info(
-        f"创建资源任务已提交: {task_id}, 资源: {request.resource_name}"
-    )
+    logger.info(f"创建资源任务已提交: {task_id}, 资源: {body.resource_name}")
 
     # 立即返回，不阻塞
     result: dict[str, Any] = {
@@ -256,31 +270,51 @@ async def websocket_endpoint(
         websocket: WebSocket 连接对象
         token: 认证令牌（通过查询参数传递）
     """
+    audit_id = None
+    audit_status = 200
     # 接受 WebSocket 连接
     await websocket.accept()
     logger.info("WebSocket 连接已建立")
 
     # 验证用户身份
     try:
-        await get_current_user(
+        identity = await get_current_user(
             authorization=token,
             ak="",
             timestamp="",
             nonce="",
             signature="",
         )
+        from core.authorization import value
+        from core.orm import audit
+
+        audit_id = audit.begin_event(
+            actor_id=value(identity[0], "user_id", ""),
+            username=identity[0].username,
+            action="platform.websocket",
+            source_ip=getattr(getattr(websocket, "client", None), "host", ""),
+        )
+        require_admin(identity[0])
         logger.info("WebSocket 鉴权成功")
     except HTTPException as e:
         # 鉴权失败，拒绝连接
         logger.warning(f"WebSocket 鉴权失败: {e.detail}")
-        await websocket.close(code=1008, reason=e.detail)
+        await websocket.close(code=1008, reason=str(e.detail))
+        from core.orm import audit
+
+        if not audit_id:
+            audit_id = audit.begin_event(action="platform.websocket")
+        audit.finish_event(audit_id, e.status_code)
         return
 
     async def session_valid() -> bool:
+        nonlocal audit_status
         try:
-            await get_current_user(authorization=token)
+            identity = await get_current_user(authorization=token)
+            require_admin(identity[0])
             return True
-        except HTTPException:
+        except HTTPException as exc:
+            audit_status = exc.status_code
             return False
 
     # Validate before each outbound message, including broadcasts and
@@ -359,3 +393,5 @@ async def websocket_endpoint(
         logger.error(f"WebSocket 异常：{e}")
     finally:
         await connection_manager.disconnect(websocket)
+        if audit_id:
+            audit.finish_event(audit_id, audit_status)

@@ -13,7 +13,6 @@ from starlette.formparsers import MultiPartException, MultiPartParser
 
 from core.runtime_files import private_runtime_file
 from core.upload_limits import upload_limit
-from web.utils import auth
 
 
 @contextmanager
@@ -49,8 +48,15 @@ class SecureUploadRoute(APIRoute):
             return handler
 
         async def bounded(request):
-            await auth.get_current_user(
-                authorization=request.headers.get("authorization")
+            from web.utils.access import preauthorize
+
+            await preauthorize(
+                request,
+                (
+                    "pod.files.write"
+                    if self.endpoint.__name__ == "upload_pod_file"
+                    else None
+                ),
             )
             pod_upload = self.endpoint.__name__ == "upload_pod_file"
             file_limit = (

@@ -765,6 +765,7 @@ def test_routes_support_canonical_and_legacy_contracts(monkeypatch, view):
         label_selector=None,
         field_selector=None,
         sort_by="d,creationTimestamp",
+        current_user=SimpleNamespace(role="platform_admin"),
     )
     assert code == 200 and data["items"] == []
 
@@ -829,7 +830,10 @@ def test_http_routes_keep_auth_and_return_identical_sdk_payloads(
     )
 
     async def identity(**kwargs):
-        return SimpleNamespace(username="admin"), "test-identity"
+        return (
+            SimpleNamespace(username="admin", role="platform_admin"),
+            "test-identity",
+        )
 
     monkeypatch.setattr(auth, "get_current_user", identity)
     monkeypatch.setattr(k8s, "get_kubernetes_client", lambda: view)
@@ -1142,7 +1146,10 @@ def test_inspection_http_routes_require_auth_and_validate_log_ranges(
     )
 
     async def identity(**kwargs):
-        return SimpleNamespace(username="admin"), "test-identity"
+        return (
+            SimpleNamespace(username="admin", role="platform_admin"),
+            "test-identity",
+        )
 
     monkeypatch.setattr(auth, "get_current_user", identity)
     monkeypatch.setattr(k8s, "get_kubernetes_client", lambda: view)

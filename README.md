@@ -62,7 +62,7 @@ kubengine-k8s --help
 ### 启动管理服务
 
 ```bash
-# 首次使用先设置管理员密码，并妥善保存命令输出的 AK/SK
+# 首次使用迁移配置用户到数据库，并设置管理员密码
 kubengine app set-password
 
 # 初始化或补充内置应用模板；--force 会覆盖已有应用配置
@@ -109,7 +109,7 @@ kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles/
 | 命令 | 用途 |
 | --- | --- |
 | `kubengine app run` | 启动 API 和 Web UI |
-| `kubengine app set-password` | 修改管理员密码并生成/轮换 AK/SK |
+| `kubengine app set-password` | 修改数据库中的 admin 密码并撤销旧会话 |
 | `kubengine app init-data` | 初始化内置应用模板 |
 | `kubengine cluster config/show/exec` | 纳管节点、查看配置、批量执行命令 |
 | `kubengine cluster disable-firewalld` | 在集群节点关闭 firewalld |
@@ -130,6 +130,8 @@ kubengine-k8s sync-bitnami import-dir /root/offline-deploy/bitnami-bundles/
 | [部署文档](docs/部署文档.md) | 使用 KubeEngine 完成单 Master/HA 离线部署 |
 | [手动部署文档](docs/手动部署文档.md) | 不依赖 KubeEngine 的手工部署流程 |
 | [CLI 文档](docs/CLI.md) | 平台、集群、镜像和 Kubernetes 命令 |
+| [用户权限与操作审计](docs/用户权限与操作审计使用指南.md) | 用户、角色、敏感权限、审计及迁移运维 |
+| [用户权限与审计部署验收](docs/部署记录-2026-11-19-用户权限与审计.md) | 完整版本验证、正式环境备份及回滚边界 |
 | [配置说明](docs/CONFIGURATION.md) | 配置路径、字段和生产建议 |
 | [API 文档](docs/API.md) | 鉴权、响应格式和当前路由概览 |
 | [NFS 存储对接教程](docs/NFS存储对接教程.md) | 通过 external provisioner 提供 NFS StorageClass |

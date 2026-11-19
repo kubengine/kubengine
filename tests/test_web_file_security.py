@@ -91,7 +91,7 @@ def test_index_symlink_cannot_escape_the_static_root(static_tree):
 
 
 @pytest.fixture
-def chart_environment(tmp_path, monkeypatch):
+def chart_environment(tmp_path, monkeypatch, identity_database):
     original_temporary_directory = artifacts.tempfile.TemporaryDirectory
 
     def private_directory(**kwargs):
@@ -107,11 +107,9 @@ def chart_environment(tmp_path, monkeypatch):
             USERNAME="configured-user", PASSWORD="configured-test-password"
         ),
     )
-    from core.orm.auth import AuthSession, RevokedToken
-    from core.orm.engine import engine
+    from core.orm.identity import ensure_identity_schema
 
-    AuthSession.__table__.create(engine, checkfirst=True)
-    RevokedToken.__table__.create(engine, checkfirst=True)
+    ensure_identity_schema()
     token, _ = create_access_token({"sub": "admin"})
     return {"Authorization": f"Bearer {token}"}
 

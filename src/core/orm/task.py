@@ -59,6 +59,7 @@ class Task(Base):
     __tablename__ = "task"
 
     task_id = Column(Integer, primary_key=True, index=True, comment="Task ID")
+    auth_context = Column(JSON)
     task_func_path = Column(
         String,
         nullable=False,
@@ -97,6 +98,7 @@ class TaskSchema(BaseModel):
     """Pydantic model for task serialization."""
 
     task_id: Optional[int] = None
+    auth_context: Optional[Dict[str, Any]] = None
     task_func_path: Optional[str] = None
     params: Optional[Dict[str, Any]] = None
     resource_id: Optional[int] = None
@@ -154,6 +156,9 @@ def create_task_record(
             )
             session.commit()
             return result
+    from core.authorization import snapshot
+
+    authorization = snapshot()
     cluster = db.get(Cluster, resource_id)
     if cluster is None or params.get("cluster_id") != resource_id:
         raise ValueError("Task resource does not exist")
@@ -185,6 +190,7 @@ def create_task_record(
                 # Retry the same intent, retaining its confirmed phase
                 # and monotonic attempt counter, just like an
                 # image-import retry.
+                row.auth_context = authorization
                 row.status = TaskStatus.pending
                 row.error_msg = None
                 row.lease_owner = row.lease_expires_at = row.heartbeat_at = (
@@ -202,6 +208,7 @@ def create_task_record(
     }
     task = Task(
         task_func_path=operation,
+        auth_context=authorization,
         params=bound,
         resource_id=resource_id,
         status=TaskStatus.pending,
@@ -362,6 +369,7 @@ def ensure_task_schema():
         "heartbeat_at": "DATETIME",
         "attempt_count": "INTEGER NOT NULL DEFAULT 0",
         "phase": "VARCHAR NOT NULL DEFAULT 'pending'",
+        "auth_context": "JSON",
     }
     with _operation_lock("task-schema"):
         with engine.begin() as connection:
@@ -474,7 +482,25 @@ def _run_claimed_task(
     from core.orm.cluster import find_cluster_by_id
 
     token = None
+    audit_id = None
+    audit_status = 500
     try:
+        from core.authorization import check_task
+        from core.orm import audit
+
+        with get_db() as db:
+            task = db.get(Task, task_id)
+            context = task.auth_context
+        audit_id = audit.begin_event(
+            actor_id=(context or {}).get("actor_id", ""),
+            username=(context or {}).get(
+                "username", (context or {}).get("service_actor", "")
+            ),
+            action="task.execute",
+            task_id=str(task_id),
+            parent_id=(context or {}).get("audit_id", ""),
+            request_id=(context or {}).get("request_id", ""),
+        )
         if task_func_path == "api.app.deploy_app":
             raise ValueError(
                 "Legacy task operation is ambiguous; resources retained for"
@@ -511,6 +537,7 @@ def _run_claimed_task(
             raise ValueError("任务对应的资源身份已变化，拒绝操作当前资源")
         if cluster.operation_version != task_params["resource_version"]:
             raise TaskSuperseded("资源已有更新的操作，拒绝恢复旧部署任务")
+        check_task(context)
         token = current_attempt.set(
             ApplicationAttempt(
                 task_id,
@@ -528,10 +555,13 @@ def _run_claimed_task(
         )
         task_func(task_id, cluster_id=cluster_id)
         update_task_record_status(task_id, TaskStatus.success, lease=lease)
+        audit.finish_event(audit_id, 200)
+        audit_id = None
         logger.info("Task %s completed successfully", task_id)
     except TaskLeaseLost:
         raise
     except Exception as exc:
+        audit_status = getattr(exc, "status_code", 500)
         update_task_record_status(
             task_id, TaskStatus.failed, str(exc), lease=lease
         )
@@ -547,5 +577,7 @@ def _run_claimed_task(
             db.commit()
         raise
     finally:
+        if audit_id:
+            audit.finish_event(audit_id, audit_status)
         if token is not None:
             current_attempt.reset(token)
