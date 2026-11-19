@@ -1,11 +1,12 @@
-root_dir: /opt/kubengine
+#root_dir: /opt/kubengine
+root_dir: /home/viduser/code/kubengine
 domain: kubengine.io
 security:
   uploads:
     pod_file_bytes: 104857600  # Pod 单文件上传/下载上限，单位字节
     pod_timeout_seconds: 300  # 文件接收及容器传输各阶段超时，单位秒
 tls:
-  root_dir: /opt/kubengine/config/certs
+  root_dir: /home/viduser/code/kubengine/config/certs
   ca_country_code: CN
   ca_state_name: Beijing
   ca_locality_name: Beijing
