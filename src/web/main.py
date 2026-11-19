@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable
 from uuid import uuid4
 
+import requests
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -184,6 +185,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[
+        "X-Request-ID",
+        "Retry-After",
+        "Content-Disposition",
+        "X-New-Access-Token",
+        "X-Token-Type",
+    ],
 )
 logger.info("CORS 中间件已配置")
 
@@ -223,10 +231,22 @@ async def validation_exception_handler(
         for error in exc.errors()
     ]
     logger.warning(f"参数校验失败: {errors}")
+    fields = sorted(
+        {
+            ".".join(
+                str(item)
+                for item in error.get("loc", ())
+                if item not in {"body", "query", "path"}
+            )
+            for error in errors
+        }
+    )
     return error_response(
-        message=f"参数校验失败: {errors}",
+        message="参数校验失败: " + "、".join(fields),
         code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        details=errors,
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
@@ -249,9 +269,13 @@ async def http_exception_handler(
     """
     logger.warning(f"HTTP 异常: {exc.status_code} - {exc.detail}")
     return error_response(
-        message=exc.detail or "请求异常",
+        message=(exc.detail if isinstance(exc.detail, str) else "请求处理失败")
+        or "请求异常",
         code=exc.status_code,
         status_code=exc.status_code,
+        details=exc.detail if not isinstance(exc.detail, str) else None,
+        headers=exc.headers,
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
@@ -274,9 +298,12 @@ async def business_exception_handler(
     """
     logger.warning(f"业务异常: {exc.status_code} - {exc.detail}")
     return error_response(
-        message=exc.detail,
+        message=exc.detail if isinstance(exc.detail, str) else "请求处理失败",
         code=exc.status_code,
         status_code=exc.status_code,
+        details=exc.detail if not isinstance(exc.detail, str) else None,
+        headers=exc.headers,
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
@@ -297,11 +324,35 @@ async def general_exception_handler(
     Returns:
         标准错误响应
     """
-    logger.error(f"未捕获的异常: {type(exc).__name__} - {str(exc)}")
+    # ServerErrorMiddleware 在请求中间件退出后处理未捕获异常，重新绑定编号。
+    with bind_log_context(
+        request_id=getattr(request.state, "request_id", None)
+    ):
+        logger.error(f"未捕获的异常: {type(exc).__name__} - {str(exc)}")
     return error_response(
         message="服务器内部错误",
         code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+
+@app.exception_handler(requests.exceptions.RequestException)
+async def upstream_http_exception_handler(
+    request: Request, exc: requests.exceptions.RequestException
+):
+    """上游网络异常不应伪装成控制台登录失效或泄露代理/凭据。"""
+    timeout = isinstance(exc, requests.exceptions.Timeout)
+    logger.warning("上游 HTTP 请求失败: %s", type(exc).__name__)
+    return error_response(
+        message=(
+            "上游服务请求超时"
+            if timeout
+            else "无法连接上游服务，请检查集群或仓库连接"
+        ),
+        code=504 if timeout else 502,
+        status_code=504 if timeout else 502,
+        request_id=getattr(request.state, "request_id", None),
     )
 
 

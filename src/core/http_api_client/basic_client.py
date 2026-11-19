@@ -28,7 +28,7 @@ class BasicClient:
         """处理 JSON 响应并返回标准化结果
 
         根据响应状态码返回不同的结果：
-        - 状态码 200：返回 (200, "success", 响应JSON数据)
+        - 状态码 2xx：保留状态码与 JSON；空响应返回空字典
         - 其他状态码：返回 (状态码, 错误信息, 空字典)
 
         Args:
@@ -39,7 +39,7 @@ class BasicClient:
 
         Returns:
             包含三个元素的元组：
-            - code: 业务状态码（成功为 200，失败为 HTTP 状态码）
+            - code: 状态码（保留上游的 2xx 成功及 4xx/5xx 失败状态）
             - message: 提示信息（成功为 "success"，失败为错误信息）
             - data: 响应数据（成功为 JSON 对象，失败为空字典）
 
@@ -57,21 +57,42 @@ class BasicClient:
             ...     'status_code': 404, ...     'json': lambda: {}, ...
             'text': 'Not Found' ... })()
             >>> client.api_result(response)
-            (404, 'Failed: 404 - Not Found', {})
+            (404, '上游服务请求失败（HTTP 404）', {})
         """
-        if response.status_code == 200:
-            return 200, "success", response.json()
-        return (
-            response.status_code,
-            f"Failed: {response.status_code} - {response.text}",
-            {},
-        )
+        if 200 <= response.status_code < 300:
+            try:
+                data = response.json()
+            except ValueError:
+                if not response.text.strip():
+                    data = {}
+                else:
+                    return 502, "上游服务返回了无效的 JSON 响应", {}
+            return response.status_code, "success", data
+        message = f"上游服务请求失败（HTTP {response.status_code}）"
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                supplied = payload.get("message") or payload.get("detail")
+                if isinstance(supplied, str):
+                    message = supplied[:2000]
+                elif isinstance(payload.get("errors"), list):
+                    messages = [
+                        str(item.get("message", ""))
+                        for item in payload["errors"]
+                        if isinstance(item, dict)
+                    ]
+                    message = (
+                        "；".join(filter(None, messages))[:2000] or message
+                    )
+        except (ValueError, TypeError):
+            pass
+        return response.status_code, message, {}
 
     def api_result_text(self, response: Any) -> Tuple[int, str, str]:
         """处理文本响应并返回标准化结果
 
         根据响应状态码返回不同的结果：
-        - 状态码 200：返回 (200, "success", 响应文本)
+        - 状态码 2xx：保留状态码与响应文本
         - 其他状态码：返回 (状态码, 错误信息, 空字符串)
 
         Args:
@@ -81,7 +102,7 @@ class BasicClient:
 
         Returns:
             包含三个元素的元组：
-            - code: 业务状态码（成功为 200，失败为 HTTP 状态码）
+            - code: 状态码（保留上游的 2xx 成功及 4xx/5xx 失败状态）
             - message: 提示信息（成功为 "success"，失败为错误信息）
             - data: 响应数据（成功为文本，失败为空字符串）
 
@@ -99,12 +120,12 @@ class BasicClient:
             ...     'status_code': 404, ...     'text': 'Not Found' ...
             })()
             >>> client.api_result_text(response)
-            (404, 'Failed: 404 - Not Found', '')
+            (404, '上游服务请求失败（HTTP 404）', '')
         """
-        if response.status_code == 200:
-            return 200, "success", response.text
+        if 200 <= response.status_code < 300:
+            return response.status_code, "success", response.text
         return (
             response.status_code,
-            f"Failed: {response.status_code} - {response.text}",
+            f"上游服务请求失败（HTTP {response.status_code}）",
             "",
         )

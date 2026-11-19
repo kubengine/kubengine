@@ -9,12 +9,12 @@ import hashlib
 import hmac
 from datetime import datetime, timedelta
 from functools import wraps
-from inspect import signature
+from inspect import Parameter, signature
 from typing import Any, Callable, Dict, Optional, Tuple, TypeVar, Union
 from uuid import uuid4
 
 import bcrypt
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, Request, Response, status
 from jwt import JWT, jwk_from_dict
 from jwt.utils import get_int_from_datetime
 from pydantic import BaseModel
@@ -22,8 +22,9 @@ from starlette.concurrency import run_in_threadpool
 
 from core.auth_credentials import load_auth_users, load_signing_secret
 from core.config import Application
+from core.logger import get_log_context
 from core.orm.auth import is_token_revoked, issue_session, session_active
-from web.utils.response import StandardResponse
+from web.utils.response import StandardResponse, error_code_for
 
 # ============================ 配置常量 ============================
 
@@ -289,6 +290,11 @@ def convert_to_standard(
         )
     if isinstance(raw_response, StandardResponse):
         return raw_response  # type: ignore
+    if (
+        isinstance(raw_response, dict)
+        and {"code", "message", "data"} <= raw_response.keys()
+    ):
+        return StandardResponse.model_validate(raw_response)
     return StandardResponse(
         code=default_code,
         message=default_message,
@@ -328,6 +334,14 @@ def auth_with_renew(
                 parameter
                 for name, parameter in endpoint_signature.parameters.items()
                 if name != "current_user"
+            ]
+            + [
+                Parameter(
+                    "_api_response",
+                    Parameter.KEYWORD_ONLY,
+                    default=None,
+                    annotation=Response,
+                )
             ],
         )
 
@@ -401,15 +415,62 @@ def auth_with_renew(
             # authentication.
             bound = public_signature.bind(request, *args, **kwargs)
             func_kwargs = dict(bound.arguments)
+            api_response = func_kwargs.pop("_api_response", None)
             if "current_user" in endpoint_signature.parameters:
                 func_kwargs["current_user"] = current_user
-            if asyncio.iscoroutinefunction(func):
-                res = await func(**func_kwargs)
-            else:
-                res = await run_in_threadpool(func, **func_kwargs)
+            try:
+                if asyncio.iscoroutinefunction(func):
+                    res = await func(**func_kwargs)
+                else:
+                    res = await run_in_threadpool(func, **func_kwargs)
+            except HTTPException as exc:
+                if (
+                    new_token
+                    and exc.status_code != 401
+                    and session_active(
+                        payload["sid"],
+                        current_user.username,
+                        payload["credential_version"],
+                    )
+                ):
+                    exc.headers = {
+                        **(exc.headers or {}),
+                        "X-New-Access-Token": new_token,
+                        "X-Token-Type": "Bearer",
+                    }
+                raise
 
-            # 转换为标准响应
+            if isinstance(res, Response):
+                if new_token and session_active(
+                    payload["sid"],
+                    current_user.username,
+                    payload["credential_version"],
+                ):
+                    res.headers["X-New-Access-Token"] = new_token
+                    res.headers["X-Token-Type"] = "Bearer"
+                return res
+            # JSON 响应保留统一结构，HTTP 状态码同时表达真实结果。
             response_data = convert_to_standard(res)
+            response_data.request_id = get_log_context().get("request_id")
+            code = response_data.code
+            if code == 401:
+                # 装饰器已完成控制台身份认证，业务返回的 401 来自上游。
+                # 不应让浏览器误清理控制台会话。
+                response_data.code = 502
+                response_data.error_code = "UPSTREAM_AUTH_ERROR"
+                response_data.details = {"upstream_status": 401}
+                response_data.message = (
+                    "上游服务认证失败，请检查集群或仓库的连接凭据"
+                )
+                http_status = 502
+            elif 200 <= code < 300:
+                # 包装后的 JSON 仍有响应体，不能使用无响应体的 204/205。
+                http_status = 200 if code in {204, 205} else code
+            else:
+                http_status = code if 400 <= code <= 599 else 400
+                response_data.error_code = error_code_for(http_status)
+            if api_response is not None:
+                api_response.status_code = http_status
 
             # 添加新 Token（如果有）
             if new_token and session_active(
@@ -426,6 +487,7 @@ def auth_with_renew(
         wrapper.__annotations__ = dict(func.__annotations__)
         wrapper.__annotations__.pop("current_user", None)
         wrapper.__annotations__["return"] = StandardResponse[Any]
+        wrapper.__annotations__["_api_response"] = Response
         return wrapper  # type: ignore
 
     return decorator

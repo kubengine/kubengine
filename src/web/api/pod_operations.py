@@ -193,6 +193,8 @@ def download_pod_file(
         size = ops.download_size(target, path)
     except ApiException as exc:
         code, message, _ = api_error(exc)
+        if code == 401:
+            code, message = 502, "集群认证失败，请检查 Kubernetes 连接凭据"
         raise HTTPException(code, message) from exc
     filename = (path.replace("\\", "/") if target.windows else path).rstrip(
         "/"

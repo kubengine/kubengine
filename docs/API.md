@@ -291,3 +291,39 @@ IngressClass、NetworkPolicy、Event，共支持 20 类资源。
 上传失败不安装不完整目标文件；已有目标默认返回 409，显式 overwrite 才替换。
 删除根目录、非法名称返回 400，非空目录未经递归确认返回 409；保留 Kubernetes / 容器权限错误。
 详情和环境要求见 [Pod 终端与文件管理](Pod终端与文件管理.md)。
+
+## HTTP 状态与异常响应
+
+认证装饰器包装的 JSON 接口保留 `{code, message, data}`，HTTP 状态同时表达实际结果：
+成功为 2xx，校验/权限/不存在/冲突等错误为对应 4xx，内部与上游错误为 5xx。
+调用方不能仅检查 HTTP 200 或仅接受业务 `code: 200`。原有业务元组无需修改调用方式。
+包装的 JSON 若业务码为 204/205，HTTP 使用 200 保留响应体；原始文件响应不包装。
+
+错误响应可包含以下字段（空字段可省略，`data` 不保证存在）：
+
+```json
+{
+  "code": 422,
+  "message": "参数校验失败: name",
+  "error_code": "VALIDATION_ERROR",
+  "request_id": "9cf182315c4341998c0b8b0f6d65d9f7",
+  "details": [{"loc": ["body", "name"], "type": "missing", "msg": "Field required"}]
+}
+```
+
+- `error_code` 是稳定分类，如 `AUTH_REQUIRED`、`FORBIDDEN`、`CONFLICT`、
+  `PAYLOAD_TOO_LARGE`、`RATE_LIMITED`、`INTERNAL_ERROR`、`UPSTREAM_ERROR`。
+- 参数校验仅返回字段位置、错误类型和说明，不回显请求输入或 Pydantic 的原始上下文。
+- 请求编号同时放在响应 `X-Request-ID` 与错误 JSON 的 `request_id`，可传入合法
+  `X-Request-ID` 关联日志；未捕获异常对外仅返回通用消息和编号。
+- HTTP 异常保留 `WWW-Authenticate`、`Retry-After` 等响应头；错误响应也可通过
+  `X-New-Access-Token` / `X-Token-Type` 续签会话，正常 JSON 继续支持原续签字段。
+- HTTP 401 表示控制台身份无效。业务处理中的上游认证失败转换为 HTTP 502、
+  `error_code: UPSTREAM_AUTH_ERROR`、`details.upstream_status: 401`，不应让前端退出。
+- 上游 HTTP 连接异常为 502，超时为 504；代理 HTML 和内部异常详情不会直接发给用户。
+- 登录成功仍返回令牌对象，健康检查与文件下载保持其专用响应结构。
+
+前端提示归属与请求策略见前端工程 `docs/REQUEST_ERRORS.md`。
+
+应用配置/集群配置的详情在记录不存在时返回 404；Helm 部署资源读取失败返回 502。
+部署表单缺少名称、Chart 或版本时返回 422。它们不再以成功响应或内部错误表示。

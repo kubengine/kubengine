@@ -48,6 +48,32 @@ def rotation_config(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_business_error_keeps_current_session_renewal_in_headers(
+    rotation_config,
+):
+    token, _ = auth.create_access_token(
+        {"sub": "admin"}, expires_delta=timedelta(minutes=1)
+    )
+
+    @auth.auth_with_renew()
+    async def protected(request: Request):
+        raise HTTPException(422, "invalid business input")
+
+    request = Request(
+        {
+            "type": "http",
+            "headers": [(b"authorization", f"Bearer {token}".encode())],
+        }
+    )
+    with pytest.raises(HTTPException) as error:
+        await protected(request)
+    assert error.value.status_code == 422
+    renewed = error.value.headers["X-New-Access-Token"]
+    user, _ = await auth.get_current_user(authorization=f"Bearer {renewed}")
+    assert user.username == "admin"
+
+
+@pytest.mark.asyncio
 async def test_password_rotated_during_login_cannot_issue_current_session(
     monkeypatch, rotation_config
 ):

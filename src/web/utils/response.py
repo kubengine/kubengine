@@ -12,6 +12,33 @@ from fastapi import status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from core.logger import get_log_context
+
+ERROR_CODES = {
+    400: "BAD_REQUEST",
+    401: "AUTH_REQUIRED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
+    409: "CONFLICT",
+    410: "GONE",
+    413: "PAYLOAD_TOO_LARGE",
+    415: "UNSUPPORTED_MEDIA_TYPE",
+    422: "VALIDATION_ERROR",
+    429: "RATE_LIMITED",
+    500: "INTERNAL_ERROR",
+    502: "UPSTREAM_ERROR",
+    503: "SERVICE_UNAVAILABLE",
+    504: "UPSTREAM_TIMEOUT",
+}
+
+
+def error_code_for(status_code: int) -> str:
+    return ERROR_CODES.get(
+        status_code, "SERVER_ERROR" if status_code >= 500 else "REQUEST_ERROR"
+    )
+
+
 # 泛型类型变量
 T = TypeVar("T")
 
@@ -37,6 +64,9 @@ class StandardResponse(BaseModel, Generic[T]):
         default=None, description="新的访问令牌"
     )
     token_type: str = Field(default="Bearer", description="令牌类型")
+    request_id: Optional[str] = None
+    error_code: Optional[str] = None
+    details: Optional[Any] = None
 
     model_config = {
         "from_attributes": True,
@@ -151,6 +181,10 @@ class ErrorResponse(BaseResponse):
     """
 
     detail: Optional[Any] = Field(default=None, description="错误详情")
+    details: Optional[Any] = None
+    error_code: Optional[str] = None
+    request_id: Optional[str] = None
+    data: None = None
 
 
 class EmptySuccessResponse(BaseResponse):
@@ -197,6 +231,11 @@ def error_response(
     code: int = 400,
     status_code: int = status.HTTP_400_BAD_REQUEST,
     detail: Optional[Any] = None,
+    *,
+    details: Optional[Any] = None,
+    error_code: Optional[str] = None,
+    headers: Optional[dict[str, str]] = None,
+    request_id: Optional[str] = None,
 ) -> JSONResponse:
     """
     创建错误响应
@@ -210,8 +249,21 @@ def error_response(
     Returns:
         JSONResponse 实例
     """
-    response_model = ErrorResponse(code=code, message=message, detail=detail)
+    request_id = request_id or get_log_context().get("request_id")
+    response_model = ErrorResponse(
+        code=code,
+        message=message,
+        detail=detail,
+        details=details if details is not None else detail,
+        error_code=error_code or error_code_for(status_code),
+        request_id=request_id,
+    )
+    response_headers = dict(headers or {})
+    if request_id:
+        response_headers["X-Request-ID"] = request_id
+    body = response_model.model_dump(exclude_none=True)
     return JSONResponse(
-        content=response_model.model_dump(exclude_none=True),
+        content=body,
         status_code=status_code,
+        headers=response_headers,
     )
