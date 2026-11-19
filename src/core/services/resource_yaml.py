@@ -66,7 +66,8 @@ UniqueLoader.yaml_implicit_resolvers = {
 }
 
 
-def parse_manifest(source):
+def load_manifests(source):
+    """有界解析 Kubernetes YAML，允许多文档但不展开锚点。"""
     if len(source.encode()) > MAX_YAML_BYTES:
         raise HTTPException(413, "单个 YAML 最大 2 MiB")
     try:
@@ -85,17 +86,22 @@ def parse_manifest(source):
                 depth -= 1
             if depth > 64 or count > 100000:
                 raise ValueError("YAML 结构过深或字段过多")
-        value = yaml.load(source, Loader=UniqueLoader)
-        if not isinstance(value, dict):
-            raise ValueError("请提供单个 Kubernetes 资源对象")
-        json.dumps(value, allow_nan=False)
-        return value
+        values = list(yaml.load_all(source, Loader=UniqueLoader))
+        json.dumps(values, allow_nan=False)
+        return values
     except (yaml.YAMLError, ValueError, TypeError, RecursionError):
         # YAML 解析错误包含原文片段，避免把 Secret 值回显到错误日志。
         raise HTTPException(
             400,
-            "YAML 无效：请检查缩进、重复字段、单文档及字段类型（不支持锚点引用）",
+            "YAML 无效：请检查缩进、重复字段及字段类型（不支持锚点引用）",
         ) from None
+
+
+def parse_manifest(source):
+    values = load_manifests(source)
+    if len(values) != 1 or not isinstance(values[0], dict):
+        raise HTTPException(400, "请提供单个 Kubernetes 资源对象")
+    return values[0]
 
 
 def editable(value):
@@ -120,6 +126,13 @@ def digest(value):
             allow_nan=False,
         ).encode()
     ).hexdigest()
+
+
+def cluster_identity(view):
+    configuration = view.api_client.configuration
+    ca = getattr(configuration, "ssl_ca_cert", None)
+    ca_hash = hashlib.sha256(Path(ca).read_bytes()).hexdigest() if ca else ""
+    return digest([configuration.host.rstrip("/"), ca_hash])
 
 
 def redact(value, secret, reveal):
@@ -274,12 +287,7 @@ class ResourceYaml:
         self.view = view
         self.namespace = namespace if RESOURCES[self.kind][3] else ""
         self.name = name
-        configuration = view.api_client.configuration
-        ca = getattr(configuration, "ssl_ca_cert", None)
-        ca_hash = (
-            hashlib.sha256(Path(ca).read_bytes()).hexdigest() if ca else ""
-        )
-        self.cluster = digest([configuration.host.rstrip("/"), ca_hash])
+        self.cluster = cluster_identity(view)
 
     def call(self, body=None, dry_run=False):
         api, stem, _, namespaced = RESOURCES[self.kind]
@@ -598,7 +606,14 @@ class ResourceYaml:
                 redact(snapshots["requested"], secret, reveal)
             ),
             changes=changes(
-                snapshots["before"], snapshots["after"], secret, reveal
+                (
+                    {"metadata": {}}
+                    if snapshots.get("operation") == "create"
+                    else snapshots["before"]
+                ),
+                snapshots["after"],
+                secret,
+                reveal,
             ),
             redacted=secret and not reveal,
         )

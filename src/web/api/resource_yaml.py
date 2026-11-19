@@ -8,6 +8,7 @@ from kubernetes.client.exceptions import ApiException
 from pydantic import BaseModel, Field
 from urllib3.exceptions import HTTPError
 
+from core.services.resource_create import ResourceCreator
 from core.services.resource_yaml import ResourceYaml
 from web.api.k8s import get_kubernetes_client
 from web.utils import auth
@@ -51,6 +52,43 @@ class YamlApply(YamlChange):
         min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$"
     )
     preview_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class YamlCreatePreview(BaseModel):
+    yaml_text: str = Field(min_length=1, max_length=2 * 1024**2)
+    namespace: str = Field(default="default", min_length=1, max_length=63)
+    comment: str = Field(default="", max_length=500)
+
+
+class YamlCreate(YamlCreatePreview):
+    request_id: str = Field(
+        min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$"
+    )
+    preview_token: str = Field(pattern=r"^\d{10}\.[0-9a-f]{64}$")
+
+
+@router.post("/resources/preview", summary="预检 YAML 创建资源")
+@auth_with_renew()
+def preview_create(
+    request: Request, body: YamlCreatePreview, current_user: User
+):
+    return execute(
+        "batch",
+        lambda: ResourceCreator(
+            get_kubernetes_client(), current_user.username
+        ).preview(body),
+    )
+
+
+@router.post("/resources/create", summary="通过 YAML 批量创建资源")
+@auth_with_renew()
+def create_resources(request: Request, body: YamlCreate, current_user: User):
+    return execute(
+        "batch",
+        lambda: ResourceCreator(
+            get_kubernetes_client(), current_user.username, seconds=90
+        ).create(body),
+    )
 
 
 def execute(kind, action):

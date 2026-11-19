@@ -1,0 +1,40 @@
+# 可选创建权限示例：按需手动配置，不授予更新、删除或 RBAC 管理权限。
+# 自定义资源请另按实际 apiGroup / plural 添加规则；可缩小为命名空间 Role。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubengine-yaml-creator
+rules:
+  - nonResourceURLs: ["/api", "/api/*", "/apis", "/apis/*"]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [namespaces, pods, services, configmaps, secrets, persistentvolumes, persistentvolumeclaims, serviceaccounts]
+    verbs: [get, create]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, create]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, create]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, create]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, ingressclasses, networkpolicies]
+    verbs: [get, create]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubengine-yaml-creator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubengine-yaml-creator
+subjects:
+  - kind: ServiceAccount
+    name: kubengine-reader
+    namespace: kubengine-system
