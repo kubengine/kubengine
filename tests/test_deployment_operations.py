@@ -190,6 +190,9 @@ class Cluster:
                         {
                             "uid": self.value["metadata"]["uid"],
                             "controller": True,
+                            "apiVersion": "apps/v1",
+                            "kind": "Deployment",
+                            "name": self.value["metadata"]["name"],
                         }
                     ],
                 },
@@ -783,10 +786,14 @@ def test_installed_sdk_raw_scale_restart_and_list_compatibility(monkeypatch):
             ]
         assert calls[0][1]["body"]["metadata"]["uid"] == "one"
         assert "/scale" in calls[0][0][1]
-        assert (
-            calls[1][1]["headers"]["Content-Type"]
-            == "application/strategic-merge-patch+json"
+        # 老 SDK 在 REST 层将字典补丁转换为 strategic merge；这里拦截
+        # 的 request 尚未进入该层。37 的序列化器已显式设置类型。
+        expected = (
+            "application/strategic-merge-patch+json"
+            if hasattr(view.apps, "_patch_namespaced_deployment_serialize")
+            else "application/json-patch+json"
         )
+        assert calls[1][1]["headers"]["Content-Type"] == expected
     finally:
         api.close()
 

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 
 from core.services.deployment_operations import DeploymentOperations
+from core.services.deployment_releases import DeploymentReleases
 from web.api.k8s import get_kubernetes_client
 from web.api.resource_yaml import YamlRoute
 from web.utils.auth import User, auth_with_renew
@@ -23,6 +24,41 @@ class OperationRequest(BaseModel):
 class ScaleRequest(OperationRequest):
     replicas: StrictInt = Field(ge=0, le=2147483647)
     confirm_zero: StrictBool = False
+
+
+class PreviewRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    uid: str = Field(min_length=1, max_length=255)
+    resource_version: str = Field(min_length=1, max_length=255)
+
+
+class ContainerImage(BaseModel):
+    model_config = {"extra": "forbid"}
+    name: str = Field(min_length=1, max_length=63)
+    image: str = Field(min_length=1, max_length=512)
+
+
+class ImagePreviewRequest(PreviewRequest):
+    containers: list[ContainerImage] = Field(min_length=1, max_length=100)
+
+
+class RollbackPreviewRequest(PreviewRequest):
+    revision: str = Field(pattern=r"^[1-9][0-9]{0,18}$")
+    replica_set_uid: str = Field(min_length=1, max_length=255)
+
+
+class ImageRequest(ImagePreviewRequest):
+    request_id: str = Field(
+        min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$"
+    )
+    preview_token: str = Field(min_length=1, max_length=65536)
+
+
+class RollbackRequest(RollbackPreviewRequest):
+    request_id: str = Field(
+        min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$"
+    )
+    preview_token: str = Field(min_length=1, max_length=65536)
 
 
 def execute(namespace, name, current_user, callback):
@@ -83,6 +119,117 @@ def operation(
         name,
         current_user,
         lambda ops: (200, "success", ops.get(operation_id)),
+    )
+
+
+@router.get(BASE + "/history")
+@auth_with_renew(permission="resource.read", resource_kind="deployment")
+def history(request: Request, namespace: str, name: str, current_user: User):
+    return execute(
+        namespace,
+        name,
+        current_user,
+        lambda ops: (200, "success", DeploymentReleases(ops).history()),
+    )
+
+
+@router.post(BASE + "/image/preview")
+@auth_with_renew(
+    permission="resource.update",
+    resource_kind="deployment",
+    audit_action="deployment.image.preview",
+)
+def image_preview(
+    request: Request,
+    namespace: str,
+    name: str,
+    body: ImagePreviewRequest,
+    current_user: User,
+):
+    return execute(
+        namespace,
+        name,
+        current_user,
+        lambda ops: (
+            200,
+            "预检通过，请核对差异后确认",
+            DeploymentReleases(ops).preview("image", body),
+        ),
+    )
+
+
+@router.post(BASE + "/rollback/preview")
+@auth_with_renew(
+    permission="resource.update",
+    resource_kind="deployment",
+    audit_action="deployment.rollback.preview",
+)
+def rollback_preview(
+    request: Request,
+    namespace: str,
+    name: str,
+    body: RollbackPreviewRequest,
+    current_user: User,
+):
+    return execute(
+        namespace,
+        name,
+        current_user,
+        lambda ops: (
+            200,
+            "预检通过，请核对差异后确认",
+            DeploymentReleases(ops).preview("rollback", body),
+        ),
+    )
+
+
+@router.post(BASE + "/image", status_code=202)
+@auth_with_renew(
+    permission="resource.update",
+    resource_kind="deployment",
+    audit_action="deployment.image.submit",
+)
+def image(
+    request: Request,
+    namespace: str,
+    name: str,
+    body: ImageRequest,
+    current_user: User,
+):
+    return execute(
+        namespace,
+        name,
+        current_user,
+        lambda ops: (
+            202,
+            "操作已受理，等待执行和健康观察",
+            ops.submit("image", body),
+        ),
+    )
+
+
+@router.post(BASE + "/rollback", status_code=202)
+@auth_with_renew(
+    permission="resource.update",
+    resource_kind="deployment",
+    audit_action="deployment.rollback.submit",
+)
+def rollback(
+    request: Request,
+    namespace: str,
+    name: str,
+    body: RollbackRequest,
+    current_user: User,
+):
+    return execute(
+        namespace,
+        name,
+        current_user,
+        lambda ops: (
+            202,
+            "操作已受理，等待执行和健康观察",
+            ops.submit("rollback", body),
+        ),
     )
 
 

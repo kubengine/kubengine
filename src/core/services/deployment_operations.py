@@ -19,6 +19,12 @@ from core.orm.deployment_operation import ACTIVE, DeploymentOperation
 from core.orm.engine import get_db
 from core.orm.identity import ConsoleUser, _public_user
 from core.orm.resource_revision import ResourceRevision
+from core.services.deployment_releases import (
+    RELEASE_ACTIONS,
+    DeploymentReleases,
+    deployment_owned,
+    patch_template,
+)
 from core.services.deployment_sdk import sdk_json
 from core.services.resource_yaml import (
     ResourceYaml,
@@ -62,6 +68,7 @@ def summary(row):
         "reason": row.reason,
         "revisionId": row.revision_id,
         "auditId": row.audit_id,
+        "release": row.release_context or {},
         "createdAt": row.created_at.isoformat() + "Z",
         "updatedAt": row.updated_at.isoformat() + "Z",
         "deadline": row.deadline.isoformat() + "Z",
@@ -209,6 +216,8 @@ class DeploymentOperations:
             }
 
     def submit(self, action, body):
+        if action not in {"scale", "restart", *RELEASE_ACTIONS}:
+            raise HTTPException(422, "不支持的 Deployment 操作")
         self.check("resource.update", "deployment", self.namespace)
         context = {
             "actor_id": policy.value(self.user, "user_id"),
@@ -265,7 +274,14 @@ class DeploymentOperations:
             + "Z-"
             + operation_id[:8]
         )
-        desired = desired_manifest(current, action, replicas, marker)
+        release_context = {}
+        if action in RELEASE_ACTIONS:
+            requested, desired, release_context = DeploymentReleases(
+                self
+            ).verify(action, body, current)
+        else:
+            desired = desired_manifest(current, action, replicas, marker)
+            requested = desired
         self.check(
             "resource.update",
             "deployment",
@@ -277,7 +293,11 @@ class DeploymentOperations:
         cipher = history_cipher()
         encrypted = cipher.encrypt(
             json.dumps(
-                {"before": before, "requested": after, "after": after},
+                {
+                    "before": before,
+                    "requested": editable(requested),
+                    "after": after,
+                },
                 ensure_ascii=False,
             ).encode()
         ).decode()
@@ -336,7 +356,8 @@ class DeploymentOperations:
                     comment="Deployment " + action + "，操作 " + operation_id,
                     resource_uid=body.uid,
                     before_rv=body.resource_version,
-                    paths=[
+                    paths=release_context.get("changedPaths")
+                    or [
                         (
                             "/spec/replicas"
                             if action == "scale"
@@ -389,6 +410,7 @@ class DeploymentOperations:
                     marker=marker if action == "restart" else "",
                     revision_id=revision.id,
                     audit_id=audit_id,
+                    release_context=release_context,
                     deadline=datetime.utcnow() + timedelta(seconds=seconds),
                 )
                 db.add(row)
@@ -473,7 +495,11 @@ def observe(ops, row, value):
     rs = [
         item
         for item in ops.list_objects("apps", "list_namespaced_replica_set")
-        if owned(item, row.uid)
+        if (
+            deployment_owned(item, value)
+            if row.action in RELEASE_ACTIONS
+            else owned(item, row.uid)
+        )
     ]
     template = template_hash(spec["template"])
     old = sum(
@@ -702,15 +728,49 @@ def process_operation(operation_id, token, view):
         value = ops.read()
         if pending:
             validate_target(value, row.uid, row.before_rv)
-            desired = desired_manifest(
-                value, row.action, row.replicas, row.marker
-            )
+            if row.action in RELEASE_ACTIONS:
+                releases = DeploymentReleases(ops)
+                releases.verify_source(row, value)
+                if row.action == "image":
+                    releases.replicasets(value)
+                with get_db() as db:
+                    revision = db.get(ResourceRevision, row.revision_id)
+                    snapshots = json.loads(
+                        history_cipher().decrypt(revision.snapshots.encode())
+                    )
+                desired = copy.deepcopy(value)
+                desired["spec"]["template"] = snapshots["requested"]["spec"][
+                    "template"
+                ]
+                ops.check(
+                    "resource.update",
+                    "deployment",
+                    row.namespace,
+                    api_version="apps/v1",
+                    manifest=desired,
+                )
+                preview = patch_template(
+                    ops, value, desired["spec"]["template"], dry_run=True
+                )
+                if digest(preview["spec"]) != row.desired_hash:
+                    raise HTTPException(409, "准入预检结果已变化，未执行发布")
+                ops.check(
+                    "resource.update",
+                    "deployment",
+                    row.namespace,
+                    api_version="apps/v1",
+                    manifest=preview,
+                )
+            else:
+                desired = desired_manifest(
+                    value, row.action, row.replicas, row.marker
+                )
             ops.check(
                 "resource.update",
                 "deployment",
                 row.namespace,
                 api_version="apps/v1",
-                manifest=desired,
+                manifest=preview if row.action in RELEASE_ACTIONS else desired,
             )
             if row.action == "scale" and ops.hpas():
                 raise HTTPException(409, "HPA 已接管，禁止手动扩缩容")
@@ -720,7 +780,7 @@ def process_operation(operation_id, token, view):
                 "resource.update",
                 "deployment",
                 row.namespace,
-                manifest=desired,
+                manifest=preview if row.action in RELEASE_ACTIONS else desired,
             )
             with get_db() as db:
                 db.execute(text("BEGIN IMMEDIATE"))
@@ -748,6 +808,8 @@ def process_operation(operation_id, token, view):
                             "spec": {"replicas": row.replicas},
                         },
                     )
+                elif row.action in RELEASE_ACTIONS:
+                    patch_template(ops, value, desired["spec"]["template"])
                 else:
                     sdk_json(
                         view,
@@ -834,7 +896,7 @@ def process_operation(operation_id, token, view):
                 else (
                     "superseded"
                     if code == 404
-                    else "failed" if code == 409 else "pending"
+                    else "failed" if code in {400, 409, 422} else "pending"
                 )
             )
         else:

@@ -44,6 +44,9 @@ class DeploymentOperation(Base):
     revision_id = Column(Integer, nullable=False)
     audit_id = Column(String(32), nullable=False)
     progress = Column(JSON, nullable=False, default=dict)
+    release_context = Column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'")
+    )
     reason = Column(String(500), nullable=False, default="")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -63,4 +66,17 @@ def ensure_deployment_operation_schema():
     with get_db() as db:
         db.execute(text("BEGIN IMMEDIATE"))
         DeploymentOperation.__table__.create(db.connection(), checkfirst=True)
+        columns = {
+            row[1]
+            for row in db.execute(
+                text("PRAGMA table_info(deployment_operation)")
+            )
+        }
+        if "release_context" not in columns:
+            db.execute(
+                text(
+                    "ALTER TABLE deployment_operation ADD COLUMN "
+                    "release_context JSON NOT NULL DEFAULT '{}'"
+                )
+            )
         db.commit()
